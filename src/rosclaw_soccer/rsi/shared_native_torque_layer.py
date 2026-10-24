@@ -90,6 +90,9 @@ class SharedNativeTorqueLayer:
                     dict(
                         body_hash=self.body_hash,
                         policy_hash=policy.artifact.artifact_hash,
+                        behavior_hash=getattr(
+                            policy, "behavior_hash", policy.artifact.artifact_hash
+                        ),
                         parent_hash=expected_parent_policy_hash,
                         target=[self.target_y_m, self.target_z_m],
                         horizon_native_steps=self.horizon_native_steps,

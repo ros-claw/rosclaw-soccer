@@ -29,6 +29,8 @@ def main():
     parser.add_argument("--core-source-root", type=Path)
     parser.add_argument("--core-expected-head")
     parser.add_argument("--capture-torque-proposals", action="store_true")
+    parser.add_argument("--torque-exploration-seed", type=int)
+    parser.add_argument("--torque-exploration-scale", type=float)
     parser.add_argument("--identity-reference", type=Path)
     parser.add_argument("--identity-reference-hash")
     parser.add_argument("--identity-own", type=Path)
@@ -37,6 +39,17 @@ def main():
     if (a.core_source_root is None) != (a.core_expected_head is None):
         parser.error("explicit Core source root and commit must be provided together")
     candidate_mode = a.torque_candidate_root is not None
+    explore = a.torque_exploration_seed is not None
+    if explore != (a.torque_exploration_scale is not None) or (
+        explore
+        and (
+            not a.capture_torque_proposals
+            or not 0 <= a.torque_exploration_seed < 2**32
+            or not math.isfinite(a.torque_exploration_scale)
+            or not 0 <= a.torque_exploration_scale <= 0.25
+        )
+    ):
+        parser.error("explicit bounded seed/scale exploration requires full proposal capture")
     if a.capture_torque_proposals and (not candidate_mode or a.core_source_root is None):
         parser.error(
             "proposal capture requires a learned candidate and explicit active Core source"
@@ -226,6 +239,14 @@ def main():
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
     from rosclaw_soccer.training.directed_plane_crossing import first_directed_plane_crossing
 
+    exploration_config = None
+    if explore:
+        from rosclaw.control.correlated_exploration import CorrelatedExplorationConfig
+
+        exploration_config = CorrelatedExplorationConfig(
+            seed=a.torque_exploration_seed, scale=a.torque_exploration_scale, correlation=0.95
+        )
+
     roots = {Path(key).parents[2] for key in pins if key.endswith("/policy/robonaldo/FreeKick.py")}
     scenes = [Path(key) for key in pins if key.endswith("/cached-standard/declared-scene.xml")]
     models = [Path(key) for key in pins if key.endswith("/velocity/v0/exported/policy.onnx")]
@@ -373,6 +394,7 @@ def main():
                         artifact,
                         expected_body_hash=trained["body_hash"],
                         expected_parent_policy_hash=trained["parent_policy_hash"],
+                        **({"exploration": exploration_config} if explore else {}),
                     )
                     counts = dict(gru_calls=0, head_calls=0)
                     advance_hidden, infer = policy._advance_hidden, policy._infer_normalized
@@ -405,21 +427,25 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "robonaldo.native_guarded_proposal_trace.v1"
-                if a.capture_torque_proposals
+                "robonaldo.native_torque_exploration.v1"
+                if explore
                 else (
-                    "robonaldo.native_learned_torque_trial.v1"
-                    if candidate_mode
+                    "robonaldo.native_guarded_proposal_trace.v1"
+                    if a.capture_torque_proposals
                     else (
-                        "robonaldo.native_torque_teacher.v1"
-                        if a.torque_teacher
+                        "robonaldo.native_learned_torque_trial.v1"
+                        if candidate_mode
                         else (
-                            "robonaldo.neural_aim_reachability.v1"
-                            if a.single_player_only
+                            "robonaldo.native_torque_teacher.v1"
+                            if a.torque_teacher
                             else (
-                                "robonaldo.contact_release_blend.v1"
-                                if a.contact_release
-                                else "robonaldo.live_neural_blend.v1"
+                                "robonaldo.neural_aim_reachability.v1"
+                                if a.single_player_only
+                                else (
+                                    "robonaldo.contact_release_blend.v1"
+                                    if a.contact_release
+                                    else "robonaldo.live_neural_blend.v1"
+                                )
                             )
                         )
                     )
@@ -448,6 +474,9 @@ def main():
             same_effort_caps=True,
             torque_teacher=a.torque_teacher,
             capture_actor_proposals=a.capture_torque_proposals,
+            exploration_config=__import__("dataclasses").asdict(exploration_config)
+            if explore
+            else None,
             torque_candidate_hash=a.torque_candidate_hash,
             torque_intervention_fraction=a.torque_intervention_fraction if torque_mode else None,
             teacher_motion_recovery_not_precision_qualified=a.torque_teacher,
@@ -671,6 +700,28 @@ def main():
                             missing_proposals_are_not_zero_action_labels=True,
                             action_semantics="ACTOR_PROPOSAL_THROUGH_GUARD",
                         )
+                        if explore:
+                            snapshot = layer.policy.exploration_snapshot
+                            expected_draws = (
+                                int(values["actor_proposal_valid"].sum())
+                                if a.torque_exploration_scale > 0
+                                else 0
+                            )
+                            if snapshot["draw_steps"] != expected_draws:
+                                raise ValueError(
+                                    "exploration draws must match actual inferred proposals"
+                                )
+                            rng_path = (
+                                a.output
+                                / f"exploration-rng-{arm}-{index}-{prefix.rstrip('/')}.json"
+                            )
+                            write_once(rng_path, snapshot)
+                            teacher_artifacts[prefix]["exploration_rng"] = dict(
+                                path=rng_path.name,
+                                hash=digest(rng_path),
+                                behavior_hash=layer.policy.behavior_hash,
+                                config_hash=layer.policy.exploration_config_hash,
+                            )
             baseline = next(
                 row
                 for row in source["records"]

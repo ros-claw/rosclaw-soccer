@@ -29,7 +29,10 @@ def main():
     source = json.loads((a.source / "complete.json").read_text())
     declaration = json.loads((a.source / "declaration.json").read_text())
     release = declaration.get("contact_release", False)
-    proposal_capture = declaration["protocol"] == "robonaldo.native_guarded_proposal_trace.v1"
+    exploration = declaration["protocol"] == "robonaldo.native_torque_exploration.v1"
+    proposal_capture = (
+        exploration or declaration["protocol"] == "robonaldo.native_guarded_proposal_trace.v1"
+    )
     torque_trial = (
         proposal_capture or declaration["protocol"] == "robonaldo.native_learned_torque_trial.v1"
     )
@@ -43,7 +46,11 @@ def main():
         or declaration["protocol"]
         != (
             (
-                "robonaldo.native_guarded_proposal_trace.v1"
+                (
+                    "robonaldo.native_torque_exploration.v1"
+                    if exploration
+                    else "robonaldo.native_guarded_proposal_trace.v1"
+                )
                 if proposal_capture
                 else "robonaldo.native_learned_torque_trial.v1"
             )
@@ -97,6 +104,16 @@ def main():
                 ):
                     raise ValueError("exact confined raw proposal trace required")
                 pins[str(path)] = trace["hash"]
+                if exploration:
+                    rng = entry["exploration_rng"]
+                    path = a.source / rng["path"]
+                    if (
+                        path.parent.resolve() != a.source.resolve()
+                        or path.is_symlink()
+                        or digest(path) != rng["hash"]
+                    ):
+                        raise ValueError("exact confined exploration RNG evidence required")
+                    pins[str(path)] = rng["hash"]
     source_pins(pins)
     check_pins(pins)
     if torque_trial:
@@ -120,6 +137,11 @@ def main():
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
 
     trained = None
+    exploration_config = None
+    if exploration:
+        from rosclaw.control.correlated_exploration import CorrelatedExplorationConfig
+
+        exploration_config = CorrelatedExplorationConfig(**declaration["exploration_config"])
     if torque_trial:
         from rosclaw.simforge.g1_neural_torque import (
             G1NeuralTorquePolicy,
@@ -246,6 +268,7 @@ def main():
                     torque_artifact,
                     expected_body_hash=trained["body_hash"],
                     expected_parent_policy_hash=trained["parent_policy_hash"],
+                    **({"exploration": exploration_config} if exploration else {}),
                 )
                 neural.reset()
                 foot_ids = [
@@ -492,6 +515,7 @@ def main():
                 raise ValueError("independent release event differs from source")
             neural_exact = None
             proposal_exact = None
+            exploration_exact = None
             if neural is not None:
                 entry = row["torque_execution_artifacts"]["a/"]
                 ep_path = a.source / entry["path"]
@@ -509,12 +533,20 @@ def main():
                         for key in ("observations", "actions", "parent_actions")
                     }
                 if proposal_capture:
-                    entry = entry["guarded_proposal_trace"]
-                    with np.load(a.source / entry["path"]) as saved:
+                    trace_entry = entry["guarded_proposal_trace"]
+                    with np.load(a.source / trace_entry["path"]) as saved:
                         proposal_exact = {
                             key: bool(np.array_equal(np.asarray(values), saved[key]))
                             for key, values in proposal_raw.items()
                         }
+                    if exploration:
+                        rng_entry = entry["exploration_rng"]
+                        expected_rng = json.loads((a.source / rng_entry["path"]).read_text())
+                        exploration_exact = (
+                            neural.exploration_snapshot == expected_rng
+                            and neural.behavior_hash == rng_entry["behavior_hash"]
+                            and neural.exploration_config_hash == rng_entry["config_hash"]
+                        )
             artifact = a.output / f"{row['arm']}-{row['index']}.npz"
             np.savez_compressed(artifact, **arrays)
             result = dict(
@@ -522,9 +554,13 @@ def main():
                 index=row["index"],
                 all_exact=all(exact.values())
                 and (neural_exact is None or all(neural_exact.values()))
-                and (proposal_exact is None or all(proposal_exact.values())),
+                and (proposal_exact is None or all(proposal_exact.values()))
+                and (exploration_exact is None or exploration_exact),
+                # RNG evidence is additional to, never a substitute for, the
+                # actual trajectory/action/observation equality above.
                 neural_episode_exact=neural_exact,
                 guarded_proposal_exact=proposal_exact,
+                exploration_rng_and_behavior_exact=exploration_exact,
                 exact=exact,
                 max_abs_error=errors,
                 native_steps=row["controls"] * 10,
