@@ -60,39 +60,11 @@ def main():
         return doc
 
     def validate_pair(passed, retained, kind):
-        if (
-            passed["status"] != "TEAM_PASS_CANDIDATE80_WHOLE_OWN_NATIVE_REPLAY_MATCH"
-            or retained["status"] != "DUAL_RECURRENT_ALL44_WHOLE_NATIVE_OWN_HISTORY_AUDIT_PASS"
-            or len(passed["records"]) != 80
-            or retained["worlds"] != 44
-            or retained["independent_whole_world_replay"] is not True
-            or retained["checkpoint_kind"] != kind
-            or passed["training_hash"] != retained["training_hash"]
-        ):
-            raise ValueError("same model with complete independent pass80 and retention44 required")
-        _, source = receipt(pins, passed["producer_hash"])
-        old_path, old_source = receipt(pins, retained["source_hash"])
-        _, training = receipt(pins, passed["training_hash"])
-        if (
-            source["training_hash"] != passed["training_hash"]
-            or source["checkpoint_kind"] != kind
-            or [{k: v for k, v in row.items() if k != "artifacts"} for row in source["records"]]
-            != passed["records"]
-            or old_source["training_hash"] != passed["training_hash"]
-            or training["checkpoint_hash"] != retained["checkpoint_hash"]
-        ):
-            raise ValueError("exact source and independently reproduced own results required")
-        declaration_path = old_path.parent / "declaration.json"
-        if (
-            declaration_path.is_symlink()
-            or pins.get(str(declaration_path)) != digest(declaration_path)
-            or old_source["declaration_hash"] != digest(declaration_path)
-        ):
-            raise ValueError("source-bound whole retention task witness required")
-        declaration = json.loads(declaration_path.read_text())
-        if declaration["protocol"] != "dual256.unassisted_TRAIN20_and_consumed_run2.v1":
-            raise ValueError("unchanged whole22 retention protocol required")
-        return training, declaration
+        from rosclaw_soccer.rsi.native_growth_evidence import qualified_native_growth_pair
+
+        return qualified_native_growth_pair(
+            passed, retained, kind=kind, pins=pins, resolve=lambda h: receipt(pins, h)
+        )
 
     parent_pass = closed(a.parent_pass_root, a.parent_pass_hash)
     parent_old = closed(a.parent_retention_root, a.parent_retention_hash)
