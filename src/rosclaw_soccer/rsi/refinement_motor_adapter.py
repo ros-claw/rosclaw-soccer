@@ -50,13 +50,15 @@ class RefinementMotorAdapter(nn.Module):
     def adapt_features(
         self, features: torch.Tensor, parent_delta: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Stateless offline flat rows or inference T/B rows, never padded motion."""
+        layout_ok = (features.ndim == 2 and 1 <= features.shape[0] <= 8192) or (
+            features.ndim == 3 and 1 <= features.shape[0] <= 512 and 1 <= features.shape[1] <= 64
+        )
         if (
-            features.ndim != 3
+            not layout_ok
             or features.shape[-1] != 288
-            or not 1 <= features.shape[0] <= 512
-            or not 1 <= features.shape[1] <= 64
             or features.dtype != torch.float32
-            or parent_delta.shape != (*features.shape[:2], 29)
+            or parent_delta.shape != (*features.shape[:-1], 29)
             or parent_delta.dtype != features.dtype
             or parent_delta.device != features.device
             or not torch.isfinite(features).all()

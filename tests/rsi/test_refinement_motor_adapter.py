@@ -69,6 +69,18 @@ def test_constructor_does_not_alias_or_freeze_caller_and_train_keeps_parent_eval
     assert len(motor.plastic_parameters()) == 4
 
 
+def test_flat_offline_rows_equal_inference_layout_without_padding():
+    motor = RefinementMotorAdapter(parent_model())
+    with torch.no_grad():
+        motor.head[-1].weight.add_(0.01)
+    x, d = torch.randn(37, 288), torch.zeros(37, 29)
+    flat = motor.adapt_features(x, d)
+    nested = motor.adapt_features(x[:, None], d[:, None])
+    assert all(torch.equal(a, b[:, 0]) for a, b in zip(flat, nested, strict=True))
+    with pytest.raises(ValueError):
+        motor.adapt_features(torch.zeros(8193, 288), torch.zeros(8193, 29))
+
+
 @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
 def test_nonfinite_inputs_or_weights_rejected(bad):
     motor = RefinementMotorAdapter(parent_model())
