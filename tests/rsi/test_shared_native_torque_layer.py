@@ -185,7 +185,7 @@ def test_invalid_discarded_torque_is_not_silently_repaired_at_zero_fraction():
     assert w.failed and w.native_steps == 0
 
 
-@pytest.mark.parametrize("fraction", [0.0, 1.0])
+@pytest.mark.parametrize("fraction", [0.0, 0.125, 0.25, 1.0])
 def test_proposal_capture_observes_without_changing_physics(tmp_path, fraction):
     import hashlib
 

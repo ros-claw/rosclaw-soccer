@@ -9,6 +9,7 @@ import argparse
 import contextlib
 import io
 import json
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -32,19 +33,22 @@ def main():
     declaration = json.loads((a.source / "declaration.json").read_text())
     release = declaration.get("contact_release", False)
     exploration = declaration["protocol"] == "robonaldo.native_torque_exploration.v1"
-    proposal_capture = (
-        exploration or declaration["protocol"] == "robonaldo.native_guarded_proposal_trace.v1"
+    proposal_capture = exploration or declaration["protocol"] in (
+        "robonaldo.native_guarded_proposal_trace.v1",
+        "robonaldo.reference_clock_guarded_proposal_trace.v2",
     )
     torque_trial = proposal_capture or declaration["protocol"] in (
         "robonaldo.native_learned_torque_trial.v1",
         "robonaldo.reference_clock_learned_torque.v1",
         "robonaldo.reference_clock_parent_residual_identity.v1",
+        "robonaldo.reference_clock_guarded_proposal_trace.v2",
     )
     aim_probe = declaration["protocol"] == "robonaldo.neural_aim_reachability.v1"
     clock_probe = declaration["protocol"] in (
         "robonaldo.reference_clock_authority.v1",
         "robonaldo.reference_clock_learned_torque.v1",
         "robonaldo.reference_clock_parent_residual_identity.v1",
+        "robonaldo.reference_clock_guarded_proposal_trace.v2",
     )
     parent_residual = (
         declaration["protocol"] == "robonaldo.reference_clock_parent_residual_identity.v1"
@@ -75,6 +79,8 @@ def main():
         (
             "robonaldo.reference_clock_parent_residual_identity.v1"
             if parent_residual
+            else "robonaldo.reference_clock_guarded_proposal_trace.v2"
+            if proposal_capture
             else "robonaldo.reference_clock_learned_torque.v1"
             if torque_trial
             else "robonaldo.reference_clock_authority.v1"
@@ -165,6 +171,7 @@ def main():
     import mujoco
     import numpy as np
     from rosclaw.simforge.backends.unitree_mujoco_backend import _load_robonaldo
+    from rosclaw.simforge.g1_neural_torque import G1TorqueSafetyProjector
     from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
 
     from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
@@ -366,6 +373,22 @@ def main():
                 joint_ids = [m.joint("a/" + name).id for name in G1_DDS_JOINT_NAMES]
                 limited = m.jnt_limited[joint_ids].astype(bool)
                 joint_bounds = m.jnt_range[joint_ids]
+            post_projector = None
+            previous_applied = np.zeros(29, np.float64)
+            if (
+                neural is not None
+                and declaration.get("postcomposition_guard_schema")
+                == "native_effective_fraction_guard.v2"
+            ):
+                mix_fraction = declaration["torque_intervention_fraction"]
+                if 0 < mix_fraction < 1:
+                    post_projector = G1TorqueSafetyProjector(
+                        replace(
+                            neural.artifact.safety,
+                            maximum_parent_deviation_ratio=mix_fraction
+                            * neural.artifact.safety.maximum_parent_deviation_ratio,
+                        )
+                    )
 
             def observe(d=d, primary=primary, torso=torso, ball=ball, bv=bv, state=state):
                 rq, rv = primary["rq"], primary["rv"]
@@ -429,6 +452,18 @@ def main():
                     "intervention_fractions",
                 )
             }
+            if proposal_capture and post_projector is not None:
+                proposal_raw.update(
+                    {
+                        key: []
+                        for key in (
+                            "post_intervention_inputs",
+                            "post_guarded_actions",
+                            "post_guard_used_parent",
+                            "post_guard_reasons",
+                        )
+                    }
+                )
             foot_seen, last_contact, clear = False, False, 0
             start = None if release else 285
             stopped = False
@@ -555,6 +590,9 @@ def main():
                         if proposal_capture:
                             raw_actor = neural.pending_actor_proposal
                             decision = neural.pending_projection
+                            guarded_for_trace = proposal.copy()
+                            fallback_for_trace = decision.used_parent
+                            reason_for_trace = decision.reason
                         fraction = declaration["torque_intervention_fraction"]
                         if fraction == 0:
                             torque[ids] = parent_torque[ids]
@@ -564,6 +602,23 @@ def main():
                             torque[ids] = parent_torque[ids] + fraction * (
                                 proposal - parent_torque[ids]
                             )
+                            if post_projector is not None:
+                                mixed = torque[ids].copy()
+                                post_decision = (
+                                    post_projector.fallback(
+                                        parent=parent_torque[ids],
+                                        frame=cf,
+                                        reason="postcompose_zero_parent",
+                                    )
+                                    if np.array_equal(mixed, parent_torque[ids])
+                                    else post_projector.project(
+                                        mixed,
+                                        parent=parent_torque[ids],
+                                        previous=previous_applied,
+                                        frame=cf,
+                                    )
+                                )
+                                torque[ids] = post_decision.torque
                         if not np.isfinite(torque).all() or np.any(np.abs(torque[ids]) > cap):
                             raise ValueError(
                                 "manual candidate exceeds actual native effort contract"
@@ -582,16 +637,24 @@ def main():
                             values = (
                                 np.zeros(29) if raw_actor is None else raw_actor.copy(),
                                 raw_actor is not None,
-                                proposal.copy(),
+                                guarded_for_trace,
                                 torque[primary["ai"]].copy(),
                                 parent_torque[primary["ai"]].copy(),
-                                decision.used_parent,
-                                decision.reason or "",
+                                fallback_for_trace,
+                                reason_for_trace or "",
                                 fraction,
                             )
+                            if post_projector is not None:
+                                values += (
+                                    mixed.copy(),
+                                    torque[primary["ai"]].copy(),
+                                    post_decision.used_parent,
+                                    post_decision.reason or "",
+                                )
                             for key, value in zip(proposal_raw, values, strict=True):
                                 proposal_raw[key].append(value)
                         neural.note_applied(d.actuator_force[primary["ai"]].copy())
+                        previous_applied = d.actuator_force[primary["ai"]].copy()
                         native_index += 1
                         raw["parent_torque"].append(parent_torque)
                         raw["applied_torque_change"].append(torque - parent_torque)

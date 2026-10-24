@@ -90,7 +90,7 @@ def main():
         if (
             a.torque_teacher
             or explore
-            or a.capture_torque_proposals
+            or (a.capture_torque_proposals and not candidate_mode)
             or not a.single_player_only
             or not a.contact_release
             or a.aim_y != 0.0
@@ -661,6 +661,8 @@ def main():
                 (
                     "robonaldo.reference_clock_parent_residual_identity.v1"
                     if a.parent_residual_zero_head
+                    else "robonaldo.reference_clock_guarded_proposal_trace.v2"
+                    if a.capture_torque_proposals
                     else "robonaldo.reference_clock_learned_torque.v1"
                     if candidate_mode
                     else "robonaldo.reference_clock_authority.v1"
@@ -722,6 +724,7 @@ def main():
             live_incoming_proposals=True,
             actual_history_both_ABIs=True,
             same_effort_caps=True,
+            postcomposition_guard_schema="native_effective_fraction_guard.v2",
             torque_teacher=a.torque_teacher,
             capture_actor_proposals=a.capture_torque_proposals,
             parent_residual_zero_head=a.parent_residual_zero_head,
@@ -965,6 +968,8 @@ def main():
                         if candidate_mode
                         else None,
                         actual_NN_call_counts=torque_nn_counts[id(w)].get(prefix),
+                        postcomposition_fallbacks=layer.postcomposition_fallbacks,
+                        postcomposition_changes=layer.postcomposition_changes,
                     )
                     if a.parent_residual_zero_head:
                         residual_path = (

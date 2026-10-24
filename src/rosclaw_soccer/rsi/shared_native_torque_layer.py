@@ -1,6 +1,6 @@
 """Core neural-torque/teacher contract over one body in a shared SIM clock.
 
-Only the two known pure Core policy implementations are admitted. No Runtime,
+Only explicitly known pure Core policy implementations are admitted. No Runtime,
 driver, hardware executor, transport, checkpoint loader or permit is created.
 The parent joint target remains a PD setpoint; actual total actuator torque is
 separately observed and fed back at every native step.
@@ -53,6 +53,7 @@ class SharedNativeTorqueLayer:
             or getattr(policy, "_soccer_native_layer_owner", None) is not None
             or not np.isfinite(intervention_fraction)
             or not 0.0 <= intervention_fraction <= 1.0
+            or (0 < intervention_fraction < 1 and type(policy) not in neural_types)
             or any(other.policy is policy for other in world._torque_layer_owners.values())
             or type(capture_actor_proposals) is not bool
             or (
@@ -82,10 +83,14 @@ class SharedNativeTorqueLayer:
         self.target_y_m, self.target_z_m = float(target_y_m), float(target_z_m)
         self.horizon_native_steps = horizon_controls * 10
         self.intervention_fraction = float(intervention_fraction)
+        self._last_applied: np.ndarray = np.zeros(29, np.float64)
+        self.postcomposition_fallbacks = 0
+        self.postcomposition_changes = 0
         self.decision_trace: GuardedActionTrace | None = None
         self._pending_decision: (
             tuple[np.ndarray | None, np.ndarray, np.ndarray, bool, str | None] | None
         ) = None
+        self._pending_postguard: tuple[np.ndarray, bool, str | None] | None = None
         if capture_actor_proposals:
             from rosclaw.control.guarded_action_trace import GuardedActionTrace as Trace
 
@@ -103,8 +108,10 @@ class SharedNativeTorqueLayer:
                         target=[self.target_y_m, self.target_z_m],
                         horizon_native_steps=self.horizon_native_steps,
                         intervention_fraction=self.intervention_fraction,
+                        compositor_guard_schema="native_effective_fraction_guard.v2",
                     )
                 ),
+                **({"post_intervention_guard": True} if 0 < self.intervention_fraction < 1 else {}),
             )
         self.torso = int(
             mujoco.mj_name2id(world.model, mujoco.mjtObj.mjOBJ_BODY, prefix + "torso_link")
@@ -203,7 +210,22 @@ class SharedNativeTorqueLayer:
             if self.intervention_fraction == 0.0:
                 proposed = parent.copy()
             elif self.intervention_fraction != 1.0:
-                proposed = parent + self.intervention_fraction * (proposed - parent)
+                from rosclaw_soccer.rsi.guarded_torque_mix import guarded_torque_mix
+
+                mixed = parent + self.intervention_fraction * (proposed - parent)
+                final = guarded_torque_mix(
+                    proposed,
+                    parent,
+                    self._last_applied,
+                    frame=frame,
+                    safety=self.policy.artifact.safety,
+                    fraction=self.intervention_fraction,
+                )
+                self.postcomposition_fallbacks += int(final.used_parent)
+                self.postcomposition_changes += int(not np.array_equal(mixed, final.torque))
+                proposed = final.torque.copy()
+                if self._pending_decision is not None:
+                    self._pending_postguard = (proposed.copy(), final.used_parent, final.reason)
         except BaseException:
             self.failed = True
             raise
@@ -237,12 +259,23 @@ class SharedNativeTorqueLayer:
                     used_parent=used_parent,
                     reason=reason,
                     intervention_fraction=self.intervention_fraction,
+                    **(
+                        {
+                            "post_guarded": self._pending_postguard[0],
+                            "post_guard_used_parent": self._pending_postguard[1],
+                            "post_guard_reason": self._pending_postguard[2],
+                        }
+                        if self._pending_postguard is not None
+                        else {}
+                    ),
                 )
             self.policy.note_applied(actual.copy())
+            self._last_applied = actual.copy()
         except BaseException:
             self.failed = True
             raise
         self.pending = False
         self._pending_decision = None
+        self._pending_postguard = None
         self.next_native_step += 1
         self.applied += 1
