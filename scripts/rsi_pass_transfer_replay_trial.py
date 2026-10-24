@@ -41,7 +41,23 @@ def replay_trial(
     sampling_profile=None,
     sampling_include_recovery=False,
     receiver_intent_mode="pursuit-v1",
+    receiver_role_ablation=False,
 ):
+    if (
+        type(receiver_role_ablation) is not bool
+        or (claim.get("receiver_role_ablation", False) is not receiver_role_ablation)
+        or (
+            receiver_role_ablation
+            and (
+                sampling_seed is None
+                or sampling_include_recovery is not True
+                or feedback_variant is not None
+                or student is not None
+                or course["assisted"] is not False
+            )
+        )
+    ):
+        raise ValueError("exact separate full-stochastic receiver-role diagnostic required")
     if (
         type(receiver_intent_mode) is not str
         or receiver_intent_mode not in ("pursuit-v1", "anchor-plane-v2")
@@ -49,7 +65,7 @@ def replay_trial(
         or (
             receiver_intent_mode != "pursuit-v1"
             and (
-                sampling_seed is not None
+                (sampling_seed is not None and not receiver_role_ablation)
                 or feedback_variant is not None
                 or student is not None
                 or course["assisted"] is not False
@@ -81,9 +97,13 @@ def replay_trial(
             or claim.get("sampling_law") != "box-truncated-ar1"
             or claim.get("controller_kind")
             != (
-                "pure-refinement-full-recovery-stochastic-native-v2"
-                if sampling_include_recovery
-                else "pure-refinement-stochastic-native-v1"
+                "receiver-role-stochastic-diagnostic-native-v3"
+                if receiver_role_ablation
+                else (
+                    "pure-refinement-full-recovery-stochastic-native-v2"
+                    if sampling_include_recovery
+                    else "pure-refinement-stochastic-native-v1"
+                )
             )
             or claim.get("deterministic_recovery_excluded_from_actor_rows")
             is not (not sampling_include_recovery)
@@ -392,6 +412,11 @@ def replay_trial(
             teacher_advice_alone_physically_qualified=False,
             learner_hidden_state_borrowed=False,
             PPO_actor_rows=0,
+        )
+    if receiver_role_ablation:
+        result.update(
+            receiver_role_ablation=True,
+            controller_kind="receiver-role-stochastic-diagnostic-native-v3",
         )
     if result != {k: v for k, v in claim.items() if k != "artifacts"}:
         raise ValueError("own recovery/receiving/delivery/whole counters differ")
