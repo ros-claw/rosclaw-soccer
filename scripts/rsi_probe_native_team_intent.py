@@ -276,7 +276,9 @@ def main():
             original8body_baseline_hash=a.previous_hash,
             trained_velocity_model_reused=True,
             independent_private_policy_instances=8,
-            high_level_role_law_is_coached_not_learned=True,
+            high_level_role_law_is_coached_not_learned=trained is None,
+            high_level_role_model_is_shared_and_role_conditioned=trained is not None,
+            coached_reference_arm_always_included=True,
             optimizer_updates=0,
             imported_command_training_hash=a.command_training_hash,
             imported_BC_updates=512 if trained is not None else 0,
@@ -709,6 +711,9 @@ def main():
                     legacy_baseline_identity=legacy_identity,
                     preceding_foot_identity=foot_identity,
                     preceding_clearance_identity=command_identity,
+                    actual_command_model_calls=8 * max(0, w.control_steps - 50)
+                    if arm == "role-command-learned"
+                    else 0,
                     artifact=artifact,
                 )
                 records.append(row)
@@ -718,7 +723,9 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="NATIVE8_COACHED_ROLE_BASELINE_MEASURED_NOT_A_MATCH",
+                status="NATIVE8_LEARNED_ROLE_COMMANDS_MEASURED_NOT_A_MATCH"
+                if trained is not None
+                else "NATIVE8_COACHED_ROLE_BASELINE_MEASURED_NOT_A_MATCH",
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 records=records,
@@ -728,7 +735,8 @@ def main():
                     all(r["fresh_reexecution_exact"].values()) for r in records if r["repeat"]
                 ),
                 independent_controller_replay=False,
-                not_learned_role_autonomy=True,
+                role_commands_include_trained_model=trained is not None,
+                not_an_autonomous_match_policy=True,
                 hardware_authorized=False,
                 promotion_authorized=False,
                 goal_complete=False,
