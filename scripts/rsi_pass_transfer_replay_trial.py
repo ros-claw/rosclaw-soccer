@@ -37,7 +37,31 @@ def replay_trial(
     emit_course_rows=True,
     feedback_variant=None,
     feedback_anticipation_seconds=0.0,
+    sampling_seed=None,
+    sampling_profile=None,
 ):
+    if (sampling_seed is None) != (sampling_profile is None):
+        raise ValueError("explicit own sampling seed/profile pair required")
+    if sampling_seed is not None:
+        from rosclaw_soccer.rsi.motor_exploration_profile import exploration_sigma
+        from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
+
+        exploration_sigma(sampling_profile, "box-truncated-ar1")
+        if (
+            type(sampling_seed) is not int
+            or not 0 <= sampling_seed < 2**31
+            or type(actor) is not RefinementMotorAdapter
+            or student is not None
+            or course["assisted"] is not False
+            or feedback_variant is not None
+            or feedback_anticipation_seconds != 0.0
+            or claim.get("sampling_seed") != sampling_seed
+            or claim.get("sampling_profile") != sampling_profile
+            or claim.get("sampling_law") != "box-truncated-ar1"
+        ):
+            raise ValueError("exact pure own refinement sampling configuration required")
+    elif "sampling_seed" in claim:
+        raise ValueError("stochastic source requires actual independent random-law replay")
     if feedback_variant is not None:
         from rosclaw_soccer.rsi.causal_foot_ball_feedback import feedback_parameters
 
@@ -93,6 +117,14 @@ def replay_trial(
     if index % 2 and any(not np.array_equal(v, prior_initial[k]) for k, v in ini.items()):
         raise ValueError("paired whole initial states differ")
     goal = np.array(course["target"])
+    sampling, sampling_trace = None, None
+    if sampling_seed is not None:
+        from rosclaw_soccer.rsi.shared_motor_sampling import SharedMotorSampling
+
+        sampling = SharedMotorSampling(
+            ep.scale[np.argsort(ep.order)], seed=sampling_seed, profile=sampling_profile
+        )
+        sampling_trace = load(claim, "sampling")
     feedback, feedback_trace = None, None
     if feedback_variant is not None:
         from rosclaw_soccer.rsi.causal_foot_ball_feedback import CausalFootBallFeedback
@@ -189,6 +221,12 @@ def replay_trial(
                 teacher_advice_clipped=np.array(advice_clipped),
                 student_executed=np.array(actual_student),
             )
+        if sampling is not None:
+            action, sampled = sampling.propose(
+                action, ta["NN_reference_nominal"], control=step, standing=standing
+            )
+            target_a = ep.offset + action[ep.order] * ep.scale
+            equal(sampled, sampling_trace, step)
         ta.update(
             control=np.array(step),
             executed_action=action.copy(),
@@ -252,6 +290,10 @@ def replay_trial(
         len(v) != w.control_steps for v in feedback_trace.values()
     ):
         raise ValueError("all own causal feedback observations required")
+    if sampling_trace is not None and any(
+        len(v) != w.control_steps for v in sampling_trace.values()
+    ):
+        raise ValueError("complete own stochastic and deterministic recovery rows required")
     ownraw = {k: np.stack([r[k] for r in physical]) for k in physical[0]}
     al = w.layouts["a/"]
     qids = [*range(al.rq, al.rq + 7), *al.qi, *range(al.bq, al.bq + 7)]
@@ -296,6 +338,17 @@ def replay_trial(
         result["feedback_variant"] = feedback_variant
         if feedback_anticipation_seconds:
             result["feedback_anticipation_seconds"] = feedback_anticipation_seconds
+    if sampling is not None:
+        result.update(
+            sampling.metadata(reference_controls=ep.clip.length, recovery_controls=stand_controls)
+        )
+        result.update(
+            assisted=False,
+            external_teacher=False,
+            authority_rejected=False,
+            all_actor_actions_actually_executed=True,
+            natural_terminal_observed=True,
+        )
     if pair is not None:
         result.update(
             student_prefix_controls=student_prefix_controls,

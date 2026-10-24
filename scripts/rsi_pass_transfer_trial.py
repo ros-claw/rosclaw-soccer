@@ -35,7 +35,26 @@ def collect_trial(
     emit_course_rows=True,
     feedback_variant=None,
     feedback_anticipation_seconds=0.0,
+    sampling_seed=None,
+    sampling_profile=None,
 ):
+    if (sampling_seed is None) != (sampling_profile is None):
+        raise ValueError("explicit sampling seed/profile pair required")
+    if sampling_seed is not None:
+        from rosclaw_soccer.rsi.motor_exploration_profile import exploration_sigma
+        from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
+
+        exploration_sigma(sampling_profile, "box-truncated-ar1")
+        if (
+            type(sampling_seed) is not int
+            or not 0 <= sampling_seed < 2**31
+            or type(actor) is not RefinementMotorAdapter
+            or student is not None
+            or course["assisted"] is not False
+            or feedback_variant is not None
+            or feedback_anticipation_seconds != 0.0
+        ):
+            raise ValueError("pure own refinement stochastic rollout only; no stacked teacher")
     if feedback_variant is not None:
         from rosclaw_soccer.rsi.causal_foot_ball_feedback import feedback_parameters
 
@@ -80,6 +99,13 @@ def collect_trial(
             if not np.array_equal(initial_q, z["qpos"]) or not np.array_equal(initial_v, z["qvel"]):
                 raise ValueError("paired teacher/control arms must start in identical physics")
     goal = np.array(course["target"])
+    sampling, sampling_rows = None, []
+    if sampling_seed is not None:
+        from rosclaw_soccer.rsi.shared_motor_sampling import SharedMotorSampling
+
+        sampling = SharedMotorSampling(
+            ep.scale[np.argsort(ep.order)], seed=sampling_seed, profile=sampling_profile
+        )
     feedback = None
     feedback_rows = []
     if feedback_variant is not None:
@@ -177,6 +203,12 @@ def collect_trial(
                 teacher_advice_clipped=np.array(advice_clipped),
                 student_executed=np.array(actual_student),
             )
+        if sampling is not None:
+            action, sample_trace = sampling.propose(
+                action, ta["NN_reference_nominal"], control=step, standing=standing
+            )
+            target_a = ep.offset + action[ep.order] * ep.scale
+            sampling_rows.append(sample_trace)
         q, v = w.layouts["b/"].canonical(w.data)
         qw, x, y, z = q[3:7]
         yaw = float(np.arctan2(2 * (qw * z + x * y), 1 - 2 * (y * y + z * z)))
@@ -243,6 +275,8 @@ def collect_trial(
     }
     if feedback is not None:
         artifacts["feedback"] = store(folder, "feedback", feedback_rows)
+    if sampling is not None:
+        artifacts["sampling"] = store(folder, "sampling", sampling_rows)
     al = w.layouts["a/"]
     qids = [*range(al.rq, al.rq + 7), *al.qi, *range(al.bq, al.bq + 7)]
     vids = [*range(al.rv, al.rv + 6), *al.vi, *range(al.bv, al.bv + 6)]
@@ -287,6 +321,17 @@ def collect_trial(
         result["feedback_variant"] = feedback_variant
         if feedback_anticipation_seconds:
             result["feedback_anticipation_seconds"] = feedback_anticipation_seconds
+    if sampling is not None:
+        result.update(
+            sampling.metadata(reference_controls=ep.clip.length, recovery_controls=stand_controls)
+        )
+        result.update(
+            assisted=False,
+            external_teacher=False,
+            authority_rejected=False,
+            all_actor_actions_actually_executed=True,
+            natural_terminal_observed=True,
+        )
     if pair is not None:
         result.update(
             student_prefix_controls=student_prefix_controls,
