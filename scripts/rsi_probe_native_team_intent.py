@@ -1,0 +1,301 @@
+"""Native8-body coached role reaction baseline, not learned autonomous4v4 football.
+
+All8 private98->29 streams share one real500Hz MuJoCo clock. No kicks, goals,
+root forces, body resets or ball rewrites are provided by this diagnostic.
+Fresh NN re-execution is not an independent controller implementation.
+"""
+
+import argparse
+import json
+import math
+from pathlib import Path
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    for name in ("parent", "own", "core-source-root", "output"):
+        p.add_argument("--" + name, type=Path, required=True)
+    for name in ("parent-hash", "own-hash", "core-expected-head", "expected-head"):
+        p.add_argument("--" + name, required=True)
+    a = p.parse_args()
+    from scripts.rsi_active_core_source import pin_active_core
+    from scripts.rsi_atomic_artifacts import write_once
+    from scripts.rsi_native_context_recovery_common import check_pins, digest
+    from scripts.rsi_native_fresh_common import clean, source_pins
+
+    clean(a.expected_head)
+    if a.output.exists():
+        raise ValueError("unused native team baseline output required")
+    reports, pins = {}, {}
+    for name in ("parent", "own"):
+        path = getattr(a, name) / "complete.json"
+        expected = getattr(a, name + "_hash")
+        if path.is_symlink() or digest(path) != expected:
+            raise ValueError("exact verified native predecessor required")
+        report = json.loads(path.read_text())
+        for key, value in report["input_file_hashes"].items():
+            if key in pins and pins[key] != value:
+                raise ValueError("conflicting qualification ancestry")
+            pins[key] = value
+        pins[str(path)] = expected
+        reports[name] = report
+    if (
+        not reports["own"]["all_exact"]
+        or reports["own"]["source_hash"] != a.parent_hash
+        or len(reports["parent"]["records"]) != 16
+        or not all(x["healthy_full_horizon"] for x in reports["parent"]["records"])
+    ):
+        raise ValueError(
+            "complete healthy independently replayed native asset predecessor required"
+        )
+    pin_active_core(a.core_source_root, a.core_expected_head, pins)
+    source_pins(pins)
+    check_pins(pins)
+    import mujoco
+    import numpy as np
+    from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
+
+    from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
+    from rosclaw_soccer.rsi.native_team_intent import ROLES, command_toward, role_target
+    from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+    from rosclaw_soccer.rsi.shared_native_motor_world import (
+        NativePDParameters,
+        SharedNativeMotorWorld,
+    )
+    from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
+    from rosclaw_soccer.sim.contracts import hash_json
+
+    scenes = [Path(k) for k in pins if k.endswith("/cached-standard/declared-scene.xml")]
+    models = [Path(k) for k in pins if k.endswith("/velocity/v0/exported/policy.onnx")]
+    configs = [Path(k) for k in pins if k.endswith("/velocity/v0/params/deploy.yaml")]
+    motions = [Path(k) for k in pins if k.endswith("/policy/robonaldo/model/freekick_motion.npz")]
+    if any(len(x) != 1 for x in (scenes, models, configs, motions)):
+        raise ValueError("unique pinned qualified body/velocity assets required")
+    with np.load(motions[0]) as motion:
+        root_z = float(motion["body_pos_w"][0, 0, 2])
+    agents = [(team, role, team + "_" + role + "/") for team in ("red", "blue") for role in ROLES]
+    prefixes = tuple(x[2] for x in agents)
+    xml = shared_native_scene(scenes[0].read_text(), prefixes=prefixes)
+    horizon = 600
+    starts = ((-8.0, 0.0), (-4.0, -1.5), (-2.0, 2.5), (-1.5, 0.0))
+    a.output.mkdir(parents=True)
+    write_once(
+        a.output / "declaration.json",
+        dict(
+            protocol="native8_coached_ball_intent_baseline.v1",
+            source_head=a.expected_head,
+            input_file_hashes=pins,
+            agents=agents,
+            starts_red_m=starts,
+            blue_starts_halfturn_of_red=True,
+            ball_initial_linear_velocity_mps=[0.0, 0.8, 0.0],
+            initial_angular_velocity_is_rolling=True,
+            control_hz=50,
+            native_hz=500,
+            horizon_controls=horizon,
+            warmup_zero_velocity_controls=50,
+            maximum_world_executions=4,
+            maximum_native_steps=24000,
+            trained_velocity_model_reused=True,
+            independent_private_policy_instances=8,
+            high_level_role_law_is_coached_not_learned=True,
+            optimizer_updates=0,
+            no_parent_torque_artifact_body_hash_rebinding=True,
+            no_saved_action_replay=True,
+            no_state_writes_after_initialization=True,
+            no_applied_external_forces=True,
+            independent_controller_replay=False,
+            not_a_match_or_skill_qualification=True,
+            engine_version=mujoco.__version__,
+            engine_is_legacy_research_fixture_not_qualified_harness=True,
+            publicity_rights_not_established=True,
+            hardware_authorized=False,
+            promotion_authorized=False,
+        ),
+    )
+    records, charged = [], 0
+    try:
+        for arm in ("zero", "role-reactive"):
+            reference = None
+            for repeat in (0, 1):
+                m = mujoco.MjModel.from_xml_string(xml)
+                d = mujoco.MjData(m)
+                streams = {
+                    prefix: ContinuousVelocityStream(
+                        models[0],
+                        configs[0],
+                        expected_model_hash=pins[str(models[0])],
+                        expected_config_hash=pins[str(configs[0])],
+                        horizon_controls=horizon,
+                    )
+                    for prefix in prefixes
+                }
+                if len({id(x.last_action) for x in streams.values()}) != 8:
+                    raise ValueError("all8 private action memories required")
+                layouts, params = {}, {}
+                for i, (team, _role, prefix) in enumerate(agents):
+                    layout = NativeVelocityLayout(
+                        m, robot_prefix=prefix, ball_body_name="soccer_ball", player_count=8
+                    )
+                    layouts[prefix] = layout
+                    sign = 1.0 if team == "red" else -1.0
+                    x, y = starts[i % 4]
+                    d.qpos[layout.rq : layout.rq + 3] = [sign * x, sign * y, root_z]
+                    d.qpos[layout.rq + 3 : layout.rq + 7] = (
+                        [1.0, 0.0, 0.0, 0.0] if team == "red" else [0.0, 0.0, 0.0, 1.0]
+                    )
+                    stream = streams[prefix]
+                    d.qpos[layout.qi] = np.asarray(stream.params.defaults)
+                    params[prefix] = NativePDParameters(
+                        np.asarray(stream.params.stiffness),
+                        np.asarray(stream.params.damping),
+                        0.85 * np.asarray(G1_HARD_TORQUE_LIMITS),
+                    )
+                ball = m.body("soccer_ball").id
+                gids = np.flatnonzero(
+                    (m.geom_bodyid == ball) & ((m.geom_contype != 0) | (m.geom_conaffinity != 0))
+                )
+                if (
+                    len(gids) != 1
+                    or m.geom_type[gids[0]] != int(mujoco.mjtGeom.mjGEOM_SPHERE)
+                    or abs(float(m.geom_size[gids[0], 0]) - 0.11) > 1e-12
+                    or abs(float(m.body_mass[ball]) - 0.43) > 1e-12
+                ):
+                    raise ValueError("actual standard sphere .11m/.43kg required")
+                d.qpos[layout.bq : layout.bq + 7] = [0.0, 0.0, 0.11, 1.0, 0.0, 0.0, 0.0]
+                d.qvel[layout.bv : layout.bv + 6] = [0.0, 0.8, 0.0, -0.8 / 0.11, 0.0, 0.0]
+                mujoco.mj_forward(m, d)
+                w = SharedNativeMotorWorld(m, d, players=params, ball_body_name="soccer_ball")
+                initial = {
+                    prefix: d.qpos[lo.rq : lo.rq + 3].copy() for prefix, lo in layouts.items()
+                }
+                raw = {key: [] for key in ("qpos", "qvel", "torque", "ball_forces")}
+                controls = {
+                    key: [] for key in ("commands", "role_targets", "observations98", "targets29")
+                }
+                for frame in range(horizon):
+                    ball_xy = d.qpos[layout.bq : layout.bq + 2].copy()
+                    commands, targets, goals, observations = [], {}, [], []
+                    for team, role, prefix in agents:
+                        lo, stream = layouts[prefix], streams[prefix]
+                        q, v = lo.canonical(d)
+                        quat = q[3:7]
+                        yaw = math.atan2(
+                            2 * (quat[0] * quat[3] + quat[1] * quat[2]),
+                            1 - 2 * (quat[2] ** 2 + quat[3] ** 2),
+                        )
+                        goal = role_target(team, role, ball_xy)
+                        command = (
+                            np.zeros(3, np.float32)
+                            if arm == "zero" or frame < 50
+                            else command_toward(q[:2], yaw, goal, ball_xy)
+                        )
+                        targets[prefix] = stream.propose(
+                            q, v, lo.angular_velocity_body(d), command, frame=frame
+                        )
+                        commands.append(command)
+                        goals.append(goal)
+                        observations.append(stream.last_observation.copy())
+                    for key, value in (
+                        ("commands", commands),
+                        ("role_targets", goals),
+                        ("observations98", observations),
+                        ("targets29", [targets[p] for p in prefixes]),
+                    ):
+                        controls[key].append(np.asarray(value).copy())
+                    step = w.advance(targets)
+                    charged += 10
+                    for key in raw:
+                        raw[key].append(step[key])
+                    if w.failed:
+                        break
+                arrays = {k: np.concatenate(v) for k, v in raw.items()}
+                arrays.update({k: np.asarray(v) for k, v in controls.items()})
+                own_exact = None
+                if repeat:
+                    with np.load(a.output / reference["path"]) as previous:
+                        own_exact = {
+                            key: bool(np.array_equal(value, previous[key]))
+                            for key, value in arrays.items()
+                        }
+                    if not all(own_exact.values()):
+                        raise ValueError("fresh8-stream source re-execution differs")
+                path = a.output / f"{arm}-{repeat}.npz"
+                np.savez_compressed(path, **arrays)
+                artifact = dict(path=path.name, hash=digest(path))
+                if not repeat:
+                    reference = artifact
+                players = []
+                for i, (team, role, prefix) in enumerate(agents):
+                    lo = layouts[prefix]
+                    speeds = np.linalg.norm(arrays["qvel"][:, lo.rv : lo.rv + 2], axis=1)
+                    players.append(
+                        dict(
+                            team=team,
+                            role=role,
+                            body_binding_hash=hash_json(lo.profile()),
+                            displacement_m=float(
+                                np.linalg.norm(d.qpos[lo.rq : lo.rq + 2] - initial[prefix][:2])
+                            ),
+                            actual_max_speed_mps=float(speeds.max()),
+                            actual_mean_speed_mps=float(speeds.mean()),
+                            neural_calls=streams[prefix].neural_calls,
+                            foot_contact_steps=int(
+                                np.count_nonzero(
+                                    np.max(arrays["ball_forces"][:, i, :2], axis=1) > 1.0
+                                )
+                            ),
+                            illegal_contact_steps=int(
+                                np.count_nonzero(arrays["ball_forces"][:, i, 2] > 1.0)
+                            ),
+                            nonzero_command_controls=int(
+                                np.count_nonzero(
+                                    np.linalg.norm(arrays["commands"][:, i], axis=1) > 0
+                                )
+                            ),
+                        )
+                    )
+                row = dict(
+                    arm=arm,
+                    repeat=repeat,
+                    players=players,
+                    controls=w.control_steps,
+                    native_steps=w.native_steps,
+                    healthy_full_horizon=w.control_steps == horizon and not w.failed,
+                    body_failed=step["body_failed"],
+                    fresh_reexecution_exact=own_exact,
+                    artifact=artifact,
+                )
+                records.append(row)
+                write_once(a.output / f"record-{arm}-{repeat}.json", row)
+                print(json.dumps(row), flush=True)
+        check_pins(pins)
+        write_once(
+            a.output / "complete.json",
+            dict(
+                status="NATIVE8_COACHED_ROLE_BASELINE_MEASURED_NOT_A_MATCH",
+                source_head=a.expected_head,
+                input_file_hashes=pins,
+                records=records,
+                native_steps=charged,
+                optimizer_updates=0,
+                fresh_reexecution_exact=all(
+                    all(r["fresh_reexecution_exact"].values()) for r in records if r["repeat"]
+                ),
+                independent_controller_replay=False,
+                not_learned_role_autonomy=True,
+                hardware_authorized=False,
+                promotion_authorized=False,
+                goal_complete=False,
+            ),
+        )
+    except BaseException as error:
+        write_once(
+            a.output / "failed.json",
+            dict(error=repr(error), completed=len(records), known_native_steps=charged),
+        )
+        raise
+
+
+if __name__ == "__main__":
+    main()
