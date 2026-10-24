@@ -53,8 +53,13 @@ class NeuralStandingTask:
         if hidden_width == 256:
             from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
             from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
+            from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
 
-            if type(actor) not in (DualRecurrentMotor, ConsolidatedMotorAdapter):
+            if type(actor) not in (
+                DualRecurrentMotor,
+                ConsolidatedMotorAdapter,
+                RefinementMotorAdapter,
+            ):
                 raise ValueError("new dual256 state requires the explicit research motor contract")
         self.hidden_width = hidden_width
         self.ep, self.actor, self.memory_mode, self.count_inference = (

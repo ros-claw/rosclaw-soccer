@@ -10,14 +10,17 @@ import torch
 
 from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
 from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
+from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
 
 MotorState = tuple[torch.Tensor, torch.Tensor]
 PairState = tuple[MotorState, MotorState]
-Motor = DualRecurrentMotor | ConsolidatedMotorAdapter
+Motor = DualRecurrentMotor | ConsolidatedMotorAdapter | RefinementMotorAdapter
 
 
 def paired_reference(motor: Motor) -> torch.nn.Module:
     """Explicit class admission; no duck-typed arbitrary policy wrappers."""
+    if type(motor) is RefinementMotorAdapter:
+        return motor.parent.memory.parent
     if type(motor) is ConsolidatedMotorAdapter:
         return motor.memory.parent
     if type(motor) is DualRecurrentMotor:
@@ -26,7 +29,13 @@ def paired_reference(motor: Motor) -> torch.nn.Module:
 
 
 def _plastic_storage(motor: Motor) -> set[int]:
-    if type(motor) is ConsolidatedMotorAdapter:
+    if type(motor) is RefinementMotorAdapter:
+        params = (
+            *motor.parent.memory.plastic.parameters(),
+            *motor.parent.head.parameters(),
+            *motor.head.parameters(),
+        )
+    elif type(motor) is ConsolidatedMotorAdapter:
         params = (*motor.memory.plastic.parameters(), *motor.head.parameters())
     elif type(motor) is DualRecurrentMotor:
         params = tuple(motor.plastic.parameters())
@@ -40,8 +49,10 @@ class SameStateMotorPair:
 
     def __init__(self, student: Motor, teacher: Motor) -> None:
         if (
-            type(student) not in (DualRecurrentMotor, ConsolidatedMotorAdapter)
-            or type(teacher) not in (DualRecurrentMotor, ConsolidatedMotorAdapter)
+            type(student)
+            not in (DualRecurrentMotor, ConsolidatedMotorAdapter, RefinementMotorAdapter)
+            or type(teacher)
+            not in (DualRecurrentMotor, ConsolidatedMotorAdapter, RefinementMotorAdapter)
             or student is teacher
             or student.training
             or teacher.training

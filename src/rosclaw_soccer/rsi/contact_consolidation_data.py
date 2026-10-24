@@ -55,6 +55,26 @@ def consolidation_pools(
 
 def context_witness_hash(data: dict[str, Any], checkpoint_kind: str) -> str:
     """Keep the original fixed exam fixtures separate from the new training bank."""
+    if checkpoint_kind == "consolidated-refinement-v1":
+        import json
+        from pathlib import Path
+
+        from rosclaw_soccer.rsi.paid_canonical_behavior import digest
+
+        if data["status"] != "QUALIFIED_RESCUE_REFINEMENT_BANK_READY_PENDING_OWN_FEATURE_AUDIT":
+            raise ValueError("explicit new refinement data required")
+        h = data["retained_bank_hash"]
+        paths = [
+            Path(p)
+            for p, v in data["input_file_hashes"].items()
+            if v == h and p.endswith("/complete.json")
+        ]
+        if len(paths) != 1 or paths[0].is_symlink() or digest(paths[0]) != h:
+            raise ValueError("exact original retained task witness required")
+        retained = dict(json.loads(paths[0].read_text()))
+        if retained["parent_lineage_hash"] != data["parent_lineage_hash"]:
+            raise ValueError("refinement cannot replace original exam fixtures")
+        return context_witness_hash(retained, "consolidated-adapter-v1")
     if checkpoint_kind in (
         "team-pass-corrected-v2",
         "team-pass-selected-v3",

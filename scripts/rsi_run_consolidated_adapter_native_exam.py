@@ -41,14 +41,17 @@ def native_command(
     ):
         raise ValueError("closed exact predecessor and unused once-only physical output required")
     t, c = [json.loads(p.read_text()) for p in (tp, cp)]
+    from rosclaw_soccer.rsi.consolidated_adapter_checkpoint import training_data_hash
+
+    kind = t["checkpoint_kind"]
     if (
-        t["checkpoint_kind"] != "consolidated-adapter-v1"
+        kind not in ("consolidated-adapter-v1", "consolidated-refinement-v1")
         or c["status"] != "DUAL_RECURRENT_TRAINED_CHECKPOINT_CPU_OWN_HISTORY_AUDIT_PASS_NOT_PHYSICS"
         or c["checkpoint_kind"] != t["checkpoint_kind"]
         or c["source_hash"] != training_hash
         or c["source_head"] != (producer_head if own else expected_head)
         or c["checkpoint_hash"] != t["checkpoint_hash"]
-        or c["data_hash"] != t["data_hash"]
+        or c["data_hash"] != training_data_hash(t, kind)
         or c["physical_steps_executed"] != 0
         or c["old_retention_proven"] is not False
         or any(
@@ -60,7 +63,7 @@ def native_command(
         raise ValueError("exact independently CPU-audited SIM-only new head required")
     from rosclaw_soccer.rsi.consolidated_adapter_checkpoint import expected_cpu_audit_decisions
 
-    if c["own_actor_decisions"] != expected_cpu_audit_decisions(t, "consolidated-adapter-v1"):
+    if c["own_actor_decisions"] != expected_cpu_audit_decisions(t, kind):
         raise ValueError("incomplete CPU own-history scope cannot launch physics")
     if own:
         if native_root is None:
@@ -82,7 +85,7 @@ def native_command(
             report["status"] != status
             or len(report["records"]) != count
             or report["declaration_hash"] != digest(dp)
-            or declared["checkpoint_kind"] != "consolidated-adapter-v1"
+            or declared["checkpoint_kind"] != kind
             or any(
                 v["training_hash"] != training_hash
                 or v["source_head"] != producer_head
@@ -111,7 +114,7 @@ def native_command(
         if exam == "pass80-own":
             args += [
                 "--checkpoint-kind",
-                "consolidated-adapter-v1",
+                kind,
                 "--producer-head",
                 str(producer_head),
             ]
@@ -124,7 +127,7 @@ def native_command(
         if exam == "pass80"
         else "scripts.rsi_exam_trained_dual_motor",
         "--checkpoint-kind",
-        "consolidated-adapter-v1",
+        kind,
         "--training-root",
         str(training_root),
         "--training-hash",

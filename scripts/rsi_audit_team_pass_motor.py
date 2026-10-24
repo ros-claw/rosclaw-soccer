@@ -18,6 +18,7 @@ def main():
             "team-pass-corrected-v2",
             "team-pass-selected-v3",
             "consolidated-adapter-v1",
+            "consolidated-refinement-v1",
         ),
         default="team-pass-consolidated-v1",
     )
@@ -77,23 +78,15 @@ def main():
     tp, training = receipt(pins, d["training_hash"])
     _, cpu = receipt(pins, d["cpu_audit_hash"])
     _, bank = receipt(pins, d["data_hash"])
+    from rosclaw_soccer.rsi.pass_native_bank import original_pass_bank
+
     if (
         cpu["status"] != "DUAL_RECURRENT_TRAINED_CHECKPOINT_CPU_OWN_HISTORY_AUDIT_PASS_NOT_PHYSICS"
         or cpu["source_hash"] != d["training_hash"]
         or cpu["checkpoint_hash"] != training["checkpoint_hash"]
-        or bank["status"]
-        != (
-            "TEAM_PASS_WHOLE_HISTORY_BANK177_READY_NOT_TRAINED"
-            if a.checkpoint_kind == "team-pass-consolidated-v1"
-            else "TEAM_PASS_ACTUAL_STUDENT_CORRECTION_BANK274_READY_NOT_TRAINED"
-        )
     ):
         raise ValueError("same whole-history independently CPU-checked trained motor required")
-    task_bank = (
-        bank
-        if a.checkpoint_kind == "team-pass-consolidated-v1"
-        else receipt(pins, bank["base_data_hash"])[1]
-    )
+    task_bank = original_pass_bank(bank, a.checkpoint_kind, lambda h: receipt(pins, h)[1])
     if (
         task_bank["status"] != "TEAM_PASS_WHOLE_HISTORY_BANK177_READY_NOT_TRAINED"
         or len(task_bank["records"]) != 177

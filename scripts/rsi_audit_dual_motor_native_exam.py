@@ -69,7 +69,11 @@ def main():
 
     training_path, training = bound_receipt(d["training_hash"])
     parent_path, parent_record = bound_receipt(training["parent_lineage_hash"])
-    data_path, data = bound_receipt(training["data_hash"])
+    from rosclaw_soccer.rsi.consolidated_adapter_checkpoint import training_data_hash
+
+    data_path, data = bound_receipt(
+        training_data_hash(training, d.get("checkpoint_kind", "supervised"))
+    )
     baseline_path, baseline = bound_receipt(d["baseline_hash"])
     from rosclaw_soccer.rsi.contact_consolidation_data import context_witness_hash
 

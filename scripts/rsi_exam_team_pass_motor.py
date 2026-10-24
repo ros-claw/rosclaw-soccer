@@ -20,6 +20,7 @@ def main():
             "team-pass-corrected-v2",
             "team-pass-selected-v3",
             "consolidated-adapter-v1",
+            "consolidated-refinement-v1",
         ),
         default="team-pass-consolidated-v1",
     )
@@ -33,7 +34,11 @@ def main():
     from scripts.rsi_native_fresh_common import clean, receipt, source_pins
 
     clean(a.expected_head)
-    from rosclaw_soccer.rsi.consolidated_adapter_checkpoint import expected_cpu_audit_decisions
+    from rosclaw_soccer.rsi.consolidated_adapter_checkpoint import (
+        expected_cpu_audit_decisions,
+        training_data_hash,
+    )
+    from rosclaw_soccer.rsi.pass_native_bank import original_pass_bank
 
     paths = [a.training_root / "complete.json", a.cpu_audit_root / "complete.json"]
     if (
@@ -46,12 +51,13 @@ def main():
             "exact closed trained model/independent CPU audit and unused exam required"
         )
     t, own = [json.loads(x.read_text()) for x in paths]
+    data_hash = training_data_hash(t, a.checkpoint_kind)
     if (
         own["status"] != "DUAL_RECURRENT_TRAINED_CHECKPOINT_CPU_OWN_HISTORY_AUDIT_PASS_NOT_PHYSICS"
         or own["checkpoint_kind"] != a.checkpoint_kind
         or own["source_hash"] != a.training_hash
         or own["checkpoint_hash"] != t["checkpoint_hash"]
-        or own["data_hash"] != t["data_hash"]
+        or own["data_hash"] != data_hash
         or own["own_actor_decisions"] != expected_cpu_audit_decisions(t, a.checkpoint_kind)
         or own["physical_steps_executed"] != 0
         or any(
@@ -63,23 +69,10 @@ def main():
         raise ValueError("whole independent own-history CPU model replay required")
     pins = dict(own["input_file_hashes"])
     pins.update({str(x): digest(x) for x in paths})
-    bp, bank = receipt(pins, t["data_hash"])
-    bank_status = (
-        "TEAM_PASS_WHOLE_HISTORY_BANK177_READY_NOT_TRAINED"
-        if a.checkpoint_kind == "team-pass-consolidated-v1"
-        else "TEAM_PASS_ACTUAL_STUDENT_CORRECTION_BANK274_READY_NOT_TRAINED"
-    )
-    if bank["status"] != bank_status or len(bank["records"]) != (
-        177 if a.checkpoint_kind == "team-pass-consolidated-v1" else 274
-    ):
-        raise ValueError("same complete declared whole-history TRAIN data bank required")
+    bp, bank = receipt(pins, data_hash)
     # v2 original rows were copied from a data bank, not directly from native
     # trial folders. Resolve the original physical task witness independently.
-    task_bank = (
-        bank
-        if a.checkpoint_kind == "team-pass-consolidated-v1"
-        else receipt(pins, bank["base_data_hash"])[1]
-    )
+    task_bank = original_pass_bank(bank, a.checkpoint_kind, lambda h: receipt(pins, h)[1])
     if (
         task_bank["status"] != "TEAM_PASS_WHOLE_HISTORY_BANK177_READY_NOT_TRAINED"
         or len(task_bank["records"]) != 177
@@ -107,7 +100,7 @@ def main():
             training_hash=a.training_hash,
             checkpoint_kind=a.checkpoint_kind,
             cpu_audit_hash=a.cpu_audit_hash,
-            data_hash=t["data_hash"],
+            data_hash=data_hash,
             courses=courses,
             maximum_worlds=80,
             maximum_native_steps=320000,

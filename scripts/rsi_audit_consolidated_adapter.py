@@ -16,6 +16,11 @@ def main():
         p.add_argument("--" + k, type=Path, required=True)
     for k in ("training-hash", "expected-head"):
         p.add_argument("--" + k, required=True)
+    p.add_argument(
+        "--checkpoint-kind",
+        choices=("consolidated-adapter-v1", "consolidated-refinement-v1"),
+        default="consolidated-adapter-v1",
+    )
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -33,7 +38,11 @@ def main():
     t = json.loads(rp.read_text())
     pins = dict(t["input_file_hashes"])
     pins[str(rp)] = a.training_hash
-    bp, bank = receipt(pins, t["data_hash"])
+    from rosclaw_soccer.rsi.consolidated_adapter_checkpoint import training_data_hash
+
+    refinement = a.checkpoint_kind == "consolidated-refinement-v1"
+    data_hash = training_data_hash(t, a.checkpoint_kind)
+    bp, bank = receipt(pins, data_hash)
     fp, features = receipt(pins, t["feature_hash"])
     for name in ("checkpoint_path",):
         path = Path(t[name])
@@ -58,7 +67,7 @@ def main():
             pins,
             a.training_hash,
             {i: contexts[i] for i in (1, 4, 20, 21)},
-            checkpoint_kind="consolidated-adapter-v1",
+            checkpoint_kind=a.checkpoint_kind,
         )
         results = []
         for row, proof in zip(bank["records"], features["records"], strict=True):
@@ -81,7 +90,11 @@ def main():
                     z["targets"].copy(),
                     z["action_scale"].copy(),
                 )
-                reference = z["reference_nominal"] + z["reference_delta"] / scale
+                reference = (
+                    z["reference_nominal"].copy()
+                    if refinement
+                    else z["reference_nominal"] + z["reference_delta"] / scale
+                )
                 original_nominal = z["reference_nominal"].copy()
             with np.load(feature_path, allow_pickle=False) as z:
                 f = {k: z[k].copy() for k in z.files}
@@ -95,11 +108,16 @@ def main():
                     mean, private, e = model.forward_with_evidence(
                         torch.from_numpy(o).reshape(1, 1, 160), private
                     )
-                    _, projected_total = model.adapt_features(
-                        torch.from_numpy(f["features"][i]).reshape(1, 1, 288),
-                        torch.from_numpy(f["memory_delta"][i]).reshape(1, 1, 29),
-                        torch.from_numpy(scale),
-                    )
+                    feature = torch.from_numpy(f["features"][i]).reshape(1, 1, 288)
+                    delta = torch.from_numpy(
+                        f["parent_delta" if refinement else "memory_delta"][i]
+                    ).reshape(1, 1, 29)
+                    if refinement:
+                        _, projected_total = model.adapt_features(feature, delta)
+                    else:
+                        _, projected_total = model.adapt_features(
+                            feature, delta, torch.from_numpy(scale)
+                        )
                     other = original_nominal[i] + projected_total[0, 0].numpy() / scale
                 calls += 1
                 feature_error = max(
@@ -108,7 +126,10 @@ def main():
                 )
                 mean_error = max(mean_error, float(np.abs(mean[0, 0].numpy() - other).max()))
                 if (
-                    not np.array_equal(e["reference_mean"][0, 0].numpy(), reference[i])
+                    not np.array_equal(
+                        e["reference_nominal" if refinement else "reference_mean"][0, 0].numpy(),
+                        reference[i],
+                    )
                     or (e["final_mean_delta_radians"].abs() > 0.2).any()
                     or feature_error > 2e-5
                     or mean_error > 2e-5
@@ -116,6 +137,11 @@ def main():
                     raise ValueError(
                         "own history/reference/head replay or original authority differs"
                     )
+                if refinement and not np.array_equal(
+                    e["refinement_parent_mean"][0, 0].numpy(),
+                    original_nominal[i] + f["parent_delta"][i] / scale,
+                ):
+                    raise ValueError("whole acquired parent differs from qualified own replay")
                 means.append(mean[0, 0].numpy().copy())
             actual = np.stack(means)
             out = a.output / f"prediction{row['index']}.npz"
@@ -132,7 +158,9 @@ def main():
             )
             results.append(result)
             print(json.dumps(result), flush=True)
-        if calls != features["own_feature_decisions"] or len(results) != 274:
+        if calls != features["own_feature_decisions"] or len(results) != (
+            62 if refinement else 274
+        ):
             raise ValueError("ALL actual histories required before CPU model claim")
         check_pins(pins)
         clean(a.expected_head)
@@ -140,11 +168,11 @@ def main():
             a.output / "complete.json",
             dict(
                 status="DUAL_RECURRENT_TRAINED_CHECKPOINT_CPU_OWN_HISTORY_AUDIT_PASS_NOT_PHYSICS",
-                checkpoint_kind="consolidated-adapter-v1",
+                checkpoint_kind=a.checkpoint_kind,
                 source_head=a.expected_head,
                 source_hash=a.training_hash,
                 checkpoint_hash=t["checkpoint_hash"],
-                data_hash=t["data_hash"],
+                data_hash=data_hash,
                 feature_hash=t["feature_hash"],
                 input_file_hashes=pins,
                 own_actor_decisions=calls,

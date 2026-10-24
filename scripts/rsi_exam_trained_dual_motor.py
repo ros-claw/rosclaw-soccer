@@ -23,6 +23,7 @@ def main():
             "team-pass-corrected-v2",
             "team-pass-selected-v3",
             "consolidated-adapter-v1",
+            "consolidated-refinement-v1",
         ),
         default="supervised",
     )
@@ -46,6 +47,7 @@ def main():
     from rosclaw_soccer.rsi.consolidated_adapter_checkpoint import (
         expected_cpu_audit_decisions,
         load_motor_candidate_for_sim_audit,
+        training_data_hash,
     )
 
     tp, ap, rp = (
@@ -62,13 +64,14 @@ def main():
     ):
         raise ValueError("exact closed candidate, CPU audit and baseline required")
     t, ar, r = [json.loads(x.read_text()) for x in (tp, ap, rp)]
+    data_hash = training_data_hash(t, a.checkpoint_kind)
     if (
         ar["status"] != "DUAL_RECURRENT_TRAINED_CHECKPOINT_CPU_OWN_HISTORY_AUDIT_PASS_NOT_PHYSICS"
         or ar.get("checkpoint_kind", "supervised") != a.checkpoint_kind
         or ar["source_head"] != a.cpu_auditor_head
         or ar["source_hash"] != a.training_hash
         or ar["checkpoint_hash"] != t["checkpoint_hash"]
-        or ar["data_hash"] != t["data_hash"]
+        or ar["data_hash"] != data_hash
         or ar["own_actor_decisions"] != expected_cpu_audit_decisions(t, a.checkpoint_kind)
         or ar["physical_steps_executed"] != 0
         or r["status"] != "ACTUAL_PARENT_TRAIN20_REHEARSAL_COLLECTED_PENDING_NATIVE_AUDIT"
@@ -85,7 +88,7 @@ def main():
         raise ValueError("source-bound original case declaration required")
     cases = json.loads(rd.read_text())["cases"]
     data_paths = [
-        Path(x) for x, h in pins.items() if h == t["data_hash"] and x.endswith("/complete.json")
+        Path(x) for x, h in pins.items() if h == data_hash and x.endswith("/complete.json")
     ]
     parent_paths = [
         Path(x)

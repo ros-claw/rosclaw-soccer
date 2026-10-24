@@ -12,6 +12,7 @@ import torch
 
 from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
 from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
+from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
 from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
 
 
@@ -52,7 +53,7 @@ class SharedNativeNeuralPlayer:
         self,
         world: SharedNativeMotorWorld,
         prefix: str,
-        actor: DualRecurrentMotor | ConsolidatedMotorAdapter,
+        actor: DualRecurrentMotor | ConsolidatedMotorAdapter | RefinementMotorAdapter,
         *,
         clip: Any,
         torso_index: int,
@@ -67,7 +68,8 @@ class SharedNativeNeuralPlayer:
         reference_bridge_controls: int = 0,
     ) -> None:
         if (
-            type(actor) not in (DualRecurrentMotor, ConsolidatedMotorAdapter)
+            type(actor)
+            not in (DualRecurrentMotor, ConsolidatedMotorAdapter, RefinementMotorAdapter)
             or actor.training
             or any(p.requires_grad or p.device.type != "cpu" for p in actor.parameters())
             or not 1 <= clip.length <= 300

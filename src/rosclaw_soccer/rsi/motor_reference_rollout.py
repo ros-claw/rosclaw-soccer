@@ -29,8 +29,13 @@ def collect_parent_reference(
     if hidden_width == 256:
         from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
         from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
+        from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
 
-        if type(actor) not in (DualRecurrentMotor, ConsolidatedMotorAdapter):
+        if type(actor) not in (
+            DualRecurrentMotor,
+            ConsolidatedMotorAdapter,
+            RefinementMotorAdapter,
+        ):
             raise ValueError("explicit typed dual256 motor required")
         state = actor.initial_state()
     elif hidden_width == 128:

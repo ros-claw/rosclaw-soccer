@@ -55,3 +55,18 @@ def test_pair_cannot_use_same_network_or_trainable_network_as_qualified_teacher(
     p.teacher.plastic.requires_grad_(True)
     with pytest.raises(ValueError):
         SameStateMotorPair(p.student, p.teacher)
+
+
+def test_refinement_and_whole_acquired_parent_keep_private_same_state_histories():
+    from test_refinement_motor_adapter import parent_model
+
+    from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
+
+    parent = parent_model().eval().requires_grad_(False)
+    refined = RefinementMotorAdapter(parent).eval().requires_grad_(False)
+    p = SameStateMotorPair(refined, parent)
+    state = p.initial_state()
+    for _ in range(3):
+        actual, advice, state, _ = p.observe(torch.randn(1, 1, 160), state)
+        assert torch.equal(actual, advice)
+        assert state[0][0].untyped_storage().data_ptr() != state[1][0].untyped_storage().data_ptr()

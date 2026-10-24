@@ -25,6 +25,8 @@ from rosclaw_soccer.rsi.dual_motor_checkpoint import digest
 from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
 from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
 from rosclaw_soccer.rsi.paid_full_entry_student import FrozenFullEntryActor
+from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
+from rosclaw_soccer.rsi.refinement_motor_learning import KIND as REFINEMENT_KIND
 
 
 def load_consolidated_adapter(
@@ -156,7 +158,16 @@ def load_motor_candidate_for_sim_audit(
     root: Path,
     expected_receipt_hash: str,
     checkpoint_kind: str = "supervised",
-) -> tuple[DualRecurrentMotor | ConsolidatedMotorAdapter, dict[str, Any]]:
+) -> tuple[DualRecurrentMotor | ConsolidatedMotorAdapter | RefinementMotorAdapter, dict[str, Any]]:
+    if checkpoint_kind == REFINEMENT_KIND:
+        from rosclaw_soccer.rsi.refinement_motor_checkpoint import load_refinement_motor
+
+        return load_refinement_motor(
+            parent,
+            parent_lineage_hash=parent_lineage_hash,
+            root=root,
+            expected_receipt_hash=expected_receipt_hash,
+        )
     if checkpoint_kind == KIND:
         return load_consolidated_adapter(
             parent,
@@ -179,6 +190,26 @@ def expected_cpu_audit_decisions(training: dict[str, Any], checkpoint_kind: str)
     New-head training does NOT claim recurrent CPU replay. Its separate audit
     must cover the full independently qualified input bank instead.
     """
+    if checkpoint_kind == REFINEMENT_KIND:
+        from rosclaw_soccer.rsi.refinement_motor_learning import FEATURE_STATUS as REF_FEATURE
+
+        ps = [
+            Path(p)
+            for p, h in training["input_file_hashes"].items()
+            if h == training["feature_hash"] and p.endswith("/complete.json")
+        ]
+        if len(ps) != 1 or ps[0].is_symlink() or digest(ps[0]) != training["feature_hash"]:
+            raise ValueError("exact whole refinement feature proof required")
+        f = json.loads(ps[0].read_text())
+        count = f["own_feature_decisions"]
+        if (
+            f["status"] != REF_FEATURE
+            or f["bank_hash"] != training["bank_hash"]
+            or type(count) is not int
+            or count != sum(r["rows"] for r in f["records"])
+        ):
+            raise ValueError("whole refinement private-history decision scope required")
+        return count
     if checkpoint_kind != KIND:
         count = training["cpu_offline_decisions"]
         if type(count) is not int:
@@ -202,3 +233,15 @@ def expected_cpu_audit_decisions(training: dict[str, Any], checkpoint_kind: str)
     ):
         raise ValueError("all274 actual history decisions required")
     return count
+
+
+def training_data_hash(training: dict[str, Any], checkpoint_kind: str) -> str:
+    """New training data stays bank62, never mislabeled as the old task witness."""
+    value = training["bank_hash"] if checkpoint_kind == REFINEMENT_KIND else training["data_hash"]
+    if type(value) is not str or (
+        checkpoint_kind == REFINEMENT_KIND and (not value.startswith("sha256:") or len(value) != 71)
+    ):
+        raise ValueError("explicit exact training-data commitment required")
+    if checkpoint_kind == REFINEMENT_KIND and training.get("data_hash", value) != value:
+        raise ValueError("contradictory new bank identity")
+    return value
