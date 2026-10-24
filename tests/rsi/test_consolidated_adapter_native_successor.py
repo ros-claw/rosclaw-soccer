@@ -91,6 +91,35 @@ def test_declared_successor_only_invokes_existing_frozen_protocol(tmp_path, exam
     assert not any(k in cmd for k in ("--horizon", "--threshold", "--teacher", "--promote"))
 
 
+@pytest.mark.parametrize("exam", ["pass80", "retention44"])
+def test_committed_options_require_bound_cpu97_then_use_identical_native_protocol(tmp_path, exam):
+    from test_neural_option_contract import proof
+
+    args = arguments(tmp_path, exam)
+    wp = tmp_path / "own97" / "complete.json"
+    wp.parent.mkdir()
+    wp.write_text(json.dumps(proof()))
+    tp = args["training_root"] / "complete.json"
+    t = json.loads(tp.read_text())
+    t.update(checkpoint_kind="committed-neural-options-v1", own97_hash=digest(wp))
+    t["input_file_hashes"][str(wp)] = digest(wp)
+    tp.write_text(json.dumps(t))
+    args["training_hash"] = digest(tp)
+    cp = args["cpu_root"] / "complete.json"
+    c = json.loads(cp.read_text())
+    c.update(
+        checkpoint_kind=t["checkpoint_kind"], source_hash=digest(tp), own_actor_decisions=36276
+    )
+    cp.write_text(json.dumps(c))
+    cmd = native_command(**args)
+    assert cmd[cmd.index("--checkpoint-kind") + 1] == "committed-neural-options-v1"
+    assert not any(k in cmd for k in ("--horizon", "--threshold", "--teacher", "--promote"))
+    c["own_actor_decisions"] = 97
+    cp.write_text(json.dumps(c))
+    with pytest.raises(ValueError):
+        native_command(**args)
+
+
 @pytest.mark.parametrize("fault", ["count", "head", "physical", "permission", "failed", "exists"])
 def test_missing_or_invalid_predecessor_cannot_start_physics(tmp_path, fault):
     args = arguments(tmp_path)

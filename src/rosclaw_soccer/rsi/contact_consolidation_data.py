@@ -79,6 +79,7 @@ def context_witness_hash(data: dict[str, Any], checkpoint_kind: str) -> str:
         "team-pass-corrected-v2",
         "team-pass-selected-v3",
         "consolidated-adapter-v1",
+        "committed-neural-options-v1",
     ):
         import json
         from pathlib import Path

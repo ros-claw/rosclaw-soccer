@@ -15,10 +15,14 @@ def main():
         p.add_argument("--" + k, type=Path, required=True)
     for k in ("feasibility-hash", "retention-feature-hash", "parent-own-hash", "expected-head"):
         p.add_argument("--" + k, required=True)
+    p.add_argument("--bundle-root", type=Path)
+    p.add_argument("--bundle-hash")
     p.add_argument(
         "--expert", nargs=2, action="append", required=True, metavar=("SEED", "OWN_HASH")
     )
     a = p.parse_args()
+    if (a.bundle_root is None) != (a.bundle_hash is None):
+        p.error("both exact bundle root and hash are required for declared-bound replay")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, receipt, source_pins
@@ -99,6 +103,37 @@ def main():
                 provenance=dict(context=row["context"]),
             )
         )
+    bundle = None
+    if a.bundle_root is not None:
+        bp, dp = a.bundle_root / "complete.json", a.bundle_root / "declaration.json"
+        if (
+            a.bundle_root.is_symlink()
+            or any(p.is_symlink() for p in (bp, dp))
+            or (a.bundle_root / "failed.json").exists()
+            or digest(bp) != a.bundle_hash
+        ):
+            raise ValueError("exact closed separately assembled option bundle required")
+        bundle = json.loads(bp.read_text())
+        if (
+            bundle["checkpoint_kind"] != "committed-neural-options-v1"
+            or bundle["feasibility_hash"] != a.feasibility_hash
+            or bundle["parent_training_hash"] != f["parent_training_hash"]
+            or bundle["expert_training_hashes"] != [v[1] for v in expert_specs.values()]
+            or bundle["source_head"] != a.expected_head
+            or digest(dp) != bundle["declaration_hash"]
+        ):
+            raise ValueError("same declared source, parent, experts and initiation data required")
+        for key, value in bundle["input_file_hashes"].items():
+            if key in pins and pins[key] != value:
+                raise ValueError("conflicting prototype/bundle input ancestry")
+            pins[key] = value
+        pins.update(
+            {
+                str(bp): a.bundle_hash,
+                str(dp): bundle["declaration_hash"],
+                bundle["checkpoint_path"]: bundle["checkpoint_hash"],
+            }
+        )
     source_pins(pins)
     check_pins(pins)
     a.output.mkdir()
@@ -119,41 +154,55 @@ def main():
             if isinstance(bank["contexts"], dict)
             else dict(enumerate(bank["contexts"]))
         )
-        _, parent = open_motor(
-            pins,
-            f["parent_training_hash"],
-            {i: contexts[i] for i in (1, 4, 20, 21)},
-            checkpoint_kind="consolidated-adapter-v1",
-        )
-        experts = {}
-        for option, (root, h) in expert_specs.items():
-            experts[option], _ = load_refinement_motor(
-                parent.memory.parent,
-                parent_lineage_hash=trained["parent_lineage_hash"],
-                root=root,
-                expected_receipt_hash=h,
+        if bundle is not None:
+            _, model = open_motor(
+                pins,
+                a.bundle_hash,
+                {i: contexts[i] for i in (1, 4, 20, 21)},
+                checkpoint_kind="committed-neural-options-v1",
             )
-        with np.load(ip, allow_pickle=False) as z:
-            initial = {k: z[k].copy() for k in z.files}
-        initiation = NeuralOptionInitiation(
-            torch.from_numpy(initial["features"]), torch.from_numpy(initial["labels"])
-        )
-        if not torch.equal(initiation.scale, torch.from_numpy(initial["scale"])) or not torch.equal(
-            initiation.radii, torch.from_numpy(initial["prospective_radius"])
-        ):
-            raise ValueError("own initiation geometry changed")
-        generation = str(
-            hash_json(
-                dict(
-                    schema="prototype.committed_neural_motor.v1",
-                    source_head=a.expected_head,
-                    feasibility_hash=a.feasibility_hash,
-                    parent_training_hash=f["parent_training_hash"],
-                    experts={k: v[1] for k, v in expert_specs.items()},
+            if (
+                type(model) is not CommittedNeuralMotor
+                or model.generation_hash != bundle["generation_hash"]
+            ):
+                raise ValueError("generic loader must return the exact audited option model")
+            generation = model.generation_hash
+        else:
+            _, parent = open_motor(
+                pins,
+                f["parent_training_hash"],
+                {i: contexts[i] for i in (1, 4, 20, 21)},
+                checkpoint_kind="consolidated-adapter-v1",
+            )
+            experts = {}
+            for option, (root, h) in expert_specs.items():
+                experts[option], _ = load_refinement_motor(
+                    parent.memory.parent,
+                    parent_lineage_hash=trained["parent_lineage_hash"],
+                    root=root,
+                    expected_receipt_hash=h,
+                )
+            with np.load(ip, allow_pickle=False) as z:
+                initial = {k: z[k].copy() for k in z.files}
+            initiation = NeuralOptionInitiation(
+                torch.from_numpy(initial["features"]), torch.from_numpy(initial["labels"])
+            )
+            if not torch.equal(
+                initiation.scale, torch.from_numpy(initial["scale"])
+            ) or not torch.equal(initiation.radii, torch.from_numpy(initial["prospective_radius"])):
+                raise ValueError("own initiation geometry changed")
+            generation = str(
+                hash_json(
+                    dict(
+                        schema="prototype.committed_neural_motor.v1",
+                        source_head=a.expected_head,
+                        feasibility_hash=a.feasibility_hash,
+                        parent_training_hash=f["parent_training_hash"],
+                        experts={k: v[1] for k, v in expert_specs.items()},
+                    )
                 )
             )
-        )
-        model = CommittedNeuralMotor(parent, experts, initiation, generation_hash=generation)
+            model = CommittedNeuralMotor(parent, experts, initiation, generation_hash=generation)
         records = []
         for index, history in enumerate(histories):
             phases = []
@@ -208,7 +257,11 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="COMMITTED_NEURAL_OPTIONS_OWN97_ACTIONS_MATCH_SOURCES_NOT_PHYSICS",
+                status=(
+                    "DUAL_RECURRENT_TRAINED_CHECKPOINT_CPU_OWN_HISTORY_AUDIT_PASS_NOT_PHYSICS"
+                    if bundle is not None
+                    else "COMMITTED_NEURAL_OPTIONS_OWN97_ACTIONS_MATCH_SOURCES_NOT_PHYSICS"
+                ),
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 feasibility_hash=a.feasibility_hash,
@@ -219,7 +272,19 @@ def main():
                 optimizer_updates=0,
                 selected_neural_skills_have_exact_actions_on_recorded_streams=True,
                 combined_physical_performance_proven=False,
-                native_checkpoint_admitted=False,
+                native_checkpoint_admitted=bundle is not None,
+                old_retention_proven=False,
+                **(
+                    dict(
+                        checkpoint_kind="committed-neural-options-v1",
+                        source_hash=a.bundle_hash,
+                        checkpoint_hash=bundle["checkpoint_hash"],
+                        data_hash=bundle["data_hash"],
+                        declared_reference_bundle_loaded=True,
+                    )
+                    if bundle is not None
+                    else {}
+                ),
                 Fresh_verified=False,
                 team_game_verified=False,
                 hardware_authorized=False,

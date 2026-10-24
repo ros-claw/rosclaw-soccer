@@ -50,6 +50,7 @@ def native_command(
             "consolidated-adapter-v1",
             "consolidated-refinement-v1",
             "support-masked-refinement-v1",
+            "committed-neural-options-v1",
         )
         or c["status"] != "DUAL_RECURRENT_TRAINED_CHECKPOINT_CPU_OWN_HISTORY_AUDIT_PASS_NOT_PHYSICS"
         or c["checkpoint_kind"] != t["checkpoint_kind"]

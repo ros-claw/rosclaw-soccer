@@ -11,6 +11,7 @@ from typing import Any
 
 import torch
 
+from rosclaw_soccer.rsi.committed_neural_motor import CommittedNeuralMotor
 from rosclaw_soccer.rsi.consolidated_adapter_learning import (
     FEATURE_STATUS,
     KIND,
@@ -163,9 +164,19 @@ def load_motor_candidate_for_sim_audit(
     DualRecurrentMotor
     | ConsolidatedMotorAdapter
     | RefinementMotorAdapter
-    | SupportedRefinementMotor,
+    | SupportedRefinementMotor
+    | CommittedNeuralMotor,
     dict[str, Any],
 ]:
+    if checkpoint_kind == "committed-neural-options-v1":
+        from rosclaw_soccer.rsi.committed_motor_checkpoint import load_committed_motor
+
+        return load_committed_motor(
+            parent,
+            parent_lineage_hash=parent_lineage_hash,
+            root=root,
+            expected_receipt_hash=expected_receipt_hash,
+        )
     if checkpoint_kind == "support-masked-refinement-v1":
         from rosclaw_soccer.rsi.supported_motor_checkpoint import load_supported_motor
 
@@ -206,6 +217,12 @@ def expected_cpu_audit_decisions(training: dict[str, Any], checkpoint_kind: str)
     New-head training does NOT claim recurrent CPU replay. Its separate audit
     must cover the full independently qualified input bank instead.
     """
+    if checkpoint_kind == "committed-neural-options-v1":
+        from rosclaw_soccer.rsi.neural_option_contract import option_cpu_scope
+        from rosclaw_soccer.rsi.supported_motor_checkpoint import support_receipt
+
+        _, own = support_receipt(training, training["own97_hash"])
+        return option_cpu_scope(own)
     if checkpoint_kind == "support-masked-refinement-v1":
         from rosclaw_soccer.rsi.supported_motor_checkpoint import support_cpu_scope
 

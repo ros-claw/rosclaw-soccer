@@ -3,6 +3,25 @@ import pytest
 from rosclaw_soccer.rsi.pass_native_bank import original_pass_bank
 
 
+def test_committed_options_use_unchanged_parent274_tasks_not_initiation_labels():
+    original = dict(status="TEAM_PASS_WHOLE_HISTORY_BANK177_READY_NOT_TRAINED", records=[{}] * 177)
+    parent_data = dict(
+        status="TEAM_PASS_ACTUAL_STUDENT_CORRECTION_BANK274_READY_NOT_TRAINED",
+        records=[{}] * 274,
+        base_data_hash="original",
+    )
+    assert (
+        original_pass_bank(parent_data, "committed-neural-options-v1", lambda _: original)
+        is original
+    )
+    with pytest.raises(ValueError):
+        original_pass_bank(
+            dict(status="initiation97", records=[{}] * 97),
+            "committed-neural-options-v1",
+            lambda _: original,
+        )
+
+
 @pytest.mark.parametrize("kind", ["consolidated-refinement-v1", "support-masked-refinement-v1"])
 def test_new_learning_bank_resolves_unchanged_original_physical_exam(kind):
     original = dict(status="TEAM_PASS_WHOLE_HISTORY_BANK177_READY_NOT_TRAINED", records=[{}] * 177)

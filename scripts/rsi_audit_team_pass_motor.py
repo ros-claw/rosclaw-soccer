@@ -20,6 +20,7 @@ def main():
             "consolidated-adapter-v1",
             "consolidated-refinement-v1",
             "support-masked-refinement-v1",
+            "committed-neural-options-v1",
         ),
         default="team-pass-consolidated-v1",
     )

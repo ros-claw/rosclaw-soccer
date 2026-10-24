@@ -19,7 +19,12 @@ def original_pass_bank(
         return original_pass_bank(retained, "consolidated-adapter-v1", resolve)
     if kind == "team-pass-consolidated-v1":
         original = data
-    elif kind in ("team-pass-corrected-v2", "team-pass-selected-v3", "consolidated-adapter-v1"):
+    elif kind in (
+        "team-pass-corrected-v2",
+        "team-pass-selected-v3",
+        "consolidated-adapter-v1",
+        "committed-neural-options-v1",
+    ):
         if (
             data["status"] != "TEAM_PASS_ACTUAL_STUDENT_CORRECTION_BANK274_READY_NOT_TRAINED"
             or len(data["records"]) != 274
