@@ -81,9 +81,9 @@ class SharedNativeTorqueLayer:
             tuple[np.ndarray | None, np.ndarray, np.ndarray, bool, str | None] | None
         ) = None
         if capture_actor_proposals:
-            from rosclaw.control.guarded_action_trace import GuardedActionTrace
+            from rosclaw.control.guarded_action_trace import GuardedActionTrace as Trace
 
-            self.decision_trace = GuardedActionTrace(
+            self.decision_trace = Trace(
                 dimension=29,
                 maximum_steps=self.horizon_native_steps,
                 context_hash=hash_json(
