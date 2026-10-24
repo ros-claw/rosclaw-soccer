@@ -26,11 +26,15 @@ def main():
     parser.add_argument("--torque-candidate-root", type=Path)
     parser.add_argument("--torque-candidate-hash")
     parser.add_argument("--torque-intervention-fraction", type=float, default=1.0)
+    parser.add_argument("--core-source-root", type=Path)
+    parser.add_argument("--core-expected-head")
     parser.add_argument("--identity-reference", type=Path)
     parser.add_argument("--identity-reference-hash")
     parser.add_argument("--identity-own", type=Path)
     parser.add_argument("--identity-own-hash")
     a = parser.parse_args()
+    if (a.core_source_root is None) != (a.core_expected_head is None):
+        parser.error("explicit Core source root and commit must be provided together")
     candidate_mode = a.torque_candidate_root is not None
     torque_mode = a.torque_teacher or candidate_mode
     if (
@@ -160,6 +164,33 @@ def main():
         ):
             raise ValueError("confined exact learned Core torque binary required")
         pins[str(policy_path)] = trained["policy"]["hash"]
+    active_core = None
+    if a.core_source_root is not None:
+        import importlib.util
+        import subprocess
+
+        active_core = a.core_source_root.resolve()
+        head = subprocess.check_output(
+            ["git", "-C", str(active_core), "rev-parse", "HEAD"], text=True
+        ).strip()
+        dirty = subprocess.check_output(
+            ["git", "-C", str(active_core), "status", "--porcelain"], text=True
+        )
+        spec = importlib.util.find_spec("rosclaw")
+        expected_package = active_core / "src/rosclaw"
+        if (
+            head != a.core_expected_head
+            or dirty
+            or spec is None
+            or spec.origin is None
+            or Path(spec.origin).resolve().parent != expected_package
+        ):
+            raise ValueError("clean exact active Core commit must match Python import resolution")
+        files = sorted(expected_package.rglob("*.py"))
+        if not files or any(path.is_symlink() for path in files):
+            raise ValueError("regular active Core Python sources required")
+        for path in files:
+            pins[str(path)] = digest(path)
     source_pins(pins)
     check_pins(pins)
     import mujoco
@@ -665,6 +696,8 @@ def main():
                 native_steps=steps,
                 input_file_hashes=pins,
                 source_head=a.expected_head,
+                active_core_source_root=str(active_core) if active_core is not None else None,
+                active_core_commit=a.core_expected_head,
                 optimizer_updates=0,
                 independent_manual_replay=False,
                 hardware_authorized=False,
