@@ -145,6 +145,9 @@ class SharedNativeMotorWorld:
         self.expected_time = float(data.time)
         self.failed = False
         self._last_targets: dict[str, np.ndarray] = {}
+        # Private state ownership for software skills that declare it. This
+        # registry never changes physics or gives a player its own clock.
+        self._private_policy_owners: dict[str, tuple[int, int, int]] = {}
         self.last_ball_contact_bodies: dict[str, dict[str, float]] = {p: {} for p in players}
         from rosclaw_soccer.rsi.paid_skill_handoff import snapshot
 
