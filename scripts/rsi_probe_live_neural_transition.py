@@ -37,6 +37,10 @@ def main():
     parser.add_argument("--identity-reference-hash")
     parser.add_argument("--identity-own", type=Path)
     parser.add_argument("--identity-own-hash")
+    parser.add_argument("--clock-authority", action="store_true")
+    parser.add_argument("--reference-rate", type=float, default=1.0)
+    parser.add_argument("--clock-plan", type=Path)
+    parser.add_argument("--clock-plan-hash")
     a = parser.parse_args()
     if (a.core_source_root is None) != (a.core_expected_head is None):
         parser.error("explicit Core source root and commit must be provided together")
@@ -66,6 +70,25 @@ def main():
             "proposal capture requires a learned candidate and explicit active Core source"
         )
     torque_mode = a.torque_teacher or candidate_mode
+    if a.clock_authority:
+        if (
+            torque_mode
+            or explore
+            or a.capture_torque_proposals
+            or not a.single_player_only
+            or not a.contact_release
+            or a.aim_y != 0.0
+            or a.core_source_root is None
+            or not math.isfinite(a.reference_rate)
+            or not 1 <= a.reference_rate <= 1.2
+            or a.clock_plan is None
+            or a.clock_plan_hash is None
+        ):
+            parser.error(
+                "clock authority requires bounded isolated reference-only protocol and plan"
+            )
+    elif a.reference_rate != 1.0 or a.clock_plan is not None or a.clock_plan_hash is not None:
+        parser.error("reference rate and plan require explicit clock authority")
     if (
         candidate_mode != (a.torque_candidate_hash is not None)
         or (candidate_mode and a.torque_teacher)
@@ -82,7 +105,7 @@ def main():
         parser.error(
             "new aim reachability protocol requires contact release and single-player-only"
         )
-    if torque_mode:
+    if torque_mode or a.clock_authority:
         if (
             not a.contact_release
             or a.aim_y != 0.0
@@ -144,7 +167,7 @@ def main():
         a.own_hash,
     )
     identity_source = None
-    if torque_mode:
+    if torque_mode or a.clock_authority:
         for root, expected in (
             (a.identity_reference, a.identity_reference_hash),
             (a.identity_own, a.identity_own_hash),
@@ -170,6 +193,25 @@ def main():
                 raise ValueError("confined exact raw identity parent required")
             pins[str(path)] = record["artifact"]["hash"]
     trained = None
+    if a.clock_authority:
+        if a.clock_plan.is_symlink() or digest(a.clock_plan) != a.clock_plan_hash:
+            raise ValueError("exact predeclared reference-clock family plan required")
+        plan = json.loads(a.clock_plan.read_text())
+        if (
+            plan["protocol"] != "robonaldo.reference_clock_authority.v1"
+            or a.reference_rate not in plan["reference_rates"]
+            or plan["source_commit"] != a.expected_head
+            or plan["core_commit"] != a.core_expected_head
+            or plan["identity_source_hash"] != a.identity_reference_hash
+            or plan["identity_own_hash"] != a.identity_own_hash
+            or plan["starts_m"] != [[x, y] for x in (0.97, 1.03) for y in (-0.03, 0.03)]
+            or plan["physical_control_hz"] != 50
+            or plan["physical_native_hz"] != 500
+        ):
+            raise ValueError(
+                "exact fixed clock family, physical clock and identity lineage required"
+            )
+        pins[str(a.clock_plan)] = a.clock_plan_hash
     if candidate_mode:
         training_path = a.torque_candidate_root / "complete.json"
         if digest(training_path) != a.torque_candidate_hash:
@@ -267,6 +309,10 @@ def main():
     )
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.paid_velocity_shadow import policy_action_from_hg_target
+    from rosclaw_soccer.rsi.robonaldo_reference_clock import (
+        reference_policy_index,
+        retimed_reference_velocity,
+    )
     from rosclaw_soccer.rsi.shared_native_motor_world import (
         NativePDParameters,
         SharedNativeMotorWorld,
@@ -365,6 +411,10 @@ def main():
             state, output = state_type(29), output_type(29)
             with contextlib.redirect_stdout(io.StringIO()):
                 kick = policy_type(state, output)
+            if a.clock_authority:
+                kick.motion_joint_vel = retimed_reference_velocity(
+                    kick.motion_joint_vel, rate=a.reference_rate
+                )
             recorder = RecordSession(kick.ort_session)
             kick.ort_session = recorder
             kick.target_pos_w = np.array([5.0, a.aim_y, 0.11], np.float32)
@@ -462,7 +512,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "robonaldo.native_torque_exploration.v1"
+                "robonaldo.reference_clock_authority.v1"
+                if a.clock_authority
+                else "robonaldo.native_torque_exploration.v1"
                 if explore
                 else (
                     "robonaldo.native_guarded_proposal_trace.v1"
@@ -494,6 +546,14 @@ def main():
             worlds=4 if a.single_player_only else 8,
             native_step_ceiling=26080 if a.single_player_only else 52160,
             neural_aim_input_y_m=a.aim_y,
+            reference_clock_authority=a.clock_authority,
+            reference_rate=a.reference_rate,
+            clock_plan_hash=a.clock_plan_hash,
+            physical_control_hz=50,
+            physical_native_hz=500,
+            reference_velocity_scaled_in_owned_memory=a.clock_authority,
+            parent_identity_reference_hash=a.identity_reference_hash,
+            parent_controller_changed=a.clock_authority and a.reference_rate != 1.0,
             evaluation_target_world_m=[5.0, 0.0, 0.11],
             aim_input_is_not_evaluation_target=True,
             horizon_controls=652,
@@ -552,6 +612,8 @@ def main():
                 )
             }
             prefixes = tuple(w.layouts)
+            if a.clock_authority:
+                controls["reference_policy_index"], controls["reference_motion_frame"] = [], []
             foot = None
             gate = ContactReleaseGate()
             transition_start = None if a.contact_release else 285
@@ -590,7 +652,15 @@ def main():
                 )
                 outgoing = np.zeros(29, np.float64)
                 old_calls = recorder.calls
+                ref_index, motion_frame = -1, -1
                 if weight < 1.0:
+                    if a.clock_authority:
+                        ref_index = reference_policy_index(
+                            frame, warmup=kick.WARMUP_STEPS, rate=a.reference_rate
+                        )
+                        kick.time_step = ref_index
+                        if ref_index >= kick.WARMUP_STEPS:
+                            motion_frame = kick._motion_frame_index(ref_index - kick.WARMUP_STEPS)
                     observe(w, state)
                     with contextlib.redirect_stdout(io.StringIO()):
                         kick.run()
@@ -632,6 +702,8 @@ def main():
                     foot_contact,
                     gate.clear_controls,
                 )
+                if a.clock_authority:
+                    values += (ref_index, motion_frame)
                 for key, value in zip(controls, values, strict=True):
                     controls[key].append(value)
                 result = w.advance(proposals, torque_layers=layers)
@@ -679,6 +751,18 @@ def main():
             np.savez_compressed(artifact, **arrays)
             teacher_artifacts = {}
             full_identity = None
+            if a.clock_authority and a.reference_rate == 1.0:
+                identity = next(
+                    row
+                    for row in identity_source["records"]
+                    if row["arm"] == arm and row["index"] == index
+                )
+                with np.load(a.identity_reference / identity["artifact"]["path"]) as ref:
+                    full_identity = {
+                        key: bool(np.array_equal(arrays[key], ref[key])) for key in ref.files
+                    }
+                if not all(full_identity.values()):
+                    raise ValueError("rate1 reference clock changed original parent trajectory")
             if layers:
                 assert identity_source is not None
                 identity = next(
@@ -764,7 +848,7 @@ def main():
                 if row["arm"] == "actual-shadow" and row["index"] == index
             )
             prefix_exact = None
-            if arm == "single" and a.aim_y == 0.0:
+            if arm == "single" and a.aim_y == 0.0 and not a.clock_authority:
                 with np.load(a.source / baseline["artifact"]["path"]) as ref:
                     prefix_end = (
                         min(285, transition_start if transition_start is not None else 285) * 10
@@ -793,6 +877,7 @@ def main():
                 if layers
                 else None,
                 zero_intervention_full_identity=full_identity,
+                reference_rate=a.reference_rate,
                 neural_aim_input_y_m=a.aim_y,
                 actual_goal_plane=plane,
                 illegal_body_ball_contact=bool(np.any(arrays["ball_forces"][:, 0, 2] > 1.0)),

@@ -9,6 +9,7 @@ import argparse
 import contextlib
 import io
 import json
+from decimal import Decimal
 from pathlib import Path
 
 
@@ -37,34 +38,40 @@ def main():
         proposal_capture or declaration["protocol"] == "robonaldo.native_learned_torque_trial.v1"
     )
     aim_probe = declaration["protocol"] == "robonaldo.neural_aim_reachability.v1"
+    clock_probe = declaration["protocol"] == "robonaldo.reference_clock_authority.v1"
+    clock_rate = declaration.get("reference_rate", 1.0)
+    if clock_probe and (
+        not 1 <= clock_rate <= 1.2
+        or not release
+        or declaration["physical_control_hz"] != 50
+        or declaration["physical_native_hz"] != 500
+        or declaration["torque_candidate_hash"] is not None
+        or not declaration["reference_velocity_scaled_in_owned_memory"]
+        or declaration.get("neural_aim_input_y_m", 0.0) != 0.0
+    ):
+        raise ValueError("bounded reference-only clock protocol required")
     aim_y = declaration.get("neural_aim_input_y_m", 0.0)
+    expected_protocol = (
+        "robonaldo.reference_clock_authority.v1"
+        if clock_probe
+        else "robonaldo.native_torque_exploration.v1"
+        if exploration
+        else "robonaldo.native_guarded_proposal_trace.v1"
+        if proposal_capture
+        else "robonaldo.native_learned_torque_trial.v1"
+        if torque_trial
+        else "robonaldo.neural_aim_reachability.v1"
+        if aim_probe
+        else "robonaldo.contact_release_blend.v1"
+        if release
+        else "robonaldo.live_neural_blend.v1"
+    )
     if (
         source["status"] != "LIVE_NEURAL_TRANSITION_DIAGNOSED_NOT_PROMOTED"
-        or len(source["records"]) != (4 if aim_probe or torque_trial else 8)
+        or len(source["records"]) != (4 if aim_probe or torque_trial or clock_probe else 8)
         or source["source_head"] != a.producer_head
         or declaration["duration_controls"] != 20
-        or declaration["protocol"]
-        != (
-            (
-                (
-                    "robonaldo.native_torque_exploration.v1"
-                    if exploration
-                    else "robonaldo.native_guarded_proposal_trace.v1"
-                )
-                if proposal_capture
-                else "robonaldo.native_learned_torque_trial.v1"
-            )
-            if torque_trial
-            else (
-                "robonaldo.neural_aim_reachability.v1"
-                if aim_probe
-                else (
-                    "robonaldo.contact_release_blend.v1"
-                    if release
-                    else "robonaldo.live_neural_blend.v1"
-                )
-            )
-        )
+        or declaration["protocol"] != expected_protocol
         or (aim_probe and (not release or not -1.2 <= aim_y <= 1.2))
         or (
             torque_trial
@@ -116,7 +123,7 @@ def main():
                     pins[str(path)] = rng["hash"]
     source_pins(pins)
     check_pins(pins)
-    if torque_trial:
+    if torque_trial or clock_probe:
         import importlib.util
 
         spec = importlib.util.find_spec("rosclaw")
@@ -204,8 +211,8 @@ def main():
             source_hash=a.source_hash,
             source_head=a.expected_head,
             input_file_hashes=pins,
-            worlds=4 if aim_probe or torque_trial else 8,
-            native_step_ceiling=26080 if aim_probe or torque_trial else 52160,
+            worlds=4 if aim_probe or torque_trial or clock_probe else 8,
+            native_step_ceiling=26080 if aim_probe or torque_trial or clock_probe else 52160,
             independent_torque_frame_and_application=torque_trial,
             shared_core_neural_inference_implementation=torque_trial,
             independent_clock=True,
@@ -250,6 +257,14 @@ def main():
             state, output = state_type(29), output_type(29)
             with contextlib.redirect_stdout(io.StringIO()):
                 kick = policy_type(state, output)
+            if clock_probe:
+                # Independent of the producer helper, same declared float dtype.
+                original_velocity = kick.motion_joint_vel
+                kick.motion_joint_vel = (
+                    original_velocity.copy()
+                    if clock_rate == 1
+                    else (original_velocity * np.asarray(clock_rate, dtype=original_velocity.dtype))
+                )
             kick.target_pos_w = np.array([5.0, aim_y, 0.11], np.float32)
             cached = {}
             build = kick._build_obs
@@ -326,6 +341,8 @@ def main():
             }
             if torque_trial:
                 raw["parent_torque"], raw["applied_torque_change"] = [], []
+            if clock_probe:
+                raw["reference_policy_index"], raw["reference_motion_frame"] = [], []
             proposal_raw = {
                 key: []
                 for key in (
@@ -382,7 +399,20 @@ def main():
                     )
                 incoming = targets["a/"].copy()
                 inferred = False
+                reference_index, motion_frame = -1, -1
                 if weight < 1.0:
+                    if clock_probe:
+                        warmup = kick.WARMUP_STEPS
+                        reference_index = (
+                            frame
+                            if frame < warmup
+                            else warmup + int(Decimal(frame - warmup) * Decimal(str(clock_rate)))
+                        )
+                        kick.time_step = reference_index
+                        if reference_index >= warmup:
+                            motion_frame = min(
+                                reference_index - warmup, kick.motion_total_steps - 1
+                            )
                     observe()
                     inferred = kick.time_step >= kick.WARMUP_STEPS
                     with contextlib.redirect_stdout(io.StringIO()):
@@ -406,6 +436,9 @@ def main():
                     cached["obs"].copy() if inferred else np.zeros(547, np.float32)
                 )
                 raw["velocity_observation"].append(streams["a/"].last_observation.copy())
+                if clock_probe:
+                    raw["reference_policy_index"].append(reference_index)
+                    raw["reference_motion_frame"].append(motion_frame)
                 last_contact = False
                 for _ in range(10):
                     torque = np.zeros(m.nu)
