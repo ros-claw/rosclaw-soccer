@@ -8,6 +8,7 @@ The caller alone selects an action and advances the shared native world.
 import numpy as np
 import torch
 
+from rosclaw_soccer.rsi.private_motor_history import recurrent_history
 from rosclaw_soccer.rsi.same_state_motor_pair import SameStateMotorPair, paired_reference
 from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
 
@@ -42,8 +43,8 @@ class SharedTeacherPair:
             raise ValueError("identical qualified frozen reference memory required")
         if any(
             a.untyped_storage().data_ptr() == b.untyped_storage().data_ptr()
-            for a in student.state
-            for b in teacher.state
+            for a in recurrent_history(student.state)
+            for b in recurrent_history(teacher.state)
         ):
             raise ValueError("student and teacher cannot share hidden state storage")
         self.student, self.teacher = student, teacher

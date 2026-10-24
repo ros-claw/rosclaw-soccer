@@ -83,3 +83,47 @@ def test_reference_and_body_mismatch_rejected_before_inference():
         next(p.teacher.actor.parent.parameters()).add_(0.001)
     with pytest.raises(ValueError, match="reference memory"):
         SharedTeacherPair(p.student, p.teacher)
+
+
+def option_pair():
+    from test_committed_neural_motor import fixture
+
+    w, ps = players()
+    old = ps["a/"]
+    parent, _, actor, _, _ = fixture()
+    args = dict(
+        clip=old.clip,
+        torso_index=old.torso_index,
+        build_observation=old.build_observation,
+        goal=old.goal,
+        offset=old.offset,
+        scale=old.scale,
+        order=old.order,
+    )
+    return w, SharedTeacherPair(
+        SharedNativeNeuralPlayer(w, "a/", actor, **args),
+        SharedNativeNeuralPlayer(w, "a/", parent, **args),
+    )
+
+
+def test_committed_option_student_preserves_memory_with_actual_parent_teacher_feedback():
+    w, pair = option_pair()
+    for control in range(2):
+        target, student, _, teacher = pair.propose()
+        assert not np.array_equal(student["NN_action"], teacher["NN_action"])
+        assert student["NN_option_after"] == 1
+        w.advance({"a/": target, "b/": np.zeros(29)})
+        pair.commit(student["NN_action"])
+        assert pair.student.state.controls == control + 1
+        assert pair.student.state.recurrent[0].data_ptr() != pair.teacher.state[0].data_ptr()
+        np.testing.assert_array_equal(pair.teacher.last_action, student["NN_action"])
+        if control == 0:
+            pair.begin_standing()
+
+
+def test_option_history_cannot_alias_teacher_recurrent_storage():
+    w, pair = option_pair()
+    pair.teacher.state = pair.student.state.recurrent
+    with pytest.raises(ValueError, match="storage"):
+        SharedTeacherPair(pair.student, pair.teacher)
+    assert w.native_steps == 0
