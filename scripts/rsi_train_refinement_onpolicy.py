@@ -15,12 +15,13 @@ def main():
     for k in ("own-hash", "expected-head"):
         p.add_argument("--" + k, required=True)
     p.add_argument("--state-id", type=int, choices=(25, 26), required=True)
+    p.add_argument("--advantage-mode", choices=("zero-v1", "peer-loo-v2"), default="zero-v1")
     a = p.parse_args()
     from rosclaw_soccer.rsi.refinement_onpolicy_learning import (
         COMMITMENTS,
-        KIND,
         SCHEMA,
         STATUS,
+        kind_for_config,
         learning_config,
         tensor_state_hash,
     )
@@ -36,7 +37,8 @@ def main():
         a.experience_root, a.own_root, a.own_hash, a.state_id
     )
     _, behavior = receipt(pins, scope["student_training_hash"])
-    cfg = learning_config(a.state_id)
+    cfg = learning_config(a.state_id, variant=a.advantage_mode)
+    kind = kind_for_config(cfg)
     commitments = dict(
         behavior_training_hash=scope["student_training_hash"],
         behavior_checkpoint_hash=behavior["checkpoint_hash"],
@@ -92,7 +94,23 @@ def main():
         )
         write_once(a.output / "declaration.json", declared)
         scale = actor.parent.memory.parent.get_buffer("action_scale").clone()
-        batch = episodes(a.experience_root, source, scale)
+        batch = episodes(a.experience_root, source, scale, advantage_mode=a.advantage_mode)
+        from collections import Counter
+
+        advantage_evidence = dict(
+            mode=a.advantage_mode,
+            experience_hash=commitments["experience_hash"],
+            initial_state_hashes=[r["artifacts"]["initial"]["hash"] for r in source["records"]],
+            group_sizes=sorted(
+                Counter(r["artifacts"]["initial"]["hash"] for r in source["records"]).values()
+            ),
+            own_return_in_baseline=False,
+            padded_or_held_rows=0,
+            advantage_vector_hashes=[
+                tensor_state_hash(dict(advantages=e["advantages"])) for e in batch
+            ],
+        )
+        write_once(a.output / "advantages.json", advantage_evidence)
         std = torch.full((29,), math.log(cfg["sigma_policy_units"]), dtype=torch.float32)
         # Every initial density/reference/private-memory check precedes any update.
         for ep in batch:
@@ -166,7 +184,7 @@ def main():
             raise ValueError("all actor steps rejected; cannot claim a trained policy")
         state = dict(
             schema=SCHEMA,
-            kind=KIND,
+            kind=kind,
             config=cfg,
             commitments=commitments,
             initial_head=initial_head,
@@ -211,7 +229,7 @@ def main():
             a.output / "complete.json",
             dict(
                 status=STATUS,
-                checkpoint_kind=KIND,
+                checkpoint_kind=kind,
                 **declared,
                 declaration_hash=digest(a.output / "declaration.json"),
                 checkpoint_path=str(cp),
@@ -222,6 +240,7 @@ def main():
                 actor_rows_per_epoch=total_rows,
                 experience_worlds=24,
                 terminal_rewards=[e["terminal_reward"] for e in batch],
+                advantage_evidence_hash=digest(a.output / "advantages.json"),
                 parent_weights_unchanged=True,
                 on_policy_RL_update=True,
                 physical_steps_executed=0,

@@ -87,7 +87,7 @@ def admit(source_root, own_root, own_hash, state):
     return source, own, pins, scope, bank, pf, behavior_root
 
 
-def episodes(source_root, source, scale):
+def episodes(source_root, source, scale, *, advantage_mode="zero-v1"):
     import numpy as np
     import torch
 
@@ -144,6 +144,21 @@ def episodes(source_root, source, scale):
             advantages=torch.from_numpy(returns.copy()),
         )
         result.append(row)
+    if advantage_mode == "peer-loo-v2":
+        from rosclaw_soccer.rsi.trajectory_peer_baseline import peer_return_baselines
+
+        groups = [r["artifacts"]["initial"]["hash"] for r in source["records"]]
+        from collections import Counter
+
+        if sorted(Counter(groups).values()) != [8, 8, 8]:
+            raise ValueError("exact3 physical initial x8 independent rollouts required for peers")
+        baselines, advantages = peer_return_baselines([r["returns"] for r in result], groups)
+        for row, baseline, advantage, group in zip(
+            result, baselines, advantages, groups, strict=True
+        ):
+            row.update(advantages=advantage, peer_baseline=baseline, initial_state_hash=group)
+    elif advantage_mode != "zero-v1":
+        raise ValueError("explicit declared advantage derivation required")
     values = torch.cat([r["advantages"] for r in result])
     mean, std = values.mean(), values.std(unbiased=False).clamp_min(1e-6)
     for r in result:

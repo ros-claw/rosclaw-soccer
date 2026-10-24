@@ -10,6 +10,7 @@ from rosclaw_soccer.rsi.refinement_onpolicy_checkpoint import validate_checkpoin
 from rosclaw_soccer.rsi.refinement_onpolicy_learning import (
     COMMITMENTS,
     KIND,
+    PEER_KIND,
     SCHEMA,
     learning_config,
     tensor_state_hash,
@@ -57,6 +58,16 @@ def test_actual_tensor_optimizer_step_has_new_kind_and_frozen_whole_parent():
     s, b, c, cfg, ids = fixture()
     validate_checkpoint(s, b, c, config=cfg, commitments=ids, steps=1)
     assert s["kind"] != "consolidated-refinement-v1"
+
+
+def test_peer_checkpoint_format_is_not_silently_accepted_as_zero_baseline_kind():
+    s, b, c, _, ids = fixture()
+    cfg = learning_config(25, variant="peer-loo-v2")
+    s.update(config=cfg, kind=PEER_KIND)
+    validate_checkpoint(s, b, c, config=cfg, commitments=ids, steps=1)
+    s["kind"] = KIND
+    with pytest.raises(ValueError):
+        validate_checkpoint(s, b, c, config=cfg, commitments=ids, steps=1)
 
 
 @pytest.mark.parametrize(

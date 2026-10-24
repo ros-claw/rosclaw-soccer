@@ -12,10 +12,11 @@ from rosclaw_soccer.rsi.dual_recurrent_actor_critic import MotorCritic
 from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
 from rosclaw_soccer.rsi.refinement_onpolicy_learning import (
     COMMITMENTS,
-    KIND,
+    PEER_KIND,
     SCHEMA,
     STATUS,
-    learning_config,
+    config_for_kind,
+    kind_for_config,
     tensor_state_hash,
     validate_tensor_map,
 )
@@ -39,7 +40,7 @@ def validate_checkpoint(
     if (
         type(state) is not dict
         or state.get("schema") != SCHEMA
-        or state.get("kind") != KIND
+        or state.get("kind") != kind_for_config(config)
         or state.get("config") != config
         or state.get("commitments") != commitments
         or set(commitments) != COMMITMENTS
@@ -139,10 +140,10 @@ def load_onpolicy_refinement(
     ):
         raise ValueError("exact completed new-kind on-policy refinement required")
     r, d = [json.loads(p.read_text()) for p in (rp, dp)]
-    cfg = learning_config(r["config"]["state_id"])
+    cfg = config_for_kind(r["checkpoint_kind"], r["config"]["state_id"])
     if (
         r["status"] != STATUS
-        or r["checkpoint_kind"] != KIND
+        or r["checkpoint_kind"] != kind_for_config(cfg)
         or r["config"] != cfg
         or d["config"] != cfg
         or r["declaration_hash"] != file_hash(dp)
@@ -189,6 +190,22 @@ def load_onpolicy_refinement(
         return value
 
     experience, own = receipt(r["experience_hash"]), receipt(r["experience_own_hash"])
+    if r["checkpoint_kind"] == PEER_KIND:
+        ap = root / "advantages.json"
+        if file_hash(ap, maximum=1024 * 1024) != r["advantage_evidence_hash"]:
+            raise ValueError("exact peer-baseline derivation evidence required")
+        ae = json.loads(ap.read_text())
+        if (
+            ae["mode"] != "peer-loo-v2"
+            or ae["experience_hash"] != r["experience_hash"]
+            or ae["initial_state_hashes"]
+            != [x["artifacts"]["initial"]["hash"] for x in experience["records"]]
+            or ae["group_sizes"] != [8, 8, 8]
+            or ae["own_return_in_baseline"] is not False
+            or ae["padded_or_held_rows"] != 0
+            or len(ae["advantage_vector_hashes"]) != 24
+        ):
+            raise ValueError("all peer groups must bind actual identical physical initials")
     original = receipt(behavior_training_hash)
     old_own = receipt(experience["expert_own_hash"])
     if (

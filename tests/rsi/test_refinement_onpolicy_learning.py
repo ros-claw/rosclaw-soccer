@@ -3,7 +3,11 @@ import pytest
 from test_joint_delivery_teacher import row
 
 from rosclaw_soccer.rsi.refinement_onpolicy_learning import (
+    KIND,
+    PEER_KIND,
+    config_for_kind,
     joint_delivery_reward,
+    kind_for_config,
     learning_config,
     observed_terminal_returns,
 )
@@ -50,3 +54,17 @@ def test_fixed_small_onpolicy_generation_and_no_success_claim():
     assert c["epochs"] == 4 and c["source_batch_generations"] == 1
     assert c["max_conditional_kl"] == 0.015 and c["source_batch_worlds"] == 24
     assert c["physical_retention_proven"] is c["continuous_learning_proven"] is False
+
+
+def test_peer_variant_changes_only_credit_assignment_and_has_distinct_kind():
+    old, new = learning_config(25), learning_config(25, variant="peer-loo-v2")
+    assert {k for k in old if old[k] != new[k]} == {"protocol", "advantage_rule"}
+    assert kind_for_config(old) == KIND and kind_for_config(new) == PEER_KIND
+    assert config_for_kind(PEER_KIND, 25) == new
+    assert config_for_kind(KIND, 25) == old
+    with pytest.raises(ValueError):
+        kind_for_config(new | dict(epochs=8))
+    with pytest.raises(ValueError):
+        learning_config(25, variant="unreviewed")
+    with pytest.raises(ValueError):
+        config_for_kind("consolidated-refinement-v1", 25)

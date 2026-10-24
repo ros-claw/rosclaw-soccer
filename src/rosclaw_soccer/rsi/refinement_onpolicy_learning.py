@@ -15,6 +15,7 @@ from rosclaw_soccer.rsi.joint_delivery_teacher import joint_delivery_rank
 from rosclaw_soccer.rsi.pass_transfer_learning import controlled_pass_label
 
 KIND = "refinement-actor-critic-v1"
+PEER_KIND = "refinement-actor-critic-peer-loo-v2"
 STATUS = "REFINEMENT_OWN_AR_ACTOR_CRITIC_UPDATED_PENDING_PHYSICAL_VALIDATION"
 SCHEMA = "soccer.refinement.own_actor_critic_checkpoint.v1"
 COMMITMENTS = frozenset(
@@ -29,10 +30,12 @@ COMMITMENTS = frozenset(
 )
 
 
-def learning_config(state: int) -> dict[str, Any]:
+def learning_config(state: int, *, variant: str = "zero-v1") -> dict[str, Any]:
     if type(state) is not int or state not in (25, 26):
         raise ValueError("two declared research pilot models only")
-    return dict(
+    if variant not in ("zero-v1", "peer-loo-v2"):
+        raise ValueError("explicit declared generation0 advantage variant required")
+    cfg = dict(
         protocol="refinement.own_AR_PPO_generation0.v1",
         state_id=state,
         seed=206023 + 101 * state,
@@ -61,6 +64,30 @@ def learning_config(state: int) -> dict[str, Any]:
         physical_retention_proven=False,
         continuous_learning_proven=False,
     )
+    if variant == "peer-loo-v2":
+        cfg.update(
+            protocol="refinement.own_AR_PPO_generation0_peer_LOO.v2",
+            advantage_rule="IDENTICAL_INITIAL_LEAVE_OWN_TRAJECTORY_OUT_RETURNS_GLOBAL_STD",
+        )
+    return cfg
+
+
+def kind_for_config(config: dict[str, Any]) -> str:
+    state = config.get("state_id")
+    if type(state) is not int:
+        raise ValueError("exact integer model state required")
+    for variant, kind in (("zero-v1", KIND), ("peer-loo-v2", PEER_KIND)):
+        if config == learning_config(state, variant=variant):
+            return kind
+    raise ValueError("exact declared learning config required")
+
+
+def config_for_kind(kind: str, state: int) -> dict[str, Any]:
+    if kind == KIND:
+        return learning_config(state)
+    if kind == PEER_KIND:
+        return learning_config(state, variant="peer-loo-v2")
+    raise ValueError("explicit old-zero or new-peer on-policy kind required")
 
 
 def joint_delivery_reward(outcome: dict[str, Any]) -> float:
