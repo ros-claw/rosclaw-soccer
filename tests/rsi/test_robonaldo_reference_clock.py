@@ -85,3 +85,35 @@ def test_clock_cli_rejects_undeclared_changes_before_physics(tmp_path, options):
     assert result.returncode == 2
     assert "clock authority" in result.stderr
     assert not output.exists()
+
+
+def test_clock_candidate_cannot_reuse_unbound_slow_parent(tmp_path):
+    output = tmp_path / "must-not-exist"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_probe_live_neural_transition",
+            "--source=missing",
+            "--source-hash=unused",
+            "--own=missing",
+            "--own-hash=unused",
+            "--expected-head=unused",
+            "--output=" + str(output),
+            "--clock-authority",
+            "--clock-plan=missing",
+            "--clock-plan-hash=unused",
+            "--single-player-only",
+            "--contact-release",
+            "--core-source-root=missing",
+            "--core-expected-head=unused",
+            "--torque-candidate-root=missing",
+            "--torque-candidate-hash=unused",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 2
+    assert "exact independent fast parent pair" in result.stderr
+    assert not output.exists()

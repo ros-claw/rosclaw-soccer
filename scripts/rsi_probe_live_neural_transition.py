@@ -41,6 +41,10 @@ def main():
     parser.add_argument("--reference-rate", type=float, default=1.0)
     parser.add_argument("--clock-plan", type=Path)
     parser.add_argument("--clock-plan-hash")
+    parser.add_argument("--clock-parent-root", type=Path)
+    parser.add_argument("--clock-parent-hash")
+    parser.add_argument("--clock-parent-own-root", type=Path)
+    parser.add_argument("--clock-parent-own-hash")
     a = parser.parse_args()
     if (a.core_source_root is None) != (a.core_expected_head is None):
         parser.error("explicit Core source root and commit must be provided together")
@@ -72,7 +76,7 @@ def main():
     torque_mode = a.torque_teacher or candidate_mode
     if a.clock_authority:
         if (
-            torque_mode
+            a.torque_teacher
             or explore
             or a.capture_torque_proposals
             or not a.single_player_only
@@ -89,6 +93,17 @@ def main():
             )
     elif a.reference_rate != 1.0 or a.clock_plan is not None or a.clock_plan_hash is not None:
         parser.error("reference rate and plan require explicit clock authority")
+    parent_options = (
+        a.clock_parent_root,
+        a.clock_parent_hash,
+        a.clock_parent_own_root,
+        a.clock_parent_own_hash,
+    )
+    if a.clock_authority and candidate_mode:
+        if any(value is None for value in parent_options):
+            parser.error("clock candidate requires exact independent fast parent pair")
+    elif any(value is not None for value in parent_options):
+        parser.error("fast clock parent pair belongs only to clock candidate protocol")
     if (
         candidate_mode != (a.torque_candidate_hash is not None)
         or (candidate_mode and a.torque_teacher)
@@ -193,6 +208,7 @@ def main():
                 raise ValueError("confined exact raw identity parent required")
             pins[str(path)] = record["artifact"]["hash"]
     trained = None
+    clock_parent = None
     if a.clock_authority:
         if a.clock_plan.is_symlink() or digest(a.clock_plan) != a.clock_plan_hash:
             raise ValueError("exact predeclared reference-clock family plan required")
@@ -211,6 +227,49 @@ def main():
                 "exact fixed clock family, physical clock and identity lineage required"
             )
         pins[str(a.clock_plan)] = a.clock_plan_hash
+        if candidate_mode:
+            for root, expected in (
+                (a.clock_parent_root, a.clock_parent_hash),
+                (a.clock_parent_own_root, a.clock_parent_own_hash),
+            ):
+                path = root / "complete.json"
+                if path.is_symlink() or digest(path) != expected:
+                    raise ValueError("exact completed fast parent source/own required")
+                pins[str(path)] = expected
+            clock_parent = json.loads((a.clock_parent_root / "complete.json").read_text())
+            clock_own = json.loads((a.clock_parent_own_root / "complete.json").read_text())
+            for report in (clock_parent, clock_own):
+                for key, value in report["input_file_hashes"].items():
+                    if key in pins and pins[key] != value:
+                        raise ValueError("conflicting fast parent provenance")
+                    pins[key] = value
+            cp_decl_path = a.clock_parent_root / "declaration.json"
+            if clock_own["input_file_hashes"].get(str(cp_decl_path)) != digest(cp_decl_path):
+                raise ValueError("fast parent declaration must be bound by independent replay")
+            pins[str(cp_decl_path)] = digest(cp_decl_path)
+            cp_decl = json.loads(cp_decl_path.read_text())
+            if (
+                not clock_own["all_exact"]
+                or clock_own["source_hash"] != a.clock_parent_hash
+                or cp_decl["protocol"] != "robonaldo.reference_clock_authority.v1"
+                or cp_decl["starts"] != plan["starts_m"]
+                or cp_decl["reference_rate"] != a.reference_rate
+                or len(clock_parent["records"]) != len(plan["starts_m"])
+                or plan["clock_parent_hash"] != a.clock_parent_hash
+                or plan["clock_parent_own_hash"] != a.clock_parent_own_hash
+            ):
+                raise ValueError(
+                    "same declared complete fast parent and independent replay required"
+                )
+            for record in clock_parent["records"]:
+                path = a.clock_parent_root / record["artifact"]["path"]
+                if (
+                    path.parent.resolve() != a.clock_parent_root.resolve()
+                    or path.is_symlink()
+                    or digest(path) != record["artifact"]["hash"]
+                ):
+                    raise ValueError("exact confined fast parent trajectory required")
+                pins[str(path)] = record["artifact"]["hash"]
     if candidate_mode:
         training_path = a.torque_candidate_root / "complete.json"
         if digest(training_path) != a.torque_candidate_hash:
@@ -234,6 +293,11 @@ def main():
                 raise ValueError("conflicting candidate ancestry")
             pins[path] = expected
         pins[str(training_path)] = a.torque_candidate_hash
+        if (
+            clock_parent is not None
+            and trained["parent_policy_hash"] != cp_decl["reference_controller_hash"]
+        ):
+            raise ValueError("candidate was not trained for this fast parent controller")
         policy_path = a.torque_candidate_root / trained["policy"]["path"]
         if (
             policy_path.parent.resolve() != a.torque_candidate_root.resolve()
@@ -531,7 +595,11 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "robonaldo.reference_clock_authority.v1"
+                (
+                    "robonaldo.reference_clock_learned_torque.v1"
+                    if candidate_mode
+                    else "robonaldo.reference_clock_authority.v1"
+                )
                 if a.clock_authority
                 else "robonaldo.native_torque_exploration.v1"
                 if explore
@@ -568,6 +636,8 @@ def main():
             reference_clock_authority=a.clock_authority,
             reference_rate=a.reference_rate,
             reference_controller_hash=reference_controller_hash,
+            clock_parent_hash=a.clock_parent_hash,
+            clock_parent_own_hash=a.clock_parent_own_hash,
             clock_plan_hash=a.clock_plan_hash,
             physical_control_hz=50,
             physical_native_hz=500,
@@ -772,12 +842,16 @@ def main():
             teacher_artifacts = {}
             full_identity = None
             if a.clock_authority and a.reference_rate == 1.0 and index < 4:
+                compare_source = clock_parent if clock_parent is not None else identity_source
+                compare_root = (
+                    a.clock_parent_root if clock_parent is not None else a.identity_reference
+                )
                 identity = next(
                     row
-                    for row in identity_source["records"]
+                    for row in compare_source["records"]
                     if row["arm"] == arm and row["index"] == index
                 )
-                with np.load(a.identity_reference / identity["artifact"]["path"]) as ref:
+                with np.load(compare_root / identity["artifact"]["path"]) as ref:
                     full_identity = {
                         key: bool(np.array_equal(arrays[key], ref[key])) for key in ref.files
                     }
@@ -785,12 +859,16 @@ def main():
                     raise ValueError("rate1 reference clock changed original parent trajectory")
             if layers:
                 assert identity_source is not None
+                compare_source = clock_parent if clock_parent is not None else identity_source
+                compare_root = (
+                    a.clock_parent_root if clock_parent is not None else a.identity_reference
+                )
                 identity = next(
                     row
-                    for row in identity_source["records"]
+                    for row in compare_source["records"]
                     if row["arm"] == arm and row["index"] == index
                 )
-                with np.load(a.identity_reference / identity["artifact"]["path"]) as ref:
+                with np.load(compare_root / identity["artifact"]["path"]) as ref:
                     full_identity = {
                         key: bool(np.array_equal(arrays[key], ref[key])) for key in ref.files
                     }

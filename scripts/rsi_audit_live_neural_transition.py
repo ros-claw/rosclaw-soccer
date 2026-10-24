@@ -35,12 +35,16 @@ def main():
     proposal_capture = (
         exploration or declaration["protocol"] == "robonaldo.native_guarded_proposal_trace.v1"
     )
-    torque_trial = (
-        proposal_capture or declaration["protocol"] == "robonaldo.native_learned_torque_trial.v1"
+    torque_trial = proposal_capture or declaration["protocol"] in (
+        "robonaldo.native_learned_torque_trial.v1",
+        "robonaldo.reference_clock_learned_torque.v1",
     )
     aim_probe = declaration["protocol"] == "robonaldo.neural_aim_reachability.v1"
-    clock_probe = declaration["protocol"] == "robonaldo.reference_clock_authority.v1"
-    if a.capture_clock_teacher and not clock_probe:
+    clock_probe = declaration["protocol"] in (
+        "robonaldo.reference_clock_authority.v1",
+        "robonaldo.reference_clock_learned_torque.v1",
+    )
+    if a.capture_clock_teacher and (not clock_probe or torque_trial):
         raise ValueError("teacher capture belongs only to independently replayed clock protocol")
     clock_rate = declaration.get("reference_rate", 1.0)
     if clock_probe and (
@@ -48,7 +52,7 @@ def main():
         or not release
         or declaration["physical_control_hz"] != 50
         or declaration["physical_native_hz"] != 500
-        or declaration["torque_candidate_hash"] is not None
+        or (not torque_trial and declaration["torque_candidate_hash"] is not None)
         or not declaration["reference_velocity_scaled_in_owned_memory"]
         or declaration.get("neural_aim_input_y_m", 0.0) != 0.0
     ):
@@ -63,7 +67,11 @@ def main():
     ):
         raise ValueError("entire declared clock domain required")
     expected_protocol = (
-        "robonaldo.reference_clock_authority.v1"
+        (
+            "robonaldo.reference_clock_learned_torque.v1"
+            if torque_trial
+            else "robonaldo.reference_clock_authority.v1"
+        )
         if clock_probe
         else "robonaldo.native_torque_exploration.v1"
         if exploration
