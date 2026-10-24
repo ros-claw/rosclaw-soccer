@@ -183,3 +183,89 @@ def test_invalid_discarded_torque_is_not_silently_repaired_at_zero_fraction():
     with pytest.raises(ValueError):
         w.advance({p: np.zeros(29) for p in w.layouts}, torque_layers={"a/": a})
     assert w.failed and w.native_steps == 0
+
+
+@pytest.mark.parametrize("fraction", [0.0, 1.0])
+def test_proposal_capture_observes_without_changing_physics(tmp_path, fraction):
+    import hashlib
+
+    from rosclaw.simforge.g1_neural_torque import (
+        G1TorqueSafetyConfig,
+        load_g1_neural_torque_artifact,
+        serialize_g1_neural_torque_artifact,
+    )
+
+    from rosclaw_soccer.sim.contracts import hash_json
+
+    reference, actual = world(), world()
+    body_hash = hash_json(actual.layouts["a/"].profile())
+    parent_hash = "sha256:" + "b" * 64
+    safety = G1TorqueSafetyConfig(warmup_steps=3, maximum_projection_ratio=1.0)
+    payload = serialize_g1_neural_torque_artifact(
+        body_hash=body_hash,
+        parent_policy_hash=parent_hash,
+        dataset_hash="sha256:" + "c" * 64,
+        hidden_dim=8,
+        observation_clip=8.0,
+        update_index=0,
+        safety=safety,
+        tensors={
+            "observation_mean": np.zeros(102),
+            "observation_std": np.ones(102),
+            "action_limits": np.asarray(G1_HARD_TORQUE_LIMITS) * 0.70,
+            "actor.gru.weight_ih_l0": np.zeros((24, 102)),
+            "actor.gru.weight_hh_l0": np.zeros((24, 8)),
+            "actor.gru.bias_ih_l0": np.zeros(24),
+            "actor.gru.bias_hh_l0": np.zeros(24),
+            "actor.head.weight": np.zeros((58, 8)),
+            "actor.head.bias": np.full(58, 0.001),
+        },
+    )
+    path = tmp_path / "policy.bin"
+    path.write_bytes(payload)
+    artifact = load_g1_neural_torque_artifact(
+        path, expected_hash="sha256:" + hashlib.sha256(payload).hexdigest()
+    )
+    layers = []
+    for w, capture in ((reference, False), (actual, True)):
+        policy = G1NeuralTorquePolicy(
+            artifact, expected_body_hash=body_hash, expected_parent_policy_hash=parent_hash
+        )
+        layers.append(
+            SharedNativeTorqueLayer(
+                w,
+                "a/",
+                policy,
+                target_y_m=0.0,
+                target_z_m=0.11,
+                horizon_controls=1,
+                expected_parent_policy_hash=parent_hash,
+                intervention_fraction=fraction,
+                capture_actor_proposals=capture,
+            )
+        )
+    targets = {p: np.zeros(29) for p in actual.layouts}
+    old = reference.advance(targets, torque_layers={"a/": layers[0]})
+    new = actual.advance(targets, torque_layers={"a/": layers[1]})
+    for key in old:
+        np.testing.assert_array_equal(old[key], new[key])
+    trace = layers[1].decision_trace.arrays()
+    assert trace["actor_proposal_valid"].tolist() == [False] * 3 + [True] * 7
+    np.testing.assert_array_equal(
+        trace["applied_actions"], new["torque"][:, actual.layouts["a/"].ai]
+    )
+    assert np.all(trace["intervention_fractions"] == fraction)
+    assert layers[0].decision_trace is None
+
+
+def test_teacher_is_not_mislabelled_as_a_neural_actor_trace():
+    with pytest.raises(ValueError, match="private Core"):
+        SharedNativeTorqueLayer(
+            world(),
+            "a/",
+            G1TeacherTorqueCollector(),
+            target_y_m=0.0,
+            target_z_m=0.11,
+            horizon_controls=1,
+            capture_actor_proposals=True,
+        )

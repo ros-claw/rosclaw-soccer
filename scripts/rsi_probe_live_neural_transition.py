@@ -28,6 +28,7 @@ def main():
     parser.add_argument("--torque-intervention-fraction", type=float, default=1.0)
     parser.add_argument("--core-source-root", type=Path)
     parser.add_argument("--core-expected-head")
+    parser.add_argument("--capture-torque-proposals", action="store_true")
     parser.add_argument("--identity-reference", type=Path)
     parser.add_argument("--identity-reference-hash")
     parser.add_argument("--identity-own", type=Path)
@@ -36,6 +37,10 @@ def main():
     if (a.core_source_root is None) != (a.core_expected_head is None):
         parser.error("explicit Core source root and commit must be provided together")
     candidate_mode = a.torque_candidate_root is not None
+    if a.capture_torque_proposals and (not candidate_mode or a.core_source_root is None):
+        parser.error(
+            "proposal capture requires a learned candidate and explicit active Core source"
+        )
     torque_mode = a.torque_teacher or candidate_mode
     if (
         candidate_mode != (a.torque_candidate_hash is not None)
@@ -385,24 +390,29 @@ def main():
                     if trained is not None
                     else None,
                     intervention_fraction=a.torque_intervention_fraction,
+                    capture_actor_proposals=a.capture_torque_proposals,
                 )
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
         dict(
             protocol=(
-                "robonaldo.native_learned_torque_trial.v1"
-                if candidate_mode
+                "robonaldo.native_guarded_proposal_trace.v1"
+                if a.capture_torque_proposals
                 else (
-                    "robonaldo.native_torque_teacher.v1"
-                    if a.torque_teacher
+                    "robonaldo.native_learned_torque_trial.v1"
+                    if candidate_mode
                     else (
-                        "robonaldo.neural_aim_reachability.v1"
-                        if a.single_player_only
+                        "robonaldo.native_torque_teacher.v1"
+                        if a.torque_teacher
                         else (
-                            "robonaldo.contact_release_blend.v1"
-                            if a.contact_release
-                            else "robonaldo.live_neural_blend.v1"
+                            "robonaldo.neural_aim_reachability.v1"
+                            if a.single_player_only
+                            else (
+                                "robonaldo.contact_release_blend.v1"
+                                if a.contact_release
+                                else "robonaldo.live_neural_blend.v1"
+                            )
                         )
                     )
                 )
@@ -429,6 +439,7 @@ def main():
             actual_history_both_ABIs=True,
             same_effort_caps=True,
             torque_teacher=a.torque_teacher,
+            capture_actor_proposals=a.capture_torque_proposals,
             torque_candidate_hash=a.torque_candidate_hash,
             torque_intervention_fraction=a.torque_intervention_fraction if torque_mode else None,
             teacher_motion_recovery_not_precision_qualified=a.torque_teacher,
@@ -632,6 +643,26 @@ def main():
                         else None,
                         actual_NN_call_counts=torque_nn_counts[id(w)].get(prefix),
                     )
+                    if layer.decision_trace is not None:
+                        trace = layer.decision_trace
+                        if trace.count != layer.applied:
+                            raise ValueError(
+                                "one completed proposal decision per actual native step required"
+                            )
+                        trace_path = (
+                            a.output / f"guarded-proposals-{arm}-{index}-{prefix.rstrip('/')}.npz"
+                        )
+                        values = trace.arrays()
+                        np.savez_compressed(trace_path, **values)
+                        teacher_artifacts[prefix]["guarded_proposal_trace"] = dict(
+                            path=trace_path.name,
+                            hash=digest(trace_path),
+                            context_hash=trace.context_hash,
+                            steps=trace.count,
+                            actual_actor_proposals=int(values["actor_proposal_valid"].sum()),
+                            missing_proposals_are_not_zero_action_labels=True,
+                            action_semantics="ACTOR_PROPOSAL_THROUGH_GUARD",
+                        )
             baseline = next(
                 row
                 for row in source["records"]

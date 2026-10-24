@@ -6,11 +6,14 @@ The parent joint target remains a PD setpoint; actual total actuator torque is
 separately observed and fed back at every native step.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
+
+if TYPE_CHECKING:
+    from rosclaw.control.guarded_action_trace import GuardedActionTrace
 
 
 class SharedNativeTorqueLayer:
@@ -25,6 +28,7 @@ class SharedNativeTorqueLayer:
         horizon_controls: int,
         expected_parent_policy_hash: str | None = None,
         intervention_fraction: float = 1.0,
+        capture_actor_proposals: bool = False,
     ) -> None:
         import mujoco
         from rosclaw.simforge.g1_neural_torque import G1NeuralTorquePolicy, G1TeacherTorqueCollector
@@ -44,6 +48,14 @@ class SharedNativeTorqueLayer:
             or not np.isfinite(intervention_fraction)
             or not 0.0 <= intervention_fraction <= 1.0
             or any(other.policy is policy for other in world._torque_layer_owners.values())
+            or type(capture_actor_proposals) is not bool
+            or (
+                capture_actor_proposals
+                and (
+                    type(policy) is not G1NeuralTorquePolicy
+                    or not hasattr(type(policy), "pending_actor_proposal")
+                )
+            )
         ):
             raise ValueError(
                 "new explicit bounded SIM task and private Core torque policy required"
@@ -64,6 +76,27 @@ class SharedNativeTorqueLayer:
         self.target_y_m, self.target_z_m = float(target_y_m), float(target_z_m)
         self.horizon_native_steps = horizon_controls * 10
         self.intervention_fraction = float(intervention_fraction)
+        self.decision_trace: GuardedActionTrace | None = None
+        self._pending_decision: (
+            tuple[np.ndarray | None, np.ndarray, np.ndarray, bool, str | None] | None
+        ) = None
+        if capture_actor_proposals:
+            from rosclaw.control.guarded_action_trace import GuardedActionTrace
+
+            self.decision_trace = GuardedActionTrace(
+                dimension=29,
+                maximum_steps=self.horizon_native_steps,
+                context_hash=hash_json(
+                    dict(
+                        body_hash=self.body_hash,
+                        policy_hash=policy.artifact.artifact_hash,
+                        parent_hash=expected_parent_policy_hash,
+                        target=[self.target_y_m, self.target_z_m],
+                        horizon_native_steps=self.horizon_native_steps,
+                        intervention_fraction=self.intervention_fraction,
+                    )
+                ),
+            )
         self.torso = int(
             mujoco.mj_name2id(world.model, mujoco.mjtObj.mjOBJ_BODY, prefix + "torso_link")
         )
@@ -144,6 +177,17 @@ class SharedNativeTorqueLayer:
                 or np.any(np.abs(proposed) > w.parameters[self.prefix].effort)
             ):
                 raise ValueError("finite torque within unchanged actual effort caps required")
+            if self.decision_trace is not None:
+                decision = self.policy.pending_projection
+                if not np.array_equal(proposed, decision.torque):
+                    raise ValueError("Core returned command differs from pending guarded decision")
+                self._pending_decision = (
+                    self.policy.pending_actor_proposal,
+                    proposed.copy(),
+                    parent.copy(),
+                    decision.used_parent,
+                    decision.reason,
+                )
             # Note ACTUAL mixed torque back to Core, not its discarded full
             # proposal. Core receipts describe proposal/fallback paths; actual
             # intervention is measured separately in the native world trace.
@@ -171,10 +215,25 @@ class SharedNativeTorqueLayer:
             self.failed = True
             raise ValueError("one actual native actuator measurement after command required")
         try:
+            if self.decision_trace is not None:
+                if self._pending_decision is None:
+                    raise ValueError("missing own before-step proposal evidence")
+                raw, guarded, parent, used_parent, reason = self._pending_decision
+                self.decision_trace.record(
+                    step=self.next_native_step,
+                    proposal=raw,
+                    guarded=guarded,
+                    applied=actual,
+                    parent=parent,
+                    used_parent=used_parent,
+                    reason=reason,
+                    intervention_fraction=self.intervention_fraction,
+                )
             self.policy.note_applied(actual.copy())
         except BaseException:
             self.failed = True
             raise
         self.pending = False
+        self._pending_decision = None
         self.next_native_step += 1
         self.applied += 1
