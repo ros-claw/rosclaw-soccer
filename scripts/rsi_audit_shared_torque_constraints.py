@@ -142,6 +142,7 @@ def main():
                     )
                 )
     check_pins(pins)
+    a.output.mkdir(parents=True, exist_ok=False)
     write_once(
         a.output / "complete.json",
         dict(
