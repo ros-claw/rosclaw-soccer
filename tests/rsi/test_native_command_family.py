@@ -7,7 +7,12 @@ import pytest
 
 
 @pytest.mark.parametrize(
-    "script", ["rsi_run_native_command_family.py", "rsi_train_native_role_command.py"]
+    "script",
+    [
+        "rsi_run_native_command_family.py",
+        "rsi_train_native_role_command.py",
+        "rsi_query_native_role_teacher.py",
+    ],
 )
 def test_command_family_bootstrap_does_not_train_or_allocate_physics(script, tmp_path, monkeypatch):
     root = Path(__file__).resolve().parents[2]
