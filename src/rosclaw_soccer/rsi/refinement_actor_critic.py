@@ -12,12 +12,13 @@ import torch
 
 from rosclaw_soccer.rsi.dual_recurrent_actor_critic import MotorCritic
 from rosclaw_soccer.rsi.motor_sampling_law import history_motor_kl, history_motor_logp
+from rosclaw_soccer.rsi.refinement_actor_clock import FULL, LEGACY, validate_actor_clock
 from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
 
 
 def _validate_episode(episode: dict[str, Any]) -> int:
     if (
-        episode.get("controller_kind") != "pure-refinement-stochastic-native-v1"
+        episode.get("controller_kind") not in (LEGACY, FULL)
         or episode.get("sampling_law") != "box-truncated-ar1"
         or any(
             episode.get(k) is not False
@@ -35,27 +36,13 @@ def _validate_episode(episode: dict[str, Any]) -> int:
         not isinstance(obs, torch.Tensor)
         or obs.ndim != 2
         or obs.shape[1] != 160
-        or not 1 <= len(obs) <= 300
+        or not 1 <= len(obs) <= 400
         or obs.dtype != torch.float32
         or not torch.isfinite(obs).all()
     ):
         raise ValueError("finite whole unpadded own160 observation sequence required")
     n = len(obs)
-    tail, total = episode.get("observed_recovery_controls"), episode.get("total_observed_controls")
-    motion = episode.get("motion_reference_controls")
-    if (
-        type(motion) is not int
-        or not n <= motion <= 300
-        or type(tail) is not int
-        or not 0 <= tail <= 100
-        or type(total) is not int
-        or total != n + tail
-        or episode.get("deterministic_recovery_excluded_from_actor_rows") is not True
-        or (tail > 0 and n != motion)
-        or (episode["termination"] == "FULL_MOTION_PLUS100NN_RECOVERY" and n != motion)
-        or (episode["termination"] == "FULL_MOTION_PLUS100NN_RECOVERY" and tail != 100)
-    ):
-        raise ValueError("actual terminal recovery clock required; failures cannot be padded")
+    validate_actor_clock(episode, n)
     shapes = {
         "actions": (n, 29),
         "old_means": (n, 29),

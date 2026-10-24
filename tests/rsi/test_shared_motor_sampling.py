@@ -52,6 +52,64 @@ def test_neural_recovery_is_deterministic_and_never_reset_into_motion():
         sampler.propose(m, m, control=2, standing=False)
 
 
+def test_full_recovery_continues_same_private_history_all389_rows_density_match():
+    scale = np.full(29, 0.5, np.float32)
+    legacy = SharedMotorSampling(scale, seed=19, profile="contact-v1")
+    full, own = [
+        SharedMotorSampling(scale, seed=19, profile="contact-v1", include_recovery=True)
+        for _ in range(2)
+    ]
+    means, actions, densities = [], [], []
+    m, r = np.zeros(29, np.float32), np.zeros(29, np.float32)
+    last_rng = None
+    for k in range(389):
+        m.fill(0.05 if k >= 289 else 0.01)
+        x, tx = full.propose(m, r, control=k, standing=k >= 289)
+        y, ty = own.propose(m, r, control=k, standing=k >= 289)
+        old, old_trace = legacy.propose(m, r, control=k, standing=k >= 289)
+        np.testing.assert_array_equal(x, y)
+        for key in tx:
+            np.testing.assert_array_equal(tx[key], ty[key])
+        assert tx["active"]
+        assert not np.array_equal(tx["rng_before"], tx["rng_after"])
+        if last_rng is not None:
+            np.testing.assert_array_equal(tx["rng_before"], last_rng)
+        last_rng = tx["rng_after"]
+        if k < 289:
+            np.testing.assert_array_equal(x, old)
+        else:
+            assert not old_trace["active"] and not np.array_equal(x, old)
+        means.append(m.copy())
+        actions.append(x)
+        densities.append(tx["logp"])
+    logp = history_motor_logp(
+        "box-truncated-ar1",
+        torch.from_numpy(np.stack(means)),
+        torch.from_numpy(np.stack(actions)),
+        torch.zeros(389, 29),
+        torch.from_numpy(scale),
+        full.log_std,
+        rho=0.9,
+    )
+    np.testing.assert_allclose(logp.numpy(), densities, atol=1e-4, rtol=1e-6)
+    meta = full.metadata(reference_controls=289, recovery_controls=100)
+    assert meta["stochastic_controls"] == meta["total_observed_controls"] == 389
+    assert meta["controller_kind"] == "pure-refinement-full-recovery-stochastic-native-v2"
+    assert meta["deterministic_recovery_excluded_from_actor_rows"] is False
+    with pytest.raises(ValueError):
+        full.propose(m, r, control=389, standing=True)
+    with pytest.raises(ValueError):
+        full.propose(m, r, control=389, standing=False)
+
+
+@pytest.mark.parametrize("value", [None, 1, "yes"])
+def test_coverage_mode_must_be_an_explicit_boolean(value):
+    with pytest.raises(ValueError):
+        SharedMotorSampling(
+            np.ones(29, np.float32), seed=1, profile="contact-v1", include_recovery=value
+        )
+
+
 @pytest.mark.parametrize("seed", [True, -1, 2**31, 1.0])
 def test_bad_seed_before_sampling(seed):
     with pytest.raises(ValueError):

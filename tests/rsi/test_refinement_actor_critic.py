@@ -13,11 +13,11 @@ from rosclaw_soccer.rsi.refinement_actor_critic import (
 from rosclaw_soccer.rsi.refinement_motor_adapter import RefinementMotorAdapter
 
 
-def fixture():
+def fixture(n=12):
     """Probability/gradient unit fixture ONLY; never a native rollout proof."""
     actor = RefinementMotorAdapter(parent_model())
     critic = MotorCritic()
-    obs = torch.randn(12, 160) * 0.1
+    obs = torch.randn(n, 160) * 0.1
     with torch.no_grad():
         means, _, ev = actor.forward_with_evidence(obs[:, None], actor.initial_state())
     means = means[:, 0]
@@ -26,7 +26,7 @@ def fixture():
     std = torch.full((29,), math.log(0.01), dtype=torch.float32)
     gen = torch.Generator().manual_seed(11)
     actions = []
-    for i in range(12):
+    for i in range(n):
         action, _ = draw_motor_action(
             "box-truncated-ar1",
             means[i],
@@ -51,21 +51,43 @@ def fixture():
         old_logp=history_motor_logp(
             "box-truncated-ar1", means, actions, reference, scale, std, rho=0.9
         ),
-        old_values=torch.zeros(12),
-        returns=torch.ones(12),
-        advantages=torch.linspace(-1, 1, 12),
+        old_values=torch.zeros(n),
+        returns=torch.ones(n),
+        advantages=torch.linspace(-1, 1, n),
         assisted=False,
         external_teacher=False,
         authority_rejected=False,
         all_actor_actions_actually_executed=True,
         natural_terminal_observed=True,
         termination="FULL_MOTION_PLUS100NN_RECOVERY",
-        motion_reference_controls=12,
+        motion_reference_controls=n,
         observed_recovery_controls=100,
-        total_observed_controls=112,
+        total_observed_controls=n + 100,
         deterministic_recovery_excluded_from_actor_rows=True,
     )
     return actor, critic, ep, std
+
+
+def test_full389_actual_history_recovery_alone_has_policy_gradient_and_kl_coverage():
+    actor, critic, ep, std = fixture(389)
+    ep.update(
+        controller_kind="pure-refinement-full-recovery-stochastic-native-v2",
+        motion_reference_controls=289,
+        total_observed_controls=389,
+        deterministic_recovery_excluded_from_actor_rows=False,
+    )
+    ep["advantages"].zero_()
+    ep["advantages"][289:] = 1.0
+    loss, info = refinement_own_history_loss(
+        actor, critic, ep, std, rho=0.9, expose_actor_components=True
+    )
+    assert torch.isfinite(loss) and info["actor_rows"] == info["critic_rows"] == 389
+    gradients = torch.autograd.grad(info["policy_term"], list(actor.head.parameters()))
+    assert sum(g.abs().sum() for g in gradients) > 0
+    assert refinement_conditional_kl(actor, ep, std, rho=0.9) < 1e-7
+    ep["old_logp"][300] += 1
+    with pytest.raises(ValueError, match="density"):
+        refinement_own_history_loss(actor, critic, ep, std, rho=0.9)
 
 
 def test_new_head_and_critic_get_gradients_but_entire_acquired_parent_does_not():

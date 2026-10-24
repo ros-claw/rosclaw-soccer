@@ -78,6 +78,7 @@ def run_pair(pair):
                 emit_course_rows=False,
                 sampling_seed=row["sampling_seed"],
                 sampling_profile=cfg["sampling_profile"],
+                sampling_include_recovery=cfg.get("sampling_include_recovery", False),
             )
             if s["source"] is None:
                 from scripts.rsi_pass_transfer_trial import collect_trial

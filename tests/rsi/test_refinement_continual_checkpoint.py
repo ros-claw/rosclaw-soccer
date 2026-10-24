@@ -17,12 +17,16 @@ from rosclaw_soccer.rsi.refinement_continual_checkpoint import (
 from rosclaw_soccer.rsi.refinement_onpolicy_learning import tensor_state_hash
 
 
-def fixture(prior_steps=4, generation=1):
+def fixture(prior_steps=4, generation=1, full=False):
     """Adam-continuity UNIT fixture, NOT physical or RL-performance evidence."""
     actor, critic, _, _ = motor_fixture()
     cfg = (
         continual_config(25) if generation == 1 else continuing_config(25, generation, prior_steps)
     )
+    if full:
+        from rosclaw_soccer.rsi.continuing_refinement_contract import full_recovery_config
+
+        cfg = full_recovery_config(25)
     contract = contract_for(cfg)
     parameters = [*actor.head.parameters(), *critic.parameters()]
     optimizer = torch.optim.Adam(
@@ -79,6 +83,16 @@ def test_actual_adam_continuation_and_explicit_lr_rebase():
     for k in range(8):
         assert float(s["initial_optimizer"]["state"][k]["step"]) == 4
         assert float(s["optimizer"]["state"][k]["step"]) == 5
+
+
+def test_full_recovery_v5_continues_actual_twelve_step_weights_critic_and_adam():
+    s, b, c, p, cfg, ids = fixture(12, 3, full=True)
+    validate_continual_checkpoint(s, b, c, p, config=cfg, commitments=ids, steps=1)
+    assert s["kind"] == "refinement-actor-critic-full-recovery-v5"
+    assert float(s["optimizer"]["state"][0]["step"]) == 13
+    s["kind"] = "refinement-actor-critic-continuing-v4"
+    with pytest.raises(ValueError):
+        validate_continual_checkpoint(s, b, c, p, config=cfg, commitments=ids, steps=1)
 
 
 def test_safe_prepared_state_dict_mapping_order_is_not_weight_drift():

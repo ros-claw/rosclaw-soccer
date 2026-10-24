@@ -91,7 +91,9 @@ def episodes(source_root, source, scale, *, advantage_mode="zero-v1"):
     import numpy as np
     import torch
 
+    from rosclaw_soccer.rsi.refinement_actor_clock import validate_actor_clock
     from rosclaw_soccer.rsi.refinement_onpolicy_learning import (
+        full_actor_terminal_returns,
         joint_delivery_reward,
         observed_terminal_returns,
     )
@@ -117,18 +119,29 @@ def episodes(source_root, source, scale, *, advantage_mode="zero-v1"):
         with np.load(source_root / r["artifacts"]["sampling"]["path"], allow_pickle=False) as z:
             s = {k: z[k].copy() for k in z.files}
         n, total = r["stochastic_controls"], r["controls"]
+        full = validate_actor_clock(r, n)
+        observed_motion = n - r["stand_controls"] if full else n
+        expected_standing = np.arange(total) >= observed_motion
         if (
-            s["active"].dtype != np.bool_
+            r["total_observed_controls"] != total
+            or r["observed_recovery_controls"] != r["stand_controls"]
+            or not np.array_equal(a["standing"], expected_standing)
+            or a["standing"].dtype != np.bool_
+            or a["standing"].shape != (total,)
+            or s["active"].dtype != np.bool_
             or s["active"].shape != (total,)
             or not s["active"][:n].all()
             or s["active"][n:].any()
-            or not np.array_equal(a["standing"], ~s["active"])
         ):
-            raise ValueError("only contiguous actually sampled motion rows are actor rows")
+            raise ValueError("only contiguous actually sampled versioned phase rows are actor rows")
         if any(len(v) != total for v in a.values()) or any(len(v) != total for v in s.values()):
             raise ValueError("all complete motion/recovery evidence required")
         reward = joint_delivery_reward(r["outcome"])
-        returns = observed_terminal_returns(n, r["stand_controls"], reward)
+        returns = (
+            full_actor_terminal_returns(n, reward)
+            if full
+            else observed_terminal_returns(n, r["stand_controls"], reward)
+        )
         row = {k: r[k] for k in metadata}
         row.update(
             index=r["index"],

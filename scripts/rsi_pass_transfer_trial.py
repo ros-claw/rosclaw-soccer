@@ -37,7 +37,12 @@ def collect_trial(
     feedback_anticipation_seconds=0.0,
     sampling_seed=None,
     sampling_profile=None,
+    sampling_include_recovery=False,
 ):
+    if type(sampling_include_recovery) is not bool or (
+        sampling_include_recovery and sampling_seed is None
+    ):
+        raise ValueError("explicit stochastic recovery requires a sampling seed/profile")
     if (sampling_seed is None) != (sampling_profile is None):
         raise ValueError("explicit sampling seed/profile pair required")
     if sampling_seed is not None:
@@ -104,7 +109,10 @@ def collect_trial(
         from rosclaw_soccer.rsi.shared_motor_sampling import SharedMotorSampling
 
         sampling = SharedMotorSampling(
-            ep.scale[np.argsort(ep.order)], seed=sampling_seed, profile=sampling_profile
+            ep.scale[np.argsort(ep.order)],
+            seed=sampling_seed,
+            profile=sampling_profile,
+            include_recovery=sampling_include_recovery,
         )
     feedback = None
     feedback_rows = []

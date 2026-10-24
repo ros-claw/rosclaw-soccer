@@ -9,6 +9,23 @@ KIND = "refinement-actor-critic-continuing-v4"
 SCHEMA = "soccer.refinement.continuing_checkpoint.v4"
 STATUS = "REFINEMENT_CONTINUING_UPDATED_PENDING_PHYSICAL_VALIDATION"
 PREPARED = "CONTINUING_NEW_POLICY_BATCH_AND_TRAINED_CRITIC_PREPARED_NOT_UPDATED"
+FULL_KIND = "refinement-actor-critic-full-recovery-v5"
+FULL_STATUS = "REFINEMENT_FULL_RECOVERY_UPDATED_PENDING_PHYSICAL_VALIDATION"
+
+
+def full_recovery_config(state: int) -> dict[str, Any]:
+    """One declared coverage ablation: actual generation2 -> generation3.
+
+    Same reward, authority, deadlines and optimizer settings. Only actor
+    coverage and the corresponding actual terminal discount rule change.
+    """
+    cfg = continuing_config(state, 3, 12)
+    cfg.update(
+        protocol="refinement.own_AR_PPO_full_recovery96.v5",
+        actor_coverage="ACTUAL_MOTION_AND_RECOVERY_NO_PHASE_RESET",
+        return_rule="MONTE_CARLO_ALL_ACTUAL_ACTOR_ROWS_NO_EXTRA_RECOVERY_DELAY",
+    )
+    return cfg
 
 
 def continuing_config(state: int, generation: int, prior_steps: int) -> dict[str, Any]:
@@ -55,6 +72,16 @@ def contract_for(config: dict[str, Any]) -> ContinuationContract:
             24,
             tuple(range(1, 48, 2)),
         )
+    if config == full_recovery_config(state):
+        return ContinuationContract(
+            FULL_KIND,
+            "soccer.refinement.full_recovery_checkpoint.v5",
+            FULL_STATUS,
+            "FULL_RECOVERY96_AND_TRAINED_CRITIC_PREPARED_NOT_UPDATED",
+            12,
+            96,
+            tuple(range(96)),
+        )
     generation, prior = config.get("generation_index"), config.get("prior_optimizer_steps")
     if (
         type(generation) is not int
@@ -66,11 +93,22 @@ def contract_for(config: dict[str, Any]) -> ContinuationContract:
 
 
 def select_parallel_experience(
-    source: dict[str, Any], own: dict[str, Any], *, source_hash: str, training_hash: str, state: int
+    source: dict[str, Any],
+    own: dict[str, Any],
+    *,
+    source_hash: str,
+    training_hash: str,
+    state: int,
+    full_recovery: bool = False,
 ) -> list[dict[str, Any]]:
-    from rosclaw_soccer.rsi.parallel_refinement_batch import parallel_config, verify_parallel_batch
+    from rosclaw_soccer.rsi.parallel_refinement_batch import (
+        FULL_OWN,
+        FULL_SOURCE,
+        parallel_config,
+        verify_parallel_batch,
+    )
 
-    cfg = parallel_config(state, 32)
+    cfg = parallel_config(state, 32, full_recovery=full_recovery)
     if (
         source["config"] != cfg
         or own["config"] != cfg
@@ -82,8 +120,14 @@ def select_parallel_experience(
     verify_parallel_batch(source, courses)
     verify_parallel_batch(own, courses)
     if (
-        source["status"] != "GEN1_PARALLEL_OWN_POLICY_BATCH_COLLECTED_PENDING_NATIVE_LAW"
-        or own["status"] != "GEN1_PARALLEL_OWN_POLICY_BATCH_ALL_NATIVE_LAW_MATCH"
+        source["status"]
+        != (
+            FULL_SOURCE
+            if full_recovery
+            else "GEN1_PARALLEL_OWN_POLICY_BATCH_COLLECTED_PENDING_NATIVE_LAW"
+        )
+        or own["status"]
+        != (FULL_OWN if full_recovery else "GEN1_PARALLEL_OWN_POLICY_BATCH_ALL_NATIVE_LAW_MATCH")
         or own["source_hash"] != source_hash
         or source["training_hash"] != training_hash
         or own["training_hash"] != training_hash
@@ -110,3 +154,17 @@ def select_parallel_experience(
         raise ValueError("all96 actual new-policy independent native/RNG histories required")
     result: list[dict[str, Any]] = source["records"]
     return result
+
+
+def validate_batch_coverage(config: dict[str, Any], batch: list[dict[str, Any]]) -> None:
+    """A versioned optimizer cannot admit the other protocol's action rows."""
+    from rosclaw_soccer.rsi.refinement_actor_clock import FULL, LEGACY, validate_actor_clock
+
+    contract = contract_for(config)
+    full = contract.kind == FULL_KIND
+    if len(batch) != contract.worlds:
+        raise ValueError("complete versioned actor coverage required")
+    for episode in batch:
+        if episode.get("controller_kind") != (FULL if full else LEGACY):
+            raise ValueError("legacy and full recovery actor coverage cannot be mixed")
+        validate_actor_clock(episode, len(episode["observations"]))

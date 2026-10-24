@@ -23,6 +23,7 @@ def main():
     p.add_argument("--state-id", type=int, choices=(25, 26), required=True)
     p.add_argument("--seeds-per-initial", type=int, choices=(4, 32), required=True)
     p.add_argument("--workers", type=int, choices=(1, 2, 4), required=True)
+    p.add_argument("--full-recovery", action="store_true")
     p.add_argument("--audit-source-root", type=Path)
     p.add_argument("--producer-head")
     p.add_argument("--calibration-own-root", type=Path)
@@ -34,7 +35,12 @@ def main():
         a.seeds_per_initial == 32 and a.calibration_own_root is None
     ):
         p.error("large batches require a predeclared closed own-native calibration")
-    from rosclaw_soccer.rsi.parallel_refinement_batch import parallel_config, verify_parallel_batch
+    from rosclaw_soccer.rsi.parallel_refinement_batch import (
+        FULL_OWN,
+        FULL_SOURCE,
+        parallel_config,
+        verify_parallel_batch,
+    )
     from rosclaw_soccer.rsi.refinement_continual_checkpoint import KIND, STATUS
     from rosclaw_soccer.rsi.refinement_onpolicy_checkpoint import file_hash
     from scripts.rsi_atomic_artifacts import write_once
@@ -46,16 +52,38 @@ def main():
     clean(a.expected_head)
     if a.output.exists():
         raise ValueError("unused once-only parallel output required")
-    cfg = parallel_config(a.state_id, a.seeds_per_initial)
+    cfg = parallel_config(a.state_id, a.seeds_per_initial, full_recovery=a.full_recovery)
+    source_status = (
+        FULL_SOURCE
+        if a.full_recovery
+        else "GEN1_PARALLEL_OWN_POLICY_BATCH_COLLECTED_PENDING_NATIVE_LAW"
+    )
+    own_status = (
+        FULL_OWN if a.full_recovery else "GEN1_PARALLEL_OWN_POLICY_BATCH_ALL_NATIVE_LAW_MATCH"
+    )
     admitted = admit(a)
     pins = admitted[1]
     training = json.loads((a.training_root / "complete.json").read_text())
+    if a.full_recovery:
+        from rosclaw_soccer.rsi.continuing_refinement_contract import (
+            KIND as FULL_BEHAVIOR_KIND,
+        )
+        from rosclaw_soccer.rsi.continuing_refinement_contract import (
+            STATUS as FULL_BEHAVIOR_STATUS,
+        )
+
+        expected_kind, expected_status, steps = FULL_BEHAVIOR_KIND, FULL_BEHAVIOR_STATUS, 12
+        if training["config"]["generation_index"] != 2:
+            raise ValueError("full recovery pilot requires the exact generation2 behavior")
+    else:
+        expected_kind, expected_status, steps = KIND, STATUS, 8
     if (
-        training["checkpoint_kind"] != KIND
-        or training["status"] != STATUS
-        or training["cumulative_actor_steps"] != 8
+        training["checkpoint_kind"] != expected_kind
+        or training["status"] != expected_status
+        or training["cumulative_actor_steps"] != steps
+        or training["cumulative_critic_steps"] != steps
     ):
-        raise ValueError("exact fully trained generation1 behavior required for new rollouts")
+        raise ValueError("exact fully trained versioned behavior required for new rollouts")
     if a.calibration_own_root is not None:
         cr = a.calibration_own_root
         cp = cr / "complete.json"
@@ -64,10 +92,10 @@ def main():
         ch = file_hash(cp)
         cal = json.loads(cp.read_text())
         if (
-            cal["status"] != "GEN1_PARALLEL_OWN_POLICY_BATCH_ALL_NATIVE_LAW_MATCH"
+            cal["status"] != own_status
             or cal["source_head"] != a.calibration_producer_head
             or cal["training_hash"] != a.training_hash
-            or cal["config"] != parallel_config(a.state_id, 4)
+            or cal["config"] != parallel_config(a.state_id, 4, full_recovery=a.full_recovery)
             or cal["independent_whole_world_replay"] is not True
             or cal["sampling_law_audit_passed"] is not True
         ):
@@ -87,7 +115,7 @@ def main():
         sh = file_hash(sp)
         source, decl = [json.loads(x.read_text()) for x in (sp, dp)]
         if (
-            source["status"] != "GEN1_PARALLEL_OWN_POLICY_BATCH_COLLECTED_PENDING_NATIVE_LAW"
+            source["status"] != source_status
             or source["config"] != cfg
             or decl["config"] != cfg
             or source["source_head"] != a.producer_head
@@ -215,9 +243,7 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="GEN1_PARALLEL_OWN_POLICY_BATCH_COLLECTED_PENDING_NATIVE_LAW"
-                if source is None
-                else "GEN1_PARALLEL_OWN_POLICY_BATCH_ALL_NATIVE_LAW_MATCH",
+                status=source_status if source is None else own_status,
                 config=cfg,
                 source_head=a.expected_head,
                 training_hash=a.training_hash,

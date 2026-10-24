@@ -39,6 +39,34 @@ def test_calibration_and_training_noise_are_disjoint():
     assert not set(parallel_config(25, 4)["seeds"]) & set(parallel_config(25, 32)["seeds"])
 
 
+def test_full_coverage_new_version_seeds_and_all_recovery_rows():
+    from rosclaw_soccer.rsi.refinement_actor_clock import FULL
+
+    r, courses = fixture()
+    cfg = parallel_config(25, 32, full_recovery=True)
+    r["config"] = cfg
+    for pair in range(48):
+        for plan in pair_plan(cfg, courses, pair):
+            row = r["records"][plan["index"]]
+            row.update(
+                plan,
+                controller_kind=FULL,
+                stochastic_controls=389,
+                deterministic_recovery_excluded_from_actor_rows=False,
+            )
+    verify_parallel_batch(r, courses)
+    used = set()
+    for full in (False, True):
+        for seeds in (4, 32):
+            new = set(parallel_config(25, seeds, full_recovery=full)["seeds"])
+            assert not used & new
+            used |= new
+    assert cfg["formal_motion_deadline_controls"] == 300
+    r["records"][0]["stochastic_controls"] = 289
+    with pytest.raises(ValueError):
+        verify_parallel_batch(r, courses)
+
+
 @pytest.mark.parametrize("fault", ["missing", "seed", "count", "PPO", "law", "arm", "tail"])
 def test_invalid_partial_or_authority_data_cannot_train(fault):
     r, courses = fixture()

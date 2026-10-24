@@ -26,16 +26,24 @@ def main():
         p.add_argument("--" + k, required=True)
     p.add_argument("--state-id", type=int, choices=(25, 26), required=True)
     p.add_argument("--parallel-batch", action="store_true")
+    p.add_argument("--full-recovery", action="store_true")
     a = p.parse_args()
+    if a.full_recovery and not a.parallel_batch:
+        p.error("full recovery requires the complete parallel96 experience")
     import math
 
     import torch
 
     from rosclaw_soccer.rsi import refinement_continual_checkpoint as prior_continual
     from rosclaw_soccer.rsi.continuing_refinement_contract import (
+        KIND as CONTINUING_KIND,
+    )
+    from rosclaw_soccer.rsi.continuing_refinement_contract import (
         continuing_config,
         contract_for,
+        full_recovery_config,
         select_parallel_experience,
+        validate_batch_coverage,
     )
     from rosclaw_soccer.rsi.dual_recurrent_actor_critic import MotorCritic
     from rosclaw_soccer.rsi.refinement_actor_critic import refinement_own_history_loss
@@ -63,12 +71,22 @@ def main():
             "exact trained generation0 actual new-rollout behavior required, not peer branch"
         )
     if a.parallel_batch:
-        if (
+        if a.full_recovery:
+            if (
+                prior["config"]["generation_index"] != 2
+                or prior["checkpoint_kind"] != CONTINUING_KIND
+                or prior["cumulative_actor_steps"] != 12
+                or prior["cumulative_critic_steps"] != 12
+            ):
+                raise ValueError("full recovery starts from the actual trained generation2")
+            cfg = full_recovery_config(a.state_id)
+        elif (
             prior["config"]["generation_index"] != 1
             or prior["checkpoint_kind"] != prior_continual.KIND
         ):
             raise ValueError("current parallel96 source is generation1 only")
-        cfg = continuing_config(a.state_id, 2, prior["cumulative_actor_steps"])
+        else:
+            cfg = continuing_config(a.state_id, 2, prior["cumulative_actor_steps"])
     else:
         cfg = continual_config(a.state_id)
     contract = contract_for(cfg)
@@ -94,7 +112,7 @@ def main():
     if file_hash(a.new_own_root / "complete.json") != a.new_own_hash:
         raise ValueError("exact independently audited new-policy batch required")
     select = select_parallel_experience if a.parallel_batch else select_learned_arm
-    extra = dict(state=a.state_id) if a.parallel_batch else {}
+    extra = dict(state=a.state_id, full_recovery=a.full_recovery) if a.parallel_batch else {}
     selected = select(
         *reports,
         source_hash=file_hash(a.new_source_root / "complete.json"),
@@ -149,6 +167,7 @@ def main():
         critic.eval().requires_grad_(False)
         scale = actor.parent.memory.parent.get_buffer("action_scale").clone()
         batch = episodes(a.new_source_root, dict(records=selected), scale)
+        validate_batch_coverage(cfg, batch)
         log_std = torch.full((29,), math.log(0.02), dtype=torch.float32)
         with torch.no_grad():
             for ep in batch:

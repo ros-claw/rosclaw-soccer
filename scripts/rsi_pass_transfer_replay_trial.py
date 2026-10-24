@@ -39,7 +39,12 @@ def replay_trial(
     feedback_anticipation_seconds=0.0,
     sampling_seed=None,
     sampling_profile=None,
+    sampling_include_recovery=False,
 ):
+    if type(sampling_include_recovery) is not bool or (
+        sampling_include_recovery and sampling_seed is None
+    ):
+        raise ValueError("explicit stochastic recovery requires a sampling seed/profile")
     if (sampling_seed is None) != (sampling_profile is None):
         raise ValueError("explicit own sampling seed/profile pair required")
     if sampling_seed is not None:
@@ -58,6 +63,14 @@ def replay_trial(
             or claim.get("sampling_seed") != sampling_seed
             or claim.get("sampling_profile") != sampling_profile
             or claim.get("sampling_law") != "box-truncated-ar1"
+            or claim.get("controller_kind")
+            != (
+                "pure-refinement-full-recovery-stochastic-native-v2"
+                if sampling_include_recovery
+                else "pure-refinement-stochastic-native-v1"
+            )
+            or claim.get("deterministic_recovery_excluded_from_actor_rows")
+            is not (not sampling_include_recovery)
         ):
             raise ValueError("exact pure own refinement sampling configuration required")
     elif "sampling_seed" in claim:
@@ -122,7 +135,10 @@ def replay_trial(
         from rosclaw_soccer.rsi.shared_motor_sampling import SharedMotorSampling
 
         sampling = SharedMotorSampling(
-            ep.scale[np.argsort(ep.order)], seed=sampling_seed, profile=sampling_profile
+            ep.scale[np.argsort(ep.order)],
+            seed=sampling_seed,
+            profile=sampling_profile,
+            include_recovery=sampling_include_recovery,
         )
         sampling_trace = load(claim, "sampling")
     feedback, feedback_trace = None, None

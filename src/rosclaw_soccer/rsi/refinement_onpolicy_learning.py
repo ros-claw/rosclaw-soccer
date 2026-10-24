@@ -125,6 +125,23 @@ def observed_terminal_returns(
     return np.asarray(reward * 0.995**exponents, dtype=np.float32)
 
 
+def full_actor_terminal_returns(stochastic_controls: int, reward: float) -> np.ndarray:
+    """Full actual motion+recovery history: recovery is NOT a second delay.
+
+    Callers must separately validate the versioned physical phase clock.
+    """
+    if (
+        type(stochastic_controls) is not int
+        or not 1 <= stochastic_controls <= 400
+        or type(reward) not in (int, float)
+        or not math.isfinite(reward)
+        or not -3 <= reward <= 3.25
+    ):
+        raise ValueError("actual bounded full actor clock and finite terminal reward required")
+    exponents = np.arange(stochastic_controls - 1, -1, -1)
+    return np.asarray(reward * 0.995**exponents, dtype=np.float32)
+
+
 def tensor_state_hash(state: dict[str, torch.Tensor]) -> str:
     digest = hashlib.sha256()
     for key in sorted(state):

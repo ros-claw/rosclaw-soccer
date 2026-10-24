@@ -60,7 +60,7 @@ def open_learned_model(old, args, pins, scope, *, _depth=0):
     if _depth > 16 or file_hash(args.training_root / "complete.json") != args.training_hash:
         raise ValueError("bounded exact model ancestry required")
     trained = json.loads((args.training_root / "complete.json").read_text())
-    if trained["checkpoint_kind"] not in (KIND, continuing.KIND):
+    if trained["checkpoint_kind"] not in (KIND, continuing.KIND, continuing.FULL_KIND):
         return load_onpolicy_refinement(
             old,
             behavior_training_hash=scope["student_training_hash"],

@@ -22,7 +22,10 @@ def main():
 
     import torch
 
-    from rosclaw_soccer.rsi.continuing_refinement_contract import contract_for
+    from rosclaw_soccer.rsi.continuing_refinement_contract import (
+        contract_for,
+        validate_batch_coverage,
+    )
     from rosclaw_soccer.rsi.dual_recurrent_actor_critic import MotorCritic
     from rosclaw_soccer.rsi.paid_recurrent_ppo import backtracked_adam_update
     from rosclaw_soccer.rsi.refinement_actor_critic import (
@@ -135,6 +138,7 @@ def main():
         ):
             raise ValueError("actual prior head/critic/Adam state must carry into generation1")
         batch = prepared["episodes"]
+        validate_batch_coverage(cfg, batch)
         if len(batch) != contract.worlds or [e["index"] for e in batch] != r["selected_indices"]:
             raise ValueError("all24 independently audited new-policy trajectories required")
         std = torch.full((29,), math.log(0.02), dtype=torch.float32)

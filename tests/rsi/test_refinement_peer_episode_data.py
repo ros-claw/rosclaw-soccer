@@ -61,3 +61,33 @@ def test_unbound_initial_group_cannot_sneak_into_peer_training(tmp_path):
     source["records"][0]["artifacts"]["initial"]["hash"] = "different"
     with pytest.raises(ValueError, match="physical initial"):
         episodes(tmp_path, source, torch.ones(29), advantage_mode="peer-loo-v2")
+
+
+def test_full_coverage_data_uses_actual_recovery_rows_and_no_extra_delay(tmp_path):
+    from rosclaw_soccer.rsi.refinement_onpolicy_learning import joint_delivery_reward
+
+    source = data(tmp_path)
+    for r in source["records"]:
+        r.update(
+            controller_kind="pure-refinement-full-recovery-stochastic-native-v2",
+            stochastic_controls=103,
+            deterministic_recovery_excluded_from_actor_rows=False,
+        )
+        np.savez(
+            tmp_path / r["artifacts"]["sampling"]["path"],
+            active=np.ones(103, np.bool_),
+            logp=np.zeros(103, np.float32),
+        )
+    batch = episodes(tmp_path, source, torch.ones(29))
+    assert all(len(e["observations"]) == 103 for e in batch)
+    assert batch[0]["returns"][-1] == np.float32(
+        joint_delivery_reward(source["records"][0]["outcome"])
+    )
+    # Merely relabelling the old inactive tail cannot manufacture actor evidence.
+    np.savez(
+        tmp_path / source["records"][0]["artifacts"]["sampling"]["path"],
+        active=np.array([True] * 3 + [False] * 100),
+        logp=np.zeros(103, np.float32),
+    )
+    with pytest.raises(ValueError, match="actually sampled"):
+        episodes(tmp_path, source, torch.ones(29))
