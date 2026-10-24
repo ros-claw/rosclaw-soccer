@@ -31,6 +31,8 @@ def main():
     parser.add_argument("--capture-torque-proposals", action="store_true")
     parser.add_argument("--torque-exploration-seed", type=int)
     parser.add_argument("--torque-exploration-scale", type=float)
+    parser.add_argument("--exploration-plan", type=Path)
+    parser.add_argument("--exploration-plan-hash")
     parser.add_argument("--identity-reference", type=Path)
     parser.add_argument("--identity-reference-hash")
     parser.add_argument("--identity-own", type=Path)
@@ -50,6 +52,15 @@ def main():
         )
     ):
         parser.error("explicit bounded seed/scale exploration requires full proposal capture")
+    if (
+        explore
+        and (
+            a.exploration_plan is None
+            or a.exploration_plan_hash is None
+            or a.torque_intervention_fraction != 1.0
+        )
+    ) or (not explore and (a.exploration_plan is not None or a.exploration_plan_hash is not None)):
+        parser.error("full guarded exploration requires an exact predeclared family plan")
     if a.capture_torque_proposals and (not candidate_mode or a.core_source_root is None):
         parser.error(
             "proposal capture requires a learned candidate and explicit active Core source"
@@ -190,6 +201,30 @@ def main():
         ):
             raise ValueError("confined exact learned Core torque binary required")
         pins[str(policy_path)] = trained["policy"]["hash"]
+    if explore:
+        if a.exploration_plan.is_symlink() or digest(a.exploration_plan) != a.exploration_plan_hash:
+            raise ValueError("exact ordinary predeclared exploration family plan required")
+        plan = json.loads(a.exploration_plan.read_text())
+        zero = plan["zero_exploration"]
+        admissible = (
+            a.torque_exploration_seed == zero["seed"]
+            and a.torque_exploration_scale == zero["scale"]
+        ) or (
+            a.torque_exploration_seed in plan["exploration_seeds"]
+            and a.torque_exploration_scale == plan["exploration_scale"]
+        )
+        if (
+            not admissible
+            or plan["source_commit"] != a.expected_head
+            or plan["core_commit"] != a.core_expected_head
+            or plan["model_training_hash"] != a.torque_candidate_hash
+            or plan["correlation_per_actual_head_call"] != 0.95
+            or plan["starts_m"] != [[x, y] for x in (0.97, 1.03) for y in (-0.03, 0.03)]
+        ):
+            raise ValueError(
+                "declared seed/scale, exact source/Core/model and unchanged starts required"
+            )
+        pins[str(a.exploration_plan)] = a.exploration_plan_hash
     active_core = None
     if a.core_source_root is not None:
         import importlib.util
@@ -477,6 +512,7 @@ def main():
             exploration_config=__import__("dataclasses").asdict(exploration_config)
             if explore
             else None,
+            exploration_plan_hash=a.exploration_plan_hash,
             torque_candidate_hash=a.torque_candidate_hash,
             torque_intervention_fraction=a.torque_intervention_fraction if torque_mode else None,
             teacher_motion_recovery_not_precision_qualified=a.torque_teacher,
