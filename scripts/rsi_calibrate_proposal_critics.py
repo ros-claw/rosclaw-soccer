@@ -58,6 +58,7 @@ def main():
     buffer = io.BytesIO()
     torch.save(payload, buffer)
     learner.restore_checkpoint(buffer.getvalue())
+    learner.replay_action_semantics = "ACTOR_PROPOSAL_THROUGH_GUARD"
 
     def actor_binary():
         return learner.artifact_bytes(
