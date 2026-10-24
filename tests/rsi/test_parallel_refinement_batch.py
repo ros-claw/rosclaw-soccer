@@ -67,21 +67,24 @@ def test_full_coverage_new_version_seeds_and_all_recovery_rows():
         verify_parallel_batch(r, courses)
 
 
-def test_parallel_role_intervention_uses_same_noise_new_environment_not_old_PPO_protocol():
-    from rosclaw_soccer.rsi.refinement_actor_clock import DIAGNOSTIC
+@pytest.mark.parametrize("projected", [False, True])
+def test_parallel_role_intervention_uses_same_noise_new_environment_not_old_PPO_protocol(projected):
+    from rosclaw_soccer.rsi.refinement_actor_clock import DIAGNOSTIC, PROJECTED_DIAGNOSTIC
 
     r, _ = fixture()
-    cfg = parallel_config(26, 32, full_recovery=True, receiver_role_ablation=True)
+    cfg = parallel_config(
+        26, 32, full_recovery=True, receiver_role_ablation=True, projected_capture=projected
+    )
     r["config"] = cfg
     courses = [r["records"][i]["course"] | dict(state_id=26) for i in (0, 32, 64)]
     for pair in range(48):
         for plan in pair_plan(cfg, courses, pair):
             r["records"][plan["index"]].update(
                 plan,
-                controller_kind=DIAGNOSTIC,
+                controller_kind=PROJECTED_DIAGNOSTIC if projected else DIAGNOSTIC,
                 stochastic_controls=389,
                 deterministic_recovery_excluded_from_actor_rows=False,
-                receiver_intent_mode="anchor-plane-v2",
+                receiver_intent_mode=cfg["receiver_intent_mode"],
                 receiver_role_ablation=True,
             )
     verify_parallel_batch(r, courses)
@@ -100,6 +103,12 @@ def test_parallel_role_intervention_uses_same_noise_new_environment_not_old_PPO_
 def test_role_variant_requires_explicit_preregistered_model_and_full_clock(state, full):
     with pytest.raises(ValueError):
         parallel_config(state, 32, full_recovery=full, receiver_role_ablation=True)
+
+
+@pytest.mark.parametrize("value", [True, 1, None])
+def test_projected_mode_cannot_be_silently_enabled_on_old_environment(value):
+    with pytest.raises(ValueError):
+        parallel_config(26, 32, full_recovery=True, projected_capture=value)
 
 
 @pytest.mark.parametrize("fault", ["missing", "seed", "count", "PPO", "law", "arm", "tail"])

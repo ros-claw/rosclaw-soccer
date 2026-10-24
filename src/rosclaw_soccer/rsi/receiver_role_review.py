@@ -11,6 +11,8 @@ from typing import Any
 from rosclaw_soccer.rsi.parallel_refinement_batch import (
     FULL_OWN,
     FULL_SOURCE,
+    PROJECTED_OWN,
+    PROJECTED_SOURCE,
     ROLE_OWN,
     ROLE_SOURCE,
     parallel_config,
@@ -77,9 +79,19 @@ def paired_role_review(
     *,
     factual_source_hash: str,
     source_hash: str,
+    projected_capture: bool = False,
 ) -> dict[str, Any]:
+    if type(projected_capture) is not bool:
+        raise ValueError("explicit reviewed teacher protocol required")
+
     def pair(src: dict[str, Any], audit: dict[str, Any], role: bool, exact_hash: str) -> None:
-        cfg = parallel_config(26, 32, full_recovery=True, receiver_role_ablation=role)
+        cfg = parallel_config(
+            26,
+            32,
+            full_recovery=True,
+            receiver_role_ablation=role,
+            projected_capture=projected_capture and role,
+        )
         if (
             src["config"] != cfg
             or audit["config"] != cfg
@@ -91,8 +103,16 @@ def paired_role_review(
         verify_parallel_batch(src, courses)
         verify_parallel_batch(audit, courses)
         if (
-            src["status"] != (ROLE_SOURCE if role else FULL_SOURCE)
-            or audit["status"] != (ROLE_OWN if role else FULL_OWN)
+            src["status"]
+            != (
+                PROJECTED_SOURCE
+                if projected_capture and role
+                else ROLE_SOURCE
+                if role
+                else FULL_SOURCE
+            )
+            or audit["status"]
+            != (PROJECTED_OWN if projected_capture and role else ROLE_OWN if role else FULL_OWN)
             or audit["source_hash"] != exact_hash
             or audit["source_head"] != src["source_head"]
             or audit["training_hash"] != src["training_hash"]
@@ -139,7 +159,7 @@ def paired_role_review(
             dict(
                 index=i,
                 initial_hash=h,
-                known_selected_intervention=i in (6, 24),
+                known_selected_intervention=i in ((6, 24, 60) if projected_capture else (6, 24)),
                 old=_metrics(old["outcome"]),
                 new=_metrics(new["outcome"]),
             )
@@ -175,10 +195,17 @@ def paired_role_review(
     else:
         action = "DESIGN_SEPARATE_ROLE_AWARE_LEARNING_ENVIRONMENT_AND_RETENTION_PROTOCOL"
     return dict(
-        status="RECEIVER_ROLE_PAIRED96_REVIEWED_NOT_LEARNING_OR_PROMOTION",
+        status=(
+            "PROJECTED_RECEIVER_ROLE_PAIRED96_REVIEWED_NOT_LEARNING_OR_PROMOTION"
+            if projected_capture
+            else "RECEIVER_ROLE_PAIRED96_REVIEWED_NOT_LEARNING_OR_PROMOTION"
+        ),
         overall=overall,
-        known_selected_2=known,
-        remaining_94=remaining,
+        **(
+            {"known_selected_3": known, "remaining_93": remaining}
+            if projected_capture
+            else {"known_selected_2": known, "remaining_94": remaining}
+        ),
         initial_clusters=clusters,
         unique_consumed_TRAIN_initials=3,
         private_noise_seeds_per_initial=32,

@@ -5,6 +5,7 @@ from typing import Any
 LEGACY = "pure-refinement-stochastic-native-v1"
 FULL = "pure-refinement-full-recovery-stochastic-native-v2"
 DIAGNOSTIC = "receiver-role-stochastic-diagnostic-native-v3"
+PROJECTED_DIAGNOSTIC = "receiver-projected-role-stochastic-diagnostic-native-v4"
 
 
 def validate_actor_clock(
@@ -18,8 +19,8 @@ def validate_actor_clock(
     kind = episode.get("controller_kind")
     if type(allow_diagnostic) is not bool:
         raise ValueError("explicit diagnostic-only clock scope required")
-    kinds = (LEGACY, FULL, DIAGNOSTIC) if allow_diagnostic else (LEGACY, FULL)
-    full = kind in (FULL, DIAGNOSTIC)
+    kinds = (LEGACY, FULL, DIAGNOSTIC, PROJECTED_DIAGNOSTIC) if allow_diagnostic else (LEGACY, FULL)
+    full = kind in (FULL, DIAGNOSTIC, PROJECTED_DIAGNOSTIC)
     motion = episode.get("motion_reference_controls")
     tail = episode.get("observed_recovery_controls")
     total = episode.get("total_observed_controls")

@@ -7,19 +7,25 @@ from test_parallel_refinement_batch import fixture
 from rosclaw_soccer.rsi.parallel_refinement_batch import (
     FULL_OWN,
     FULL_SOURCE,
+    PROJECTED_OWN,
+    PROJECTED_SOURCE,
     ROLE_OWN,
     ROLE_SOURCE,
     pair_plan,
     parallel_config,
 )
 from rosclaw_soccer.rsi.receiver_role_review import paired_role_review
-from rosclaw_soccer.rsi.refinement_actor_clock import DIAGNOSTIC, FULL
+from rosclaw_soccer.rsi.refinement_actor_clock import DIAGNOSTIC, FULL, PROJECTED_DIAGNOSTIC
 
 
 def own(source, role):
     result = copy.deepcopy(source)
     result.update(
-        status=ROLE_OWN if role else FULL_OWN,
+        status=PROJECTED_OWN
+        if source["config"].get("projected_capture")
+        else ROLE_OWN
+        if role
+        else FULL_OWN,
         source_hash="new-source" if role else "factual-source",
         independent_whole_world_replay=True,
         sampling_law_audit_passed=True,
@@ -28,7 +34,7 @@ def own(source, role):
     return result
 
 
-def reports():
+def reports(*, projected=False):
     """Synthetic accounting fixture ONLY, never a physical source/own proof."""
     factual, _ = fixture()
     cfg = parallel_config(26, 32, full_recovery=True)
@@ -59,15 +65,17 @@ def reports():
             )
     new = copy.deepcopy(factual)
     new.update(
-        config=parallel_config(26, 32, full_recovery=True, receiver_role_ablation=True),
-        status=ROLE_SOURCE,
+        config=parallel_config(
+            26, 32, full_recovery=True, receiver_role_ablation=True, projected_capture=projected
+        ),
+        status=PROJECTED_SOURCE if projected else ROLE_SOURCE,
         source_head="new-code",
     )
     for r in new["records"]:
         r.update(
-            controller_kind=DIAGNOSTIC,
+            controller_kind=PROJECTED_DIAGNOSTIC if projected else DIAGNOSTIC,
             receiver_role_ablation=True,
-            receiver_intent_mode="anchor-plane-v2",
+            receiver_intent_mode=new["config"]["receiver_intent_mode"],
         )
     for i in (6, 24):
         new["records"][i]["outcome"] = row(0.05, 2.7)["outcome"]
@@ -82,6 +90,7 @@ def review(factual, new):
         own(new, True),
         factual_source_hash="factual-source",
         source_hash="new-source",
+        projected_capture=new["config"].get("projected_capture", False),
     )
 
 
@@ -103,6 +112,27 @@ def test_known_two_rescues_are_not_96_unseen_successes_or_neural_growth():
             "team_game_verified",
         )
     )
+
+
+def test_projected_review_keeps_case60_in_known_set_not_new_generalization():
+    f, n = reports(projected=True)
+    n["records"][60]["outcome"] = row(0.05, 2.7)["outcome"]
+    r = review(f, n)
+    assert r["known_selected_3"]["worlds"] == 3
+    assert r["known_selected_3"]["strict_rescues"] == [6, 24, 60]
+    assert r["remaining_93"]["worlds"] == 93
+    assert r["remaining_93"]["strict_rescues"] == []
+    assert not r["broader_consumed_TRAIN_role_support"]
+    assert not r["receiver_neural_learning_proven"]
+    with pytest.raises(ValueError):
+        paired_role_review(
+            f,
+            own(f, False),
+            n,
+            own(n, True),
+            factual_source_hash="factual-source",
+            source_hash="new-source",
+        )
 
 
 def test_additional_different_initial_rescue_supports_learning_design_not_promotion():

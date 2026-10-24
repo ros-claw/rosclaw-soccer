@@ -25,11 +25,20 @@ def main():
     p.add_argument("--workers", type=int, choices=(1, 2, 4), required=True)
     p.add_argument("--full-recovery", action="store_true")
     p.add_argument("--receiver-role-ablation", action="store_true")
+    p.add_argument("--projected-capture", action="store_true")
+    p.add_argument("--projected-pilot-own-root", type=Path)
+    p.add_argument("--projected-pilot-producer-head")
     p.add_argument("--audit-source-root", type=Path)
     p.add_argument("--producer-head")
     p.add_argument("--calibration-own-root", type=Path)
     p.add_argument("--calibration-producer-head")
     a = p.parse_args()
+    if (
+        a.projected_capture != (a.projected_pilot_own_root is not None)
+        or a.projected_capture != (a.projected_pilot_producer_head is not None)
+        or (a.projected_capture and not a.receiver_role_ablation)
+    ):
+        p.error("projected role requires exact closed pilot root/head and explicit role ablation")
     if a.receiver_role_ablation and (not a.full_recovery or a.state_id != 26):
         p.error("separate full-recovery state26 receiver-role protocol required")
     if (a.audit_source_root is None) != (a.producer_head is None):
@@ -41,6 +50,8 @@ def main():
     from rosclaw_soccer.rsi.parallel_refinement_batch import (
         FULL_OWN,
         FULL_SOURCE,
+        PROJECTED_OWN,
+        PROJECTED_SOURCE,
         ROLE_OWN,
         ROLE_SOURCE,
         parallel_config,
@@ -62,6 +73,7 @@ def main():
         a.seeds_per_initial,
         full_recovery=a.full_recovery,
         receiver_role_ablation=a.receiver_role_ablation,
+        projected_capture=a.projected_capture,
     )
     source_status = (
         FULL_SOURCE
@@ -73,8 +85,53 @@ def main():
     )
     if a.receiver_role_ablation:
         source_status, own_status = ROLE_SOURCE, ROLE_OWN
+    if a.projected_capture:
+        source_status, own_status = PROJECTED_SOURCE, PROJECTED_OWN
     admitted = admit(a)
     pins = admitted[1]
+    if a.projected_capture:
+        from rosclaw_soccer.rsi.receiver_counterexample import projected_config, verify
+        from scripts.rsi_native_fresh_common import receipt
+
+        root = a.projected_pilot_own_root
+        if root.is_symlink() or (root / "failed.json").exists():
+            raise ValueError("closed projected pilot own evidence required")
+        rp = root / "complete.json"
+        pilot = json.loads(rp.read_text())
+        if (
+            pilot["status"] != "PROJECTED_RECEIVER6_ALL_NATIVE_LAW_MATCH"
+            or pilot["config"] != projected_config()
+            or pilot["source_head"] != a.projected_pilot_producer_head
+            or pilot["training_hash"] != a.training_hash
+            or pilot["independent_whole_world_replay"] is not True
+            or pilot["sampling_law_audit_passed"] is not True
+            or len(pilot["records"]) != 6
+            or any(
+                not r["outcome"]["B_legal_functional_receive_before_deadline"]
+                for r in pilot["records"]
+            )
+            or any(
+                not r["outcome"]["combined_precision_and_functional_receive"]
+                for r in pilot["records"][:4]
+            )
+        ):
+            raise ValueError(
+                "all6 repaired functional receptions and4 retained strict passes required"
+            )
+        for key, value in pilot["input_file_hashes"].items():
+            if key in pins and pins[key] != value:
+                raise ValueError("conflicting projected pilot ancestry")
+            pins[key] = value
+        pins[str(rp)] = file_hash(rp)
+        _, factual = receipt(pins, pilot["factual_source_hash"])
+        _, producer = receipt(pins, pilot["source_hash"])
+        verify(pilot, factual)
+        if (
+            pilot["records"]
+            != [{k: v for k, v in r.items() if k != "artifacts"} for r in producer["records"]]
+            or producer["config"] != projected_config()
+        ):
+            raise ValueError("exact all6 independent producer histories required")
     training = json.loads((a.training_root / "complete.json").read_text())
     if a.full_recovery:
         from rosclaw_soccer.rsi.continuing_refinement_contract import (
@@ -113,6 +170,7 @@ def main():
                 4,
                 full_recovery=a.full_recovery,
                 receiver_role_ablation=a.receiver_role_ablation,
+                projected_capture=a.projected_capture,
             )
             or cal["independent_whole_world_replay"] is not True
             or cal["sampling_law_audit_passed"] is not True

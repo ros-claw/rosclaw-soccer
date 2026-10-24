@@ -1,8 +1,9 @@
-"""Reuse two authenticated factual failures; execute only the B-role intervention.
+"""Reuse authenticated factual worlds; execute only the B-role intervention.
 
 No action/hidden-state playback. Every new draw uses own NN observations and
 the original private seed. Own audit uses the independent manual native clock.
-Four selected TRAIN worlds and their repeats are NOT a generalization exam.
+Default: four plane-role worlds. Explicit --projected-capture: six worlds,
+including the known retention failure. Neither is a generalization exam.
 """
 
 import argparse

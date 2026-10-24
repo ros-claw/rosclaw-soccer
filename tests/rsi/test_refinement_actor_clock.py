@@ -51,10 +51,11 @@ def test_full_returns_preserve_motion_credit_and_add_direct_recovery_credit_no_d
     assert full_actor_terminal_returns(338, -3.0)[-1] == -3.0
 
 
-def test_diagnostic_clock_requires_opt_in_and_never_implicitly_becomes_PPO():
-    from rosclaw_soccer.rsi.refinement_actor_clock import DIAGNOSTIC
+@pytest.mark.parametrize("projected", [False, True])
+def test_diagnostic_clock_requires_opt_in_and_never_implicitly_becomes_PPO(projected):
+    from rosclaw_soccer.rsi.refinement_actor_clock import DIAGNOSTIC, PROJECTED_DIAGNOSTIC
 
-    e = clock() | dict(controller_kind=DIAGNOSTIC)
+    e = clock() | dict(controller_kind=PROJECTED_DIAGNOSTIC if projected else DIAGNOSTIC)
     with pytest.raises(ValueError):
         validate_actor_clock(e, 389)
     assert validate_actor_clock(e, 389, allow_diagnostic=True)

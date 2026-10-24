@@ -15,6 +15,7 @@ def main():
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("factual-own-hash", "producer-head", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--projected-capture", action="store_true")
     a = p.parse_args()
     from rosclaw_soccer.rsi.receiver_role_review import paired_role_review
     from rosclaw_soccer.rsi.refinement_onpolicy_checkpoint import file_hash
@@ -75,6 +76,7 @@ def main():
         *reports,
         factual_source_hash=pins[str(a.factual_source_root / "complete.json")],
         source_hash=pins[str(a.source_root / "complete.json")],
+        projected_capture=a.projected_capture,
     )
     clean(a.expected_head)
     a.output.mkdir()
