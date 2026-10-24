@@ -46,7 +46,11 @@ def main():
             or (
                 count == 16
                 and (
-                    declaration["protocol"] != "robonaldo.reference_clock_learned_torque.v1"
+                    declaration["protocol"]
+                    not in (
+                        "robonaldo.reference_clock_learned_torque.v1",
+                        "robonaldo.reference_clock_guarded_proposal_trace.v2",
+                    )
                     or declaration["worlds"] != 16
                     or len(declaration["starts"]) != 16
                     or declaration["torque_candidate_hash"] != a.training_hash
