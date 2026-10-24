@@ -107,7 +107,8 @@ def main():
     if (
         candidate_mode != (a.torque_candidate_hash is not None)
         or (candidate_mode and a.torque_teacher)
-        or a.torque_intervention_fraction not in (0.0, 1.0)
+        or a.torque_intervention_fraction
+        not in ((0.0, 0.125, 0.25, 1.0) if a.clock_authority else (0.0, 1.0))
         or (not candidate_mode and a.torque_intervention_fraction != 1.0)
         or (candidate_mode and not a.single_player_only)
     ):
@@ -228,6 +229,8 @@ def main():
             )
         pins[str(a.clock_plan)] = a.clock_plan_hash
         if candidate_mode:
+            if a.torque_intervention_fraction not in plan["intervention_fractions"]:
+                raise ValueError("clock intervention must belong to exact declared family")
             for root, expected in (
                 (a.clock_parent_root, a.clock_parent_hash),
                 (a.clock_parent_own_root, a.clock_parent_own_hash),

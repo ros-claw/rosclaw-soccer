@@ -15,6 +15,7 @@ def main():
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--seed", type=int, choices=(926051, 926052, 926053), required=True)
+    p.add_argument("--authority-calibration", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import digest
@@ -36,6 +37,42 @@ def main():
     training_path = Path(candidate["root"]) / "complete.json"
     if digest(training_path) != candidate["hash"]:
         raise ValueError("exact physically unqualified learned candidate required")
+    fractions = (0.0, 1.0)
+    if a.authority_calibration:
+        if plan["intervention_fractions"] != [0.125, 0.25]:
+            raise ValueError("bounded predeclared low-authority calibration family required")
+        predecessor = Path(candidate["predecessor_pair_root"])
+        if digest(predecessor / "complete.json") != candidate["predecessor_pair_hash"]:
+            raise ValueError("exact completed zero/full candidate family required first")
+        previous = json.loads((predecessor / "complete.json").read_text())
+        if previous["seed"] != a.seed or previous["results"][0]["fraction"] != 0.0:
+            raise ValueError("same candidate independently replayed zero intervention required")
+        for row in previous["results"]:
+            path = Path(row["own_root"]) / "complete.json"
+            if digest(path) != row["own_hash"]:
+                raise ValueError("exact predecessor own evidence required")
+            own = json.loads(path.read_text())
+            if not own["all_exact"] or own["source_hash"] != row["source_hash"]:
+                raise ValueError("predecessor identity failure cannot authorize calibration")
+            source_root = Path(row["source_root"])
+            declaration_path = source_root / "declaration.json"
+            declaration = json.loads(declaration_path.read_text())
+            if (
+                digest(source_root / "complete.json") != row["source_hash"]
+                or own["input_file_hashes"].get(str(declaration_path)) != digest(declaration_path)
+                or declaration["torque_candidate_hash"] != candidate["hash"]
+                or declaration["reference_rate"] != 1.18
+                or declaration["starts"] != plan["starts_m"]
+            ):
+                raise ValueError("predecessor was not the same learned policy/body/clock domain")
+        if not all(
+            r["zero_intervention_full_identity"]
+            and all(r["zero_intervention_full_identity"].values())
+            and r["actual_torque_change_peak_nm"] == 0
+            for r in previous["results"][0]["records"]
+        ):
+            raise ValueError("predecessor zero intervention was not exact fast parent")
+        fractions = (0.125, 0.25)
     a.output.mkdir(parents=True, exist_ok=True)
     with (a.output / "campaign.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -48,12 +85,17 @@ def main():
                 observer_only=False,
                 maximum_worker_executions=4,
                 blind_retry=False,
+                authority_calibration=a.authority_calibration,
                 hardware_authorized=False,
             ),
         )
         results = []
-        for fraction in (0.0, 1.0):
-            tag = "zero" if fraction == 0 else "full"
+        for fraction in fractions:
+            tag = (
+                ("partial-" + str(fraction))
+                if a.authority_calibration
+                else ("zero" if fraction == 0 else "full")
+            )
             produced, audited = a.output / tag, a.output / (tag + "-manual")
             args = [
                 sys.executable,

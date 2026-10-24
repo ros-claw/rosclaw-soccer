@@ -98,7 +98,8 @@ def main():
             and (
                 not release
                 or aim_y != 0.0
-                or declaration["torque_intervention_fraction"] not in (0.0, 1.0)
+                or declaration["torque_intervention_fraction"]
+                not in ((0.0, 0.125, 0.25, 1.0) if clock_probe else (0.0, 1.0))
             )
         )
     ):
@@ -517,7 +518,14 @@ def main():
                             raw_actor = neural.pending_actor_proposal
                             decision = neural.pending_projection
                         fraction = declaration["torque_intervention_fraction"]
-                        torque[ids] = parent_torque[ids] if fraction == 0 else proposal
+                        if fraction == 0:
+                            torque[ids] = parent_torque[ids]
+                        elif fraction == 1:
+                            torque[ids] = proposal
+                        else:
+                            torque[ids] = parent_torque[ids] + fraction * (
+                                proposal - parent_torque[ids]
+                            )
                         if not np.isfinite(torque).all() or np.any(np.abs(torque[ids]) > cap):
                             raise ValueError(
                                 "manual candidate exceeds actual native effort contract"

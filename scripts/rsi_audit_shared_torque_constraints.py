@@ -94,9 +94,14 @@ def main():
     hard = np.asarray(G1_HARD_TORQUE_LIMITS, dtype=np.float64)
     body_hash = hash_json(layout.profile())
     records = []
+    full_fraction = json.loads((a.full / "declaration.json").read_text())[
+        "torque_intervention_fraction"
+    ]
+    if full_fraction not in (0.125, 0.25, 1.0):
+        raise ValueError("declared bounded actual intervention required")
     for name in ("zero", "full"):
         for index, row in enumerate(reports[name]["records"]):
-            fraction = 0.0 if name == "zero" else 1.0
+            fraction = 0.0 if name == "zero" else full_fraction
             execution = row["torque_execution_artifacts"]["a/"]
             if (
                 row["index"] != index
