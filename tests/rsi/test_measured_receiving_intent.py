@@ -98,6 +98,61 @@ def test_rotated_plane_projection_uses_pass_axis_not_world_x():
     assert new.target_xy[1] == 4.25
 
 
+def test_projected_role_tracks_aligned_ball_but_pursues_real_off_target_pass():
+    s = state()
+    s.update(ball_xy=np.array([1.0, 0.0]), ball_velocity_xy=np.array([2.4, 0.0]))
+    anchor, target = np.array([4.25, 0.12]), np.array([4.0, 0.0])
+    mode = dict(ready_anchor_xy=anchor, mode="projected-capture-v3", capture_target_xy=target)
+    aligned = receiving_intent(**s, **mode)
+    assert aligned.role_state == "TRACK_RECEIVING_PLANE"
+    assert aligned.target_xy[0] == 4.25
+    s["ball_velocity_xy"] = np.array([3.3, 0.4])
+    off_target = receiving_intent(**s, **mode)
+    old = receiving_intent(**s, ready_anchor_xy=anchor)
+    assert off_target == old
+    # No peak-speed latch: a faster but aligned ball remains in the geometric
+    # domain, while a slow off-target ball also requires pursuit.
+    s["ball_velocity_xy"] = np.array([4.0, 0.0])
+    assert receiving_intent(**s, **mode).role_state == "TRACK_RECEIVING_PLANE"
+    s["ball_velocity_xy"] = np.array([1.0, 0.2])
+    assert receiving_intent(**s, **mode).role_state == "INTERCEPT"
+
+
+def test_projection_uses_current_measured_motion_and_recovers_after_crossing():
+    s = state()
+    s.update(ball_xy=np.array([5.0, 0.0]), ball_velocity_xy=np.array([2.4, 0.0]), launch_seen=True)
+    intent = receiving_intent(
+        **s,
+        ready_anchor_xy=np.array([4.25, 0.12]),
+        mode="projected-capture-v3",
+        capture_target_xy=np.array([4.0, 0.0]),
+    )
+    assert intent.role_state == "RECOVER_LOOSE"
+    s.update(
+        pass_direction=np.array([0.0, 1.0]),
+        ball_xy=np.array([0.0, 1.0]),
+        ball_velocity_xy=np.array([0.0, 2.4]),
+    )
+    rotated = receiving_intent(
+        **s,
+        ready_anchor_xy=np.array([-0.12, 4.25]),
+        mode="projected-capture-v3",
+        capture_target_xy=np.array([0.0, 4.0]),
+    )
+    assert rotated.role_state == "TRACK_RECEIVING_PLANE" and rotated.target_xy[1] == 4.25
+
+
+@pytest.mark.parametrize("target", [None, np.array([np.nan, 0.0]), np.zeros(3)])
+def test_projected_role_requires_actual_communicated_target(target):
+    with pytest.raises(ValueError):
+        receiving_intent(
+            **state(),
+            ready_anchor_xy=np.array([4.25, 0.12]),
+            mode="projected-capture-v3",
+            capture_target_xy=target,
+        )
+
+
 @pytest.mark.parametrize("name", ["rsi_pass_transfer_trial", "rsi_pass_transfer_replay_trial"])
 def test_receiver_role_study_cannot_stack_sampling_or_replay_implicitly(name):
     import importlib

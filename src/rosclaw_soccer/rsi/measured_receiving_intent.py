@@ -29,11 +29,13 @@ def receiving_intent(
     launch_seen: bool,
     ready_anchor_xy: np.ndarray | None = None,
     mode: str = "pursuit-v1",
+    capture_target_xy: np.ndarray | None = None,
 ) -> ReceivingIntent:
     if (
         type(mode) is not str
-        or mode not in ("pursuit-v1", "anchor-plane-v2")
-        or (mode == "anchor-plane-v2" and ready_anchor_xy is None)
+        or mode not in ("pursuit-v1", "anchor-plane-v2", "projected-capture-v3")
+        or (mode != "pursuit-v1" and ready_anchor_xy is None)
+        or (mode == "projected-capture-v3" and capture_target_xy is None)
     ):
         raise ValueError("explicit receiving mode and communicated anchor for plane mode required")
     for value in (root_xy, ball_xy, ball_velocity_xy, home_xy, pass_direction):
@@ -49,6 +51,10 @@ def receiving_intent(
         ready_anchor_xy.shape != (2,) or not np.isfinite(ready_anchor_xy).all()
     ):
         raise ValueError("finite communicated receiving anchor required")
+    if capture_target_xy is not None and (
+        capture_target_xy.shape != (2,) or not np.isfinite(capture_target_xy).all()
+    ):
+        raise ValueError("finite communicated capture target required")
     launch = launch_seen or float(ball_velocity_xy @ pass_direction) > 0.4
     if launch:
         speed2 = float(ball_velocity_xy @ ball_velocity_xy)
@@ -56,7 +62,21 @@ def receiving_intent(
         lateral = np.array([-pass_direction[1], pass_direction[0]])
         target = ball_xy + eta * ball_velocity_xy + 0.35 * pass_direction + 0.12 * lateral
         phase = "INTERCEPT" if float((root_xy - ball_xy) @ pass_direction) > 0 else "RECOVER_LOOSE"
-        if mode == "anchor-plane-v2":
+        plane_supported = mode == "anchor-plane-v2"
+        if mode == "projected-capture-v3":
+            assert capture_target_xy is not None
+            toward = float(ball_velocity_xy @ pass_direction)
+            if toward > 0.4:
+                # A causal constant-velocity prediction, NOT the future scored
+                # arrival. Precision-plane tracking is appropriate only while
+                # the currently observed trajectory intersects that plane
+                # within the task's existing .1m lateral precision domain.
+                # Otherwise pursue/recover the real loose ball, including after
+                # it crosses the target plane. No trial ID or clock threshold.
+                arrival = float((capture_target_xy - ball_xy) @ pass_direction) / toward
+                miss = float((ball_xy + arrival * ball_velocity_xy - capture_target_xy) @ lateral)
+                plane_supported = arrival >= 0 and abs(miss) <= 0.1
+        if plane_supported:
             # Keep the longitudinal ROLE destination instead of chasing a slow
             # pass upstream. Lateral prediction, actual ball-facing, gains and
             # all velocity limits remain unchanged. This is a geometric

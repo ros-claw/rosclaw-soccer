@@ -25,12 +25,19 @@ def main():
         p.add_argument("--" + k, required=True)
     p.add_argument("--audit-source-root", type=Path)
     p.add_argument("--producer-head")
+    p.add_argument("--projected-capture", action="store_true")
     a = p.parse_args()
     if (a.audit_source_root is None) != (a.producer_head is None):
         p.error("exact own producer root/head pair required")
     a.state_id = 26
     from rosclaw_soccer.rsi.continuing_refinement_contract import KIND, select_parallel_experience
-    from rosclaw_soccer.rsi.receiver_counterexample import OWN, SOURCE, config, verify
+    from rosclaw_soccer.rsi.receiver_counterexample import (
+        OWN,
+        SOURCE,
+        config,
+        projected_config,
+        verify,
+    )
     from rosclaw_soccer.rsi.refinement_onpolicy_checkpoint import file_hash
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_learned_refinement_common import admit, open_models
@@ -42,7 +49,12 @@ def main():
         raise ValueError("unused once-only counterexample output required")
     admitted = admit(a)
     pins = admitted[1]
-    cfg = config()
+    cfg = projected_config() if a.projected_capture else config()
+    if a.projected_capture:
+        SOURCE, OWN = (
+            "PROJECTED_RECEIVER6_PENDING_OWN_NATIVE",
+            "PROJECTED_RECEIVER6_ALL_NATIVE_LAW_MATCH",
+        )
     trained = json.loads((a.training_root / "complete.json").read_text())
     if (
         trained["checkpoint_kind"] != KIND
@@ -140,7 +152,7 @@ def main():
     counts, records = dict(native_steps=0, actor_calls=0), []
     try:
         prior = None
-        for index in range(4):
+        for index in range(cfg["new_worlds"]):
             fact = facts[index // 2]
             common = dict(
                 output=a.output,
@@ -150,7 +162,7 @@ def main():
                 sampling_seed=fact["sampling_seed"],
                 sampling_profile="contact-v1",
                 sampling_include_recovery=True,
-                receiver_intent_mode="anchor-plane-v2",
+                receiver_intent_mode=cfg["receiver_intent_mode"],
                 receiver_role_ablation=True,
             )
             if source is None:
@@ -201,7 +213,7 @@ def main():
                 sampling_law_audit_passed=source is not None,
                 records=records,
                 counts=counts,
-                factual_worlds_reused=2,
+                factual_worlds_reused=len(cfg["source_case_indices"]),
                 factual_worlds_reexecuted=0,
                 actor_training_admitted=False,
                 optimizer_updates=0,
@@ -220,7 +232,7 @@ def main():
                 records=records,
                 counts=counts,
                 incomplete_world_steps_unknown=True,
-                reserved_native_step_ceiling=16000,
+                reserved_native_step_ceiling=cfg["maximum_native_steps"],
                 hardware_authorized=False,
                 goal_complete=False,
             ),

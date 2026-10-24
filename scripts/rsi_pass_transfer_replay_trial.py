@@ -81,7 +81,7 @@ def replay_trial(
         raise ValueError("exact separate full-stochastic receiver-role diagnostic required")
     if (
         type(receiver_intent_mode) is not str
-        or receiver_intent_mode not in ("pursuit-v1", "anchor-plane-v2")
+        or receiver_intent_mode not in ("pursuit-v1", "anchor-plane-v2", "projected-capture-v3")
         or claim.get("receiver_intent_mode", "pursuit-v1") != receiver_intent_mode
         or (
             receiver_intent_mode != "pursuit-v1"
@@ -120,7 +120,11 @@ def replay_trial(
             != (
                 RECEIVING_KIND
                 if receiver_motor is not None
-                else "receiver-role-stochastic-diagnostic-native-v3"
+                else (
+                    "receiver-projected-role-stochastic-diagnostic-native-v4"
+                    if receiver_intent_mode == "projected-capture-v3"
+                    else "receiver-role-stochastic-diagnostic-native-v3"
+                )
                 if receiver_role_ablation
                 else (
                     "pure-refinement-full-recovery-stochastic-native-v2"
@@ -340,6 +344,7 @@ def replay_trial(
             launch_seen=launch,
             ready_anchor_xy=anchor,
             mode=receiver_intent_mode,
+            capture_target_xy=goal[:2] if receiver_intent_mode == "projected-capture-v3" else None,
         )
         launch = intent.launch_seen
         command = np.array(intent.command_body, np.float32)
@@ -458,7 +463,11 @@ def replay_trial(
     if receiver_role_ablation:
         result.update(
             receiver_role_ablation=True,
-            controller_kind="receiver-role-stochastic-diagnostic-native-v3",
+            controller_kind=(
+                "receiver-projected-role-stochastic-diagnostic-native-v4"
+                if receiver_intent_mode == "projected-capture-v3"
+                else "receiver-role-stochastic-diagnostic-native-v3"
+            ),
         )
     if receiving_player is not None:
         from rosclaw_soccer.rsi.receiving_initialization_protocol import motor_metadata

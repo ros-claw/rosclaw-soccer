@@ -3,10 +3,10 @@ import copy
 import pytest
 from test_parallel_refinement_batch import fixture as factual_fixture
 
-from rosclaw_soccer.rsi.receiver_counterexample import config, verify
+from rosclaw_soccer.rsi.receiver_counterexample import config, projected_config, verify
 
 
-def fixture():
+def fixture(*, projected=False):
     factual, _ = factual_fixture()
     from rosclaw_soccer.rsi.parallel_refinement_batch import pair_plan, parallel_config
 
@@ -15,23 +15,29 @@ def fixture():
     for pair in range(48):
         for plan in pair_plan(factual["config"], courses, pair):
             factual["records"][plan["index"]].update(plan)
-    cfg = config()
+    cfg = projected_config() if projected else config()
     rows = []
-    for i in range(4):
+    for i in range(cfg["new_worlds"]):
         j = cfg["source_case_indices"][i // 2]
         row = copy.deepcopy(factual["records"][j])
         row.update(
             index=i,
             source_case_index=j,
-            receiver_intent_mode="anchor-plane-v2",
+            receiver_intent_mode=cfg["receiver_intent_mode"],
             receiver_role_ablation=True,
-            controller_kind="receiver-role-stochastic-diagnostic-native-v3",
+            controller_kind=(
+                "receiver-projected-role-stochastic-diagnostic-native-v4"
+                if projected
+                else "receiver-role-stochastic-diagnostic-native-v3"
+            ),
             stochastic_controls=389,
             deterministic_recovery_excluded_from_actor_rows=False,
         )
         rows.append(row)
     return dict(
-        config=cfg, records=rows, counts=dict(native_steps=15560, actor_calls=3112)
+        config=cfg,
+        records=rows,
+        counts=dict(native_steps=3890 * len(rows), actor_calls=778 * len(rows)),
     ), factual
 
 
@@ -91,6 +97,38 @@ def test_diagnostic_role_rows_cannot_be_admitted_by_legacy_or_full_PPO():
     r, _ = fixture()
     with pytest.raises(ValueError, match="pure learner"):
         _validate_episode(r["records"][0])
+
+
+def test_projected_six_worlds_are_separate_with_known_regression_not_old_proof():
+    from rosclaw_soccer.rsi.refinement_actor_critic import _validate_episode
+
+    r, f = fixture(projected=True)
+    verify(r, f)
+    assert r["config"]["source_case_indices"] == [6, 24, 60]
+    assert r["config"]["maximum_native_steps"] == 24000
+    assert r["config"]["formal_controls"] == 300
+    with pytest.raises(ValueError, match="pure learner"):
+        _validate_episode(r["records"][0])
+    r["config"] = config()
+    with pytest.raises(ValueError):
+        verify(r, f)
+
+
+@pytest.mark.parametrize("fault", ["missing", "kind", "mode", "threshold", "duplicate"])
+def test_projected_retention_protocol_cannot_drop_failure_or_relabel_old_rows(fault):
+    r, f = fixture(projected=True)
+    if fault == "missing":
+        r["records"] = r["records"][:4]
+    elif fault == "kind":
+        r["records"][0]["controller_kind"] = "receiver-role-stochastic-diagnostic-native-v3"
+    elif fault == "mode":
+        r["records"][0]["receiver_intent_mode"] = "anchor-plane-v2"
+    elif fault == "threshold":
+        r["config"]["projected_lateral_domain_m"] = 0.2
+    else:
+        r["records"][4]["source_case_index"] = 6
+    with pytest.raises(ValueError):
+        verify(r, f)
 
 
 @pytest.mark.parametrize(

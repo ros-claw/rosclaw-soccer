@@ -33,14 +33,29 @@ def config() -> dict[str, Any]:
     )
 
 
+def projected_config() -> dict[str, Any]:
+    """New bounded retention-repair hypothesis, NOT an extension of old proof."""
+    return config() | dict(
+        protocol="soccer.receiver_projected_capture6.v1",
+        source_case_indices=[6, 24, 60],
+        new_worlds=6,
+        maximum_native_steps=24000,
+        maximum_actor_calls=4800,
+        receiver_intent_mode="projected-capture-v3",
+        projected_lateral_domain_m=0.1,
+        includes_known_functional_regression=True,
+    )
+
+
 def verify(report: dict[str, Any], factual: dict[str, Any]) -> None:
     from rosclaw_soccer.rsi.parallel_refinement_batch import parallel_config
 
-    cfg = config()
+    projected = report["config"].get("protocol") == "soccer.receiver_projected_capture6.v1"
+    cfg = projected_config() if projected else config()
     rows = report["records"]
     if (
         report["config"] != cfg
-        or len(rows) != 4
+        or len(rows) != cfg["new_worlds"]
         or factual["config"] != parallel_config(26, 32, full_recovery=True)
     ):
         raise ValueError("all four declared diagnostic worlds required")
@@ -56,9 +71,14 @@ def verify(report: dict[str, Any], factual: dict[str, Any]) -> None:
             or r["sampling_seed"] != old["sampling_seed"]
             or r["sampling_profile"] != "contact-v1"
             or r["sampling_law"] != "box-truncated-ar1"
-            or r["receiver_intent_mode"] != "anchor-plane-v2"
+            or r["receiver_intent_mode"] != cfg["receiver_intent_mode"]
             or r["receiver_role_ablation"] is not True
-            or r["controller_kind"] != "receiver-role-stochastic-diagnostic-native-v3"
+            or r["controller_kind"]
+            != (
+                "receiver-projected-role-stochastic-diagnostic-native-v4"
+                if projected
+                else "receiver-role-stochastic-diagnostic-native-v3"
+            )
             or r["deterministic_recovery_excluded_from_actor_rows"] is not False
             or r["stochastic_controls"] != r["controls"]
             or r["total_observed_controls"] != r["controls"]
