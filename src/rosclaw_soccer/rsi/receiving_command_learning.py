@@ -23,6 +23,36 @@ NORMALIZATION_FLOOR = (
 )
 
 
+def initial_command_reference(
+    mean: torch.Tensor,
+    scale: torch.Tensor,
+    *,
+    seed: int,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    training_ids: torch.Tensor,
+    expected_initial_mse: float,
+) -> ReceivingCommandActor:
+    """Same architecture/normalizer/seed BEFORE optimizer changes, no fit."""
+    if type(seed) is not int or not 0 <= seed < 2**31:
+        raise ValueError("exact original BC initialization seed required")
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(seed)
+        actor = ReceivingCommandActor(mean, scale)
+    total = 0.0
+    with torch.no_grad():
+        for start in range(0, len(training_ids), 2048):
+            part = training_ids[start : start + 2048]
+            total += float(
+                ((actor(x[part]) - y[part]) / torch.tensor([0.75, 0.5, 1.0], dtype=torch.float32))
+                .square()
+                .sum()
+            )
+    if not len(training_ids) or total / (len(training_ids) * 3) != expected_initial_mse:
+        raise ValueError("seed reconstruction must reproduce recorded pre-optimizer MSE exactly")
+    return actor.eval().requires_grad_(False)
+
+
 def fit_command_bc(
     x: torch.Tensor,
     y: torch.Tensor,

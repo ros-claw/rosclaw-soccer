@@ -43,6 +43,7 @@ def main():
     p.add_argument("--command-seed", type=int, choices=(732023, 732024, 732025))
     p.add_argument("--motor-own-root", type=Path)
     p.add_argument("--motor-own-hash")
+    p.add_argument("--untrained-command-reference", action="store_true")
     a = p.parse_args()
     role_args = (
         a.command_training_root,
@@ -56,6 +57,8 @@ def main():
         p.error(
             "neural command pilot requires training root/hash/seed and physical motor own root/hash"
         )
+    if a.untrained_command_reference and not command_mode:
+        p.error("untrained reference requires the same admitted BC model/normalizer/seed binding")
     source_status = "RECEIVING_NEURAL_COMMAND_BC_PILOT_PENDING_OWN" if command_mode else SOURCE
     own_status = "RECEIVING_NEURAL_COMMAND_BC_PILOT_ALL_OWN_MATCH" if command_mode else OWN
     role_binding = (
@@ -63,6 +66,10 @@ def main():
         if command_mode
         else {}
     )
+    if a.untrained_command_reference:
+        source_status = "RECEIVING_COMMAND_UNTRAINED_REFERENCE_PENDING_OWN"
+        own_status = "RECEIVING_COMMAND_UNTRAINED_REFERENCE_ALL_OWN_MATCH"
+        role_binding["command_reference_untrained"] = True
     if (a.audit_source_root is None) != (a.producer_head is None):
         p.error("exact independent producer root/head pair required")
     a.state_id = 26
@@ -168,6 +175,13 @@ def main():
         ):
             raise ValueError("confined exact actually trained command checkpoint required")
         pins[str(command_cp)] = candidate["checkpoint_hash"]
+        if a.untrained_command_reference:
+            bank_path = a.command_training_root / "teacher-command-bank.npz"
+            if bank_path.is_symlink() or file_hash(bank_path) != bc["bank_hash"]:
+                raise ValueError(
+                    "exact fixed TRAIN normalizer bank required for pre-optimizer reference"
+                )
+            pins[str(bank_path)] = bc["bank_hash"]
     facts = [factual["records"][i] for i in INDICES]
 
     def raw_pins(root, records):
@@ -269,6 +283,28 @@ def main():
         ):
             raise ValueError("original velocity command envelope cannot change")
         command_actor.load_state_dict(weights, strict=True)
+        if a.untrained_command_reference:
+            # Reconstruct original pre-optimizer parameters, NOT another
+            # random policy or a reset learned candidate. Normalizer stays
+            # identical so only the optimizer's parameter changes are ablated.
+            from rosclaw_soccer.rsi.receiving_command_learning import initial_command_reference
+
+            with np.load(bank_path, allow_pickle=False) as bank:
+                x = torch.from_numpy(bank["observations"].copy())
+                y = torch.from_numpy(bank["commands"].copy())
+                ids = torch.from_numpy(np.flatnonzero(bank["training"]).copy())
+            command_actor = initial_command_reference(
+                weights["observation_mean"],
+                weights["observation_scale"],
+                seed=a.command_seed,
+                x=x,
+                y=y,
+                training_ids=ids,
+                expected_initial_mse=candidate["before"]["train_mse"],
+            )
+            role_binding.update(
+                offline_reference_mse_rows=len(ids), reference_parameter_optimizer_updates=0
+            )
         command_actor.eval().requires_grad_(False)
         admit_command_actor(command_actor)
     a.output.mkdir()

@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from rosclaw_soccer.rsi.receiving_command_learning import fit_command_bc
+from rosclaw_soccer.rsi.receiving_command_learning import fit_command_bc, initial_command_reference
 
 
 def data():
@@ -44,6 +44,30 @@ def test_validation_states_do_not_change_normalization_or_any_trained_parameter(
     assert torch.equal(first["actor"].observation_mean, x[tr].mean(0))
     for k, v in first["actor"].state_dict().items():
         assert torch.equal(v, second["actor"].state_dict()[k])
+
+
+@pytest.mark.parametrize("fault", [None, "seed", "metric"])
+def test_initial_reference_matches_actual_recorded_before_optimizer_not_new_random_policy(fault):
+    x, y, tr, va = data()
+    fitted = fit_command_bc(x, y, tr, va, seed=123, steps=4)
+    a = fitted["actor"]
+    kwargs = dict(
+        seed=124 if fault == "seed" else 123,
+        x=x,
+        y=y,
+        training_ids=torch.nonzero(tr, as_tuple=True)[0],
+        expected_initial_mse=1.0 if fault == "metric" else fitted["before"]["train_mse"],
+    )
+    if fault is not None:
+        with pytest.raises(ValueError, match="pre-optimizer MSE"):
+            initial_command_reference(a.observation_mean, a.observation_scale, **kwargs)
+    else:
+        reference = initial_command_reference(a.observation_mean, a.observation_scale, **kwargs)
+        assert all(not p.requires_grad for p in reference.parameters())
+        assert any(
+            not torch.equal(v, dict(a.named_parameters())[k])
+            for k, v in reference.named_parameters()
+        )
 
 
 @pytest.mark.parametrize("fault", ["overlap", "empty", "nonfinite", "bounds", "steps", "grad"])

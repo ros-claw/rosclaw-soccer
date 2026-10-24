@@ -84,6 +84,7 @@ def test_failed_teacher_review_cannot_start_BC_or_allocate_world(tmp_path, monke
         ["--command-seed", "732023"],
         ["--command-training-root", "unused"],
         ["--motor-own-hash", "sha256:unused"],
+        ["--untrained-command-reference"],
     ],
 )
 def test_native_command_pilot_partial_binding_rejected_before_model_import(monkeypatch, extra):
