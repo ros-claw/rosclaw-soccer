@@ -41,7 +41,14 @@ def collect_trial(
     receiver_intent_mode="pursuit-v1",
     receiver_role_ablation=False,
     receiver_motor=None,
+    receiver_command_actor=None,
 ):
+    if receiver_command_actor is not None:
+        from rosclaw_soccer.rsi.shared_native_receiving_command_player import admit_command_actor
+
+        admit_command_actor(receiver_command_actor)
+        if receiver_motor is None:
+            raise ValueError("explicit qualified original receiving motor required for neural role")
     if receiver_motor is not None:
         from rosclaw_soccer.rsi.receiving_initialization_protocol import admit_motor
 
@@ -223,6 +230,17 @@ def collect_trial(
             expected_model_hash=setup.pins[str(setup.velocity_path)],
             expected_config_hash=setup.pins[str(setup.velocity_config)],
         )
+        if receiver_command_actor is not None:
+            from rosclaw_soccer.rsi.shared_native_receiving_command_player import (
+                SharedNativeReceivingCommandPlayer,
+            )
+
+            receiving_player = SharedNativeReceivingCommandPlayer(
+                receiving_player, receiver_command_actor, home_xy=home, pass_direction=forward
+            )
+    calls_per_control = (
+        5 if receiver_command_actor is not None else 4 if receiving_player is not None else 2
+    )
     ready = OnlineReceivingBoundary(w, "b/")
     physical, nn_a, nn_b = [], [], []
     launch, stand_controls = False, 0
@@ -308,7 +326,7 @@ def collect_trial(
             )
         row = w.advance({"a/": target_a, "b/": target_b})
         counts["native_steps"] += 10
-        counts["actor_calls"] += 4 if receiving_player is not None else 2
+        counts["actor_calls"] += calls_per_control
         if receiving_player is not None:
             receiving_player.commit()
         if pair is None:
@@ -383,7 +401,7 @@ def collect_trial(
         course=course,
         controls=w.control_steps,
         native_steps=w.native_steps,
-        actor_calls=(4 if receiving_player is not None else 2) * w.control_steps,
+        actor_calls=calls_per_control * w.control_steps,
         stand_controls=stand_controls,
         A_recovery=recovery,
         outcome=measure,
@@ -430,6 +448,10 @@ def collect_trial(
         from rosclaw_soccer.rsi.receiving_initialization_protocol import motor_metadata
 
         result.update(motor_metadata(w.control_steps))
+    if receiver_command_actor is not None:
+        from rosclaw_soccer.rsi.shared_native_receiving_command_player import command_metadata
+
+        result.update(command_metadata(w.control_steps))
     write_once(folder / "complete.json", result)
     from rosclaw_soccer.rsi.pass_trial_logging import trial_progress
 

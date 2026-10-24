@@ -3,6 +3,8 @@
 Six predeclared consumed TRAIN sentinels, two new executions each. The original
 factual worlds are authenticated comparisons only, never simulation inputs.
 An optional second process uses the independent manual native clock.
+An explicit three-seed trained command mode is a DIFFERENT protocol: own
+neural-command physical trials, NOT zero-identity or a promotion claim.
 """
 
 import argparse
@@ -36,7 +38,31 @@ def main():
         p.add_argument("--" + key, required=True)
     p.add_argument("--audit-source-root", type=Path)
     p.add_argument("--producer-head")
+    p.add_argument("--command-training-root", type=Path)
+    p.add_argument("--command-training-hash")
+    p.add_argument("--command-seed", type=int, choices=(732023, 732024, 732025))
+    p.add_argument("--motor-own-root", type=Path)
+    p.add_argument("--motor-own-hash")
     a = p.parse_args()
+    role_args = (
+        a.command_training_root,
+        a.command_training_hash,
+        a.command_seed,
+        a.motor_own_root,
+        a.motor_own_hash,
+    )
+    command_mode = any(v is not None for v in role_args)
+    if command_mode and any(v is None for v in role_args):
+        p.error(
+            "neural command pilot requires training root/hash/seed and physical motor own root/hash"
+        )
+    source_status = "RECEIVING_NEURAL_COMMAND_BC_PILOT_PENDING_OWN" if command_mode else SOURCE
+    own_status = "RECEIVING_NEURAL_COMMAND_BC_PILOT_ALL_OWN_MATCH" if command_mode else OWN
+    role_binding = (
+        dict(command_training_hash=a.command_training_hash, command_seed=a.command_seed)
+        if command_mode
+        else {}
+    )
     if (a.audit_source_root is None) != (a.producer_head is None):
         p.error("exact independent producer root/head pair required")
     a.state_id = 26
@@ -108,6 +134,40 @@ def main():
     if cp.is_symlink() or file_hash(cp) != init["checkpoint_hash"]:
         raise ValueError("exact safely loaded untrained checkpoint required")
     pins[str(cp)] = init["checkpoint_hash"]
+    command_cp = None
+    if command_mode:
+        motor_own = read(a.motor_own_root, a.motor_own_hash)
+        if (
+            motor_own["status"]
+            != "RECEIVING_INITIALIZATION_NATIVE_IDENTITY_ALL_OWN_MATCH_NOT_TRAINED"
+            or motor_own["initialization_hash"] != a.initialization_hash
+            or motor_own["independent_whole_world_replay"] is not True
+            or motor_own["all_actual_native_zero_identity"] is not True
+        ):
+            raise ValueError("exact own-native zero-identity receiving motor proof required")
+        bc = read(a.command_training_root, a.command_training_hash)
+        if (
+            bc["status"] != "RECEIVING_COMMAND_BC_THREE_SEEDS_TRAINED_PENDING_OWN_NATIVE"
+            or bc["optimizer_updates"] != 1200
+            or bc["new_physical_steps"] != 0
+            or [r["seed"] for r in bc["candidates"]] != [732023, 732024, 732025]
+            or any(
+                r["optimizer_updates"] != 400 or len(r["changed_parameter_tensors"]) != 6
+                for r in bc["candidates"]
+            )
+        ):
+            raise ValueError(
+                "all three fixed BC candidates must have actual closed optimizer evidence"
+            )
+        candidate = next(r for r in bc["candidates"] if r["seed"] == a.command_seed)
+        command_cp = Path(candidate["checkpoint_path"])
+        if (
+            command_cp.is_symlink()
+            or command_cp.resolve().parent != a.command_training_root.resolve()
+            or file_hash(command_cp) != candidate["checkpoint_hash"]
+        ):
+            raise ValueError("confined exact actually trained command checkpoint required")
+        pins[str(command_cp)] = candidate["checkpoint_hash"]
     facts = [factual["records"][i] for i in INDICES]
 
     def raw_pins(root, records):
@@ -128,7 +188,8 @@ def main():
     if a.audit_source_root is not None:
         source = read(a.audit_source_root)
         if (
-            source["status"] != SOURCE
+            source["status"] != source_status
+            or any(source.get(k) != v for k, v in role_binding.items())
             or source["source_head"] != a.producer_head
             or source["initialization_hash"] != a.initialization_hash
             or source["training_hash"] != a.training_hash
@@ -179,6 +240,37 @@ def main():
     motor.load_state_dict(state["actor"], strict=True)
     motor.eval().requires_grad_(False)
     admit_motor(motor)
+    command_actor = None
+    if command_mode:
+        from rosclaw_soccer.rsi.receiving_command_actor import ReceivingCommandActor
+        from rosclaw_soccer.rsi.shared_native_receiving_command_player import admit_command_actor
+
+        saved = torch.load(command_cp, map_location="cpu", weights_only=True)
+        if (
+            saved["schema"] != "soccer.receiving_command_bc.v1"
+            or saved["seed"] != a.command_seed
+            or saved["optimizer_updates"] != 400
+            or saved["bank_hash"] != bc["bank_hash"]
+            or saved["review_hash"] != bc["review_hash"]
+            or saved["policy_domain"] != ReceivingCommandActor.policy_domain
+            or len(saved["optimizer"]["state"]) != 6
+            or any(float(v["step"]) != 400 for v in saved["optimizer"]["state"].values())
+        ):
+            raise ValueError(
+                "actual command weights/optimizer steps must bind the admitted bank and review"
+            )
+        weights = saved["actor"]
+        command_actor = ReceivingCommandActor(
+            weights["observation_mean"], weights["observation_scale"]
+        )
+        if any(
+            not torch.equal(weights[k], command_actor.state_dict()[k])
+            for k in ("command_center", "command_radius")
+        ):
+            raise ValueError("original velocity command envelope cannot change")
+        command_actor.load_state_dict(weights, strict=True)
+        command_actor.eval().requires_grad_(False)
+        admit_command_actor(command_actor)
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
@@ -189,7 +281,8 @@ def main():
             input_file_hashes=pins,
             initialization_hash=a.initialization_hash,
             maximum_native_steps=48000,
-            maximum_neural_calls=19200,
+            maximum_neural_calls=24000 if command_mode else 19200,
+            **role_binding,
             preflight=preflight,
             optimizer_updates=0,
             hardware_authorized=False,
@@ -209,6 +302,7 @@ def main():
                 sampling_profile="contact-v1",
                 sampling_include_recovery=True,
                 receiver_motor=motor,
+                receiver_command_actor=command_actor,
             )
             if source is None:
                 from scripts.rsi_pass_transfer_trial import collect_trial
@@ -216,7 +310,10 @@ def main():
                 row = collect_trial(setup, actor, fact["course"], **common)
                 # Compare ONLY AFTER the new body's own NN actions were executed.
                 # Never send these stored actions, states or hidden histories to physics.
-                for key in ("initial", "physical", "A", "B", "sampling"):
+                comparison_keys = (
+                    ("initial",) if command_mode else ("initial", "physical", "A", "B", "sampling")
+                )
+                for key in comparison_keys:
                     with (
                         np.load(
                             a.output / row["artifacts"][key]["path"], allow_pickle=False
@@ -230,7 +327,9 @@ def main():
                             not np.array_equal(new[k], old[k]) for k in old.files
                         ):
                             raise ValueError(f"actual zero identity failed: trial{index}/{key}")
-                if row["outcome"] != fact["outcome"] or row["A_recovery"] != fact["A_recovery"]:
+                if not command_mode and (
+                    row["outcome"] != fact["outcome"] or row["A_recovery"] != fact["A_recovery"]
+                ):
                     raise ValueError("physical task/recovery identity changed")
             else:
                 from scripts.rsi_pass_transfer_replay_trial import replay_trial
@@ -265,7 +364,8 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status=SOURCE if source is None else OWN,
+                status=source_status if source is None else own_status,
+                **role_binding,
                 source_head=a.expected_head,
                 source_case_indices=list(INDICES),
                 records=records,
@@ -278,7 +378,7 @@ def main():
                 if source is None
                 else file_hash(a.audit_source_root / "complete.json"),
                 independent_whole_world_replay=source is not None,
-                all_actual_native_zero_identity=True,
+                all_actual_native_zero_identity=not command_mode,
                 neural_learning_proven=False,
                 Fresh_verified=False,
                 promotion_authorized=False,

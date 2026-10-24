@@ -43,8 +43,23 @@ def replay_trial(
     receiver_intent_mode="pursuit-v1",
     receiver_role_ablation=False,
     receiver_motor=None,
+    receiver_command_actor=None,
 ):
     from rosclaw_soccer.rsi.receiving_initialization_protocol import KIND as RECEIVING_KIND
+    from rosclaw_soccer.rsi.shared_native_receiving_command_player import KIND as COMMAND_KIND
+
+    if (claim.get("receiver_command_neural", False) is True) != (
+        receiver_command_actor is not None
+    ):
+        raise ValueError("exact independent neural receiving command replay required")
+    if receiver_command_actor is not None:
+        from rosclaw_soccer.rsi.shared_native_receiving_command_player import admit_command_actor
+
+        admit_command_actor(receiver_command_actor)
+        if receiver_motor is None:
+            raise ValueError(
+                "explicit qualified original receiving motor required for neural role replay"
+            )
 
     if (claim.get("receiver_motor_initialization_only", False) is True) != (
         receiver_motor is not None
@@ -118,7 +133,9 @@ def replay_trial(
             or claim.get("sampling_law") != "box-truncated-ar1"
             or claim.get("controller_kind")
             != (
-                RECEIVING_KIND
+                COMMAND_KIND
+                if receiver_command_actor is not None
+                else RECEIVING_KIND
                 if receiver_motor is not None
                 else (
                     "receiver-projected-role-stochastic-diagnostic-native-v4"
@@ -270,6 +287,17 @@ def replay_trial(
             expected_model_hash=setup.pins[str(setup.velocity_path)],
             expected_config_hash=setup.pins[str(setup.velocity_config)],
         )
+        if receiver_command_actor is not None:
+            from rosclaw_soccer.rsi.shared_native_receiving_command_player import (
+                SharedNativeReceivingCommandPlayer,
+            )
+
+            receiving_player = SharedNativeReceivingCommandPlayer(
+                receiving_player, receiver_command_actor, home_xy=home, pass_direction=forward
+            )
+    calls_per_control = (
+        5 if receiver_command_actor is not None else 4 if receiving_player is not None else 2
+    )
     ready = OnlineReceivingBoundary(w, "b/")
     physical = []
     launch, stand_controls = False, 0
@@ -364,7 +392,7 @@ def replay_trial(
         equal(tb, nb, step)
         row = w.advance({"a/": target_a, "b/": target_b})
         counts["native_steps"] += 10
-        counts["actor_calls"] += 4 if receiving_player is not None else 2
+        counts["actor_calls"] += calls_per_control
         if receiving_player is not None:
             receiving_player.commit()
         if pair is None:
@@ -427,7 +455,7 @@ def replay_trial(
         course=course,
         controls=w.control_steps,
         native_steps=w.native_steps,
-        actor_calls=(4 if receiving_player is not None else 2) * w.control_steps,
+        actor_calls=calls_per_control * w.control_steps,
         stand_controls=stand_controls,
         A_recovery=recovery,
         outcome=measure,
@@ -473,6 +501,10 @@ def replay_trial(
         from rosclaw_soccer.rsi.receiving_initialization_protocol import motor_metadata
 
         result.update(motor_metadata(w.control_steps))
+    if receiver_command_actor is not None:
+        from rosclaw_soccer.rsi.shared_native_receiving_command_player import command_metadata
+
+        result.update(command_metadata(w.control_steps))
     if result != {k: v for k, v in claim.items() if k != "artifacts"}:
         raise ValueError("own recovery/receiving/delivery/whole counters differ")
     write_once(output / f"trial{index}.json", result)
