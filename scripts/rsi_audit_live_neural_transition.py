@@ -29,24 +29,37 @@ def main():
     source = json.loads((a.source / "complete.json").read_text())
     declaration = json.loads((a.source / "declaration.json").read_text())
     release = declaration.get("contact_release", False)
+    torque_trial = declaration["protocol"] == "robonaldo.native_learned_torque_trial.v1"
     aim_probe = declaration["protocol"] == "robonaldo.neural_aim_reachability.v1"
     aim_y = declaration.get("neural_aim_input_y_m", 0.0)
     if (
         source["status"] != "LIVE_NEURAL_TRANSITION_DIAGNOSED_NOT_PROMOTED"
-        or len(source["records"]) != (4 if aim_probe else 8)
+        or len(source["records"]) != (4 if aim_probe or torque_trial else 8)
         or source["source_head"] != a.producer_head
         or declaration["duration_controls"] != 20
         or declaration["protocol"]
         != (
-            "robonaldo.neural_aim_reachability.v1"
-            if aim_probe
+            "robonaldo.native_learned_torque_trial.v1"
+            if torque_trial
             else (
-                "robonaldo.contact_release_blend.v1"
-                if release
-                else "robonaldo.live_neural_blend.v1"
+                "robonaldo.neural_aim_reachability.v1"
+                if aim_probe
+                else (
+                    "robonaldo.contact_release_blend.v1"
+                    if release
+                    else "robonaldo.live_neural_blend.v1"
+                )
             )
         )
         or (aim_probe and (not release or not -1.2 <= aim_y <= 1.2))
+        or (
+            torque_trial
+            and (
+                not release
+                or aim_y != 0.0
+                or declaration["torque_intervention_fraction"] not in (0.0, 1.0)
+            )
+        )
     ):
         raise ValueError("entire exact fixed eight-case live transition protocol required")
     pins = dict(source["input_file_hashes"])
@@ -57,8 +70,29 @@ def main():
         if path.parent.resolve() != a.source.resolve() or digest(path) != row["artifact"]["hash"]:
             raise ValueError("exact confined raw trajectory required")
         pins[str(path)] = row["artifact"]["hash"]
+        if torque_trial:
+            entry = row["torque_execution_artifacts"]["a/"]
+            ep_path = a.source / entry["path"]
+            if (
+                ep_path.parent.resolve() != a.source.resolve()
+                or ep_path.is_symlink()
+                or digest(ep_path) != entry["hash"]
+            ):
+                raise ValueError("exact confined neural observation/action episode required")
+            pins[str(ep_path)] = entry["hash"]
     source_pins(pins)
     check_pins(pins)
+    if torque_trial:
+        import importlib.util
+
+        spec = importlib.util.find_spec("rosclaw")
+        if (
+            spec is None
+            or spec.origin is None
+            or Path(spec.origin).resolve().parent
+            != Path(source["active_core_source_root"]) / "src/rosclaw"
+        ):
+            raise ValueError("manual replay must use the exact declared active Core source")
     import mujoco
     import numpy as np
     from rosclaw.simforge.backends.unitree_mujoco_backend import _load_robonaldo
@@ -67,6 +101,36 @@ def main():
     from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
     from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
+
+    trained = None
+    if torque_trial:
+        from rosclaw.simforge.g1_neural_torque import (
+            G1NeuralTorquePolicy,
+            G1TorqueControlFrame,
+            load_g1_neural_torque_artifact,
+        )
+
+        training_paths = [
+            Path(path)
+            for path, expected in pins.items()
+            if path.endswith("/complete.json") and expected == declaration["torque_candidate_hash"]
+        ]
+        if len(training_paths) != 1:
+            raise ValueError("one exact training checkpoint lineage required")
+        trained = json.loads(training_paths[0].read_text())
+        policy_path = training_paths[0].parent / trained["policy"]["path"]
+        if (
+            policy_path.parent != training_paths[0].parent
+            or policy_path.is_symlink()
+            or digest(policy_path) != trained["policy"]["hash"]
+            or str(policy_path) not in pins
+        ):
+            raise ValueError("exact confined pinned trained torque binary required")
+        torque_artifact = load_g1_neural_torque_artifact(
+            policy_path,
+            expected_hash=trained["policy"]["hash"],
+            expected_body_hash=trained["body_hash"],
+        )
 
     roots = {
         Path(path).parents[2] for path in pins if path.endswith("/policy/robonaldo/FreeKick.py")
@@ -101,8 +165,10 @@ def main():
             source_hash=a.source_hash,
             source_head=a.expected_head,
             input_file_hashes=pins,
-            worlds=4 if aim_probe else 8,
-            native_step_ceiling=26080 if aim_probe else 52160,
+            worlds=4 if aim_probe or torque_trial else 8,
+            native_step_ceiling=26080 if aim_probe or torque_trial else 52160,
+            independent_torque_frame_and_application=torque_trial,
+            shared_core_neural_inference_implementation=torque_trial,
             independent_clock=True,
             independent_gate_and_blend=True,
             independent_physics_engine=False,
@@ -157,6 +223,21 @@ def main():
             kick._build_obs = capture
             primary = layouts["a/"]
             torso, foot_body = m.body("a/torso_link").id, m.body("a/right_ankle_roll_link").id
+            neural = None
+            if torque_trial:
+                neural = G1NeuralTorquePolicy(
+                    torque_artifact,
+                    expected_body_hash=trained["body_hash"],
+                    expected_parent_policy_hash=trained["parent_policy_hash"],
+                )
+                neural.reset()
+                foot_ids = [
+                    m.body("a/" + side + "_ankle_roll_link").id for side in ("left", "right")
+                ]
+                native_index = 0
+                joint_ids = [m.joint("a/" + name).id for name in G1_DDS_JOINT_NAMES]
+                limited = m.jnt_limited[joint_ids].astype(bool)
+                joint_bounds = m.jnt_range[joint_ids]
 
             def observe(d=d, primary=primary, torso=torso, ball=ball, bv=bv, state=state):
                 rq, rv = primary["rq"], primary["rv"]
@@ -203,6 +284,8 @@ def main():
                     "velocity_observation",
                 )
             }
+            if torque_trial:
+                raw["parent_torque"], raw["applied_torque_change"] = [], []
             foot_seen, last_contact, clear = False, False, 0
             start = None if release else 285
             stopped = False
@@ -281,8 +364,45 @@ def main():
                             -cap,
                             cap,
                         )
+                    parent_torque = torque.copy()
+                    if neural is not None:
+                        contact = [False, False]
+                        for point in d.contact:
+                            bodies = {int(m.geom_bodyid[g]) for g in point.geom}
+                            for i, foot in enumerate(foot_ids):
+                                contact[i] |= bodies == {0, foot}
+                        cf = G1TorqueControlFrame(
+                            joint_position=d.qpos[primary["qi"]].copy(),
+                            joint_velocity=d.qvel[primary["vi"]].copy(),
+                            joint_lower_limits=np.where(limited, joint_bounds[:, 0], -1e6),
+                            joint_upper_limits=np.where(limited, joint_bounds[:, 1], 1e6),
+                            torso_quaternion_wxyz=d.xquat[torso].copy(),
+                            pelvis_position=d.qpos[primary["rq"] : primary["rq"] + 3].copy(),
+                            ball_position=d.qpos[bq : bq + 3].copy(),
+                            ball_velocity=d.qvel[bv : bv + 3].copy(),
+                            target_y_m=0.0,
+                            target_z_m=0.11,
+                            policy_phase=native_index / 6520,
+                            left_contact=bool(contact[0]),
+                            right_contact=bool(contact[1]),
+                        )
+                        ids = primary["ai"]
+                        proposal = neural.command(cf, parent_torque[ids].copy())
+                        fraction = declaration["torque_intervention_fraction"]
+                        torque[ids] = parent_torque[ids] if fraction == 0 else proposal
+                        if not np.isfinite(torque).all() or np.any(np.abs(torque[ids]) > cap):
+                            raise ValueError(
+                                "manual candidate exceeds actual native effort contract"
+                            )
                     d.ctrl[:] = torque
                     mujoco.mj_step(m, d)
+                    if neural is not None:
+                        if not np.array_equal(d.actuator_force, torque):
+                            raise ValueError("manual actual actuator forces differ from command")
+                        neural.note_applied(d.actuator_force[primary["ai"]].copy())
+                        native_index += 1
+                        raw["parent_torque"].append(parent_torque)
+                        raw["applied_torque_change"].append(torque - parent_torque)
                     steps += 1
                     for key, value in (("qpos", d.qpos), ("qvel", d.qvel), ("torque", torque)):
                         raw[key].append(value.copy())
@@ -324,12 +444,31 @@ def main():
                 }
             if "transition_start" in row and start != row["transition_start"]:
                 raise ValueError("independent release event differs from source")
+            neural_exact = None
+            if neural is not None:
+                entry = row["torque_execution_artifacts"]["a/"]
+                ep_path = a.source / entry["path"]
+                if (
+                    ep_path.parent.resolve() != a.source.resolve()
+                    or ep_path.is_symlink()
+                    or digest(ep_path) != entry["hash"]
+                ):
+                    raise ValueError("exact recorded neural observation/action episode required")
+                pins[str(ep_path)] = entry["hash"]
+                ep = neural.episode()
+                with np.load(ep_path) as saved:
+                    neural_exact = {
+                        key: bool(np.array_equal(getattr(ep, key), saved[key]))
+                        for key in ("observations", "actions", "parent_actions")
+                    }
             artifact = a.output / f"{row['arm']}-{row['index']}.npz"
             np.savez_compressed(artifact, **arrays)
             result = dict(
                 arm=row["arm"],
                 index=row["index"],
-                all_exact=all(exact.values()),
+                all_exact=all(exact.values())
+                and (neural_exact is None or all(neural_exact.values())),
+                neural_episode_exact=neural_exact,
                 exact=exact,
                 max_abs_error=errors,
                 native_steps=row["controls"] * 10,
