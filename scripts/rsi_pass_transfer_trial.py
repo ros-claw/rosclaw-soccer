@@ -40,7 +40,22 @@ def collect_trial(
     sampling_include_recovery=False,
     receiver_intent_mode="pursuit-v1",
     receiver_role_ablation=False,
+    receiver_motor=None,
 ):
+    if receiver_motor is not None:
+        from rosclaw_soccer.rsi.receiving_initialization_protocol import admit_motor
+
+        admit_motor(receiver_motor)
+        if (
+            receiver_role_ablation
+            or receiver_intent_mode != "pursuit-v1"
+            or student is not None
+            or feedback_variant is not None
+            or course["assisted"] is not False
+            or sampling_seed is None
+            or sampling_include_recovery is not True
+        ):
+            raise ValueError("separate untrained receiving identity protocol required")
     if type(receiver_role_ablation) is not bool or (
         receiver_role_ablation
         and (
@@ -184,13 +199,30 @@ def collect_trial(
             order=ep.order,
         )
         pair = SharedTeacherPair(learner, passer)
-    velocity = ContinuousVelocityStream(
-        setup.velocity_path,
-        setup.velocity_config,
-        expected_model_hash=setup.pins[str(setup.velocity_path)],
-        expected_config_hash=setup.pins[str(setup.velocity_config)],
-        horizon_controls=400,
+    velocity = (
+        None
+        if receiver_motor is not None
+        else ContinuousVelocityStream(
+            setup.velocity_path,
+            setup.velocity_config,
+            expected_model_hash=setup.pins[str(setup.velocity_path)],
+            expected_config_hash=setup.pins[str(setup.velocity_config)],
+            horizon_controls=400,
+        )
     )
+    receiving_player = None
+    if receiver_motor is not None:
+        from rosclaw_soccer.rsi.shared_native_receiving_player import SharedNativeReceivingPlayer
+
+        receiving_player = SharedNativeReceivingPlayer(
+            w,
+            "b/",
+            receiver_motor,
+            model=setup.velocity_path,
+            config=setup.velocity_config,
+            expected_model_hash=setup.pins[str(setup.velocity_path)],
+            expected_config_hash=setup.pins[str(setup.velocity_config)],
+        )
     ready = OnlineReceivingBoundary(w, "b/")
     physical, nn_a, nn_b = [], [], []
     launch, stand_controls = False, 0
@@ -260,19 +292,24 @@ def collect_trial(
         )
         launch = intent.launch_seen
         command = np.array(intent.command_body, np.float32)
-        target_b = velocity.propose(
-            q, v, w.layouts["b/"].angular_velocity_body(w.data), command, frame=step
-        )
-        tb = dict(
-            obs=velocity.last_observation.copy(),
-            action=velocity.last_action.copy(),
-            command=command,
-            phase=np.array(velocity.phase),
-            control=np.array(step),
-        )
+        if receiving_player is not None:
+            target_b, tb = receiving_player.propose(command, np.r_[anchor, goal[2]], frame=step)
+        else:
+            target_b = velocity.propose(
+                q, v, w.layouts["b/"].angular_velocity_body(w.data), command, frame=step
+            )
+            tb = dict(
+                obs=velocity.last_observation.copy(),
+                action=velocity.last_action.copy(),
+                command=command,
+                phase=np.array(velocity.phase),
+                control=np.array(step),
+            )
         row = w.advance({"a/": target_a, "b/": target_b})
         counts["native_steps"] += 10
-        counts["actor_calls"] += 2
+        counts["actor_calls"] += 4 if receiving_player is not None else 2
+        if receiving_player is not None:
+            receiving_player.commit()
         if pair is None:
             passer.commit(executed_action=action)
         else:
@@ -345,7 +382,7 @@ def collect_trial(
         course=course,
         controls=w.control_steps,
         native_steps=w.native_steps,
-        actor_calls=2 * w.control_steps,
+        actor_calls=(4 if receiving_player is not None else 2) * w.control_steps,
         stand_controls=stand_controls,
         A_recovery=recovery,
         outcome=measure,
@@ -384,6 +421,10 @@ def collect_trial(
             receiver_role_ablation=True,
             controller_kind="receiver-role-stochastic-diagnostic-native-v3",
         )
+    if receiving_player is not None:
+        from rosclaw_soccer.rsi.receiving_initialization_protocol import motor_metadata
+
+        result.update(motor_metadata(w.control_steps))
     write_once(folder / "complete.json", result)
     from rosclaw_soccer.rsi.pass_trial_logging import trial_progress
 
