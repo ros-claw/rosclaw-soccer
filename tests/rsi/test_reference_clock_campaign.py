@@ -19,6 +19,7 @@ def setup_campaign(tmp_path, monkeypatch, *, identity=True, exact=True):
         hardware_authorized=False,
         core_root="unused",
         core_commit="fake-core",
+        starts_m=[[x, y] for x in (0.97, 1.03) for y in (-0.03, 0.03)],
     )
     for key in (
         "source_root",

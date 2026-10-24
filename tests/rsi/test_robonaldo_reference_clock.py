@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.rsi.robonaldo_reference_clock import (
+    declared_clock_starts,
     reference_policy_index,
     retimed_reference_velocity,
 )
@@ -37,6 +38,22 @@ def test_invalid_reference_rate_rejected(rate):
         reference_policy_index(0, warmup=10, rate=rate)
     with pytest.raises(ValueError):
         retimed_reference_velocity(np.zeros((2, 29)), rate=rate)
+
+
+def test_expanded_domain_preserves_original_identity_anchors():
+    original = [[x, y] for x in (0.97, 1.03) for y in (-0.03, 0.03)]
+    extra = [[x, y] for x in (0.94, 1.0, 1.06) for y in (-0.06, -0.02, 0.02, 0.06)]
+    assert declared_clock_starts({"starts_m": original}) == [tuple(p) for p in original]
+    assert len(declared_clock_starts({"starts_m": original + extra})) == 16
+    for bad in [
+        original[::-1],
+        original + extra[:-1],
+        original + extra[:-1] + [[1.07, 0.0]],
+        original + extra[:-1] + [original[0]],
+        original + extra[:-1] + [[1.0, np.nan]],
+    ]:
+        with pytest.raises(ValueError):
+            declared_clock_starts({"starts_m": bad})
 
 
 @pytest.mark.parametrize(

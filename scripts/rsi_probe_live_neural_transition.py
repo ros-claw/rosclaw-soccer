@@ -204,7 +204,6 @@ def main():
             or plan["core_commit"] != a.core_expected_head
             or plan["identity_source_hash"] != a.identity_reference_hash
             or plan["identity_own_hash"] != a.identity_own_hash
-            or plan["starts_m"] != [[x, y] for x in (0.97, 1.03) for y in (-0.03, 0.03)]
             or plan["physical_control_hz"] != 50
             or plan["physical_native_hz"] != 500
         ):
@@ -310,6 +309,7 @@ def main():
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.paid_velocity_shadow import policy_action_from_hg_target
     from rosclaw_soccer.rsi.robonaldo_reference_clock import (
+        declared_clock_starts,
         reference_policy_index,
         retimed_reference_velocity,
     )
@@ -394,7 +394,11 @@ def main():
             True,
         )
 
-    starts = [(x, y) for x in (0.97, 1.03) for y in (-0.03, 0.03)]
+    starts = (
+        declared_clock_starts(plan)
+        if a.clock_authority
+        else [(x, y) for x in (0.97, 1.03) for y in (-0.03, 0.03)]
+    )
     prepared = []
     arms = (
         (("single", ("a/",)),)
@@ -508,6 +512,21 @@ def main():
                     capture_actor_proposals=a.capture_torque_proposals,
                 )
     a.output.mkdir(parents=True)
+    reference_controller_hash = None
+    if a.clock_authority:
+        from rosclaw_soccer.sim.contracts import hash_json
+
+        reference_controller_hash = hash_json(
+            dict(
+                parent_identity_source=a.identity_reference_hash,
+                algorithm="integer-rational-reference-index-and-owned-joint-velocity-scale.v1",
+                rate=a.reference_rate,
+                physical_control_hz=50,
+                physical_native_hz=500,
+                warmup_unchanged=True,
+                original_control_history=True,
+            )
+        )
     write_once(
         a.output / "declaration.json",
         dict(
@@ -543,11 +562,12 @@ def main():
             own_hash=a.own_hash,
             input_file_hashes=pins,
             starts=starts,
-            worlds=4 if a.single_player_only else 8,
-            native_step_ceiling=26080 if a.single_player_only else 52160,
+            worlds=len(starts) * len(arms),
+            native_step_ceiling=6520 * len(starts) * len(arms),
             neural_aim_input_y_m=a.aim_y,
             reference_clock_authority=a.clock_authority,
             reference_rate=a.reference_rate,
+            reference_controller_hash=reference_controller_hash,
             clock_plan_hash=a.clock_plan_hash,
             physical_control_hz=50,
             physical_native_hz=500,
@@ -751,7 +771,7 @@ def main():
             np.savez_compressed(artifact, **arrays)
             teacher_artifacts = {}
             full_identity = None
-            if a.clock_authority and a.reference_rate == 1.0:
+            if a.clock_authority and a.reference_rate == 1.0 and index < 4:
                 identity = next(
                     row
                     for row in identity_source["records"]
@@ -842,13 +862,13 @@ def main():
                                 behavior_hash=layer.policy.behavior_hash,
                                 config_hash=layer.policy.exploration_config_hash,
                             )
-            baseline = next(
-                row
-                for row in source["records"]
-                if row["arm"] == "actual-shadow" and row["index"] == index
-            )
             prefix_exact = None
             if arm == "single" and a.aim_y == 0.0 and not a.clock_authority:
+                baseline = next(
+                    row
+                    for row in source["records"]
+                    if row["arm"] == "actual-shadow" and row["index"] == index
+                )
                 with np.load(a.source / baseline["artifact"]["path"]) as ref:
                     prefix_end = (
                         min(285, transition_start if transition_start is not None else 285) * 10

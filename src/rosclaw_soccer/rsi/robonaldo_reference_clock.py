@@ -45,3 +45,21 @@ def retimed_reference_velocity(original: np.ndarray, *, rate: float) -> np.ndarr
     if not np.isfinite(result).all():
         raise ValueError("retimed reference overflow")
     return result
+
+
+def declared_clock_starts(plan: dict) -> list[tuple[float, float]]:
+    """Four legacy anchors first; expanded public development domain is explicit."""
+    value = np.asarray(plan["starts_m"], dtype=np.float64)
+    original = np.array([[x, y] for x in (0.97, 1.03) for y in (-0.03, 0.03)])
+    if (
+        value.shape not in ((4, 2), (16, 2))
+        or not np.isfinite(value).all()
+        or not np.array_equal(value[:4], original)
+        or len(np.unique(value, axis=0)) != len(value)
+        or np.any((value[:, 0] < 0.94) | (value[:, 0] > 1.06))
+        or np.any(np.abs(value[:, 1]) > 0.06)
+    ):
+        raise ValueError(
+            "exact four anchors plus bounded unique public development starts required"
+        )
+    return [(float(x), float(y)) for x, y in value]

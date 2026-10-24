@@ -51,6 +51,14 @@ def main():
     ):
         raise ValueError("bounded reference-only clock protocol required")
     aim_y = declaration.get("neural_aim_input_y_m", 0.0)
+    clock_worlds = len(declaration["starts"]) if clock_probe else None
+    if clock_probe and (
+        clock_worlds not in (4, 16)
+        or [row["index"] for row in source["records"]] != list(range(clock_worlds))
+        or any(row["arm"] != "single" for row in source["records"])
+        or declaration["worlds"] != clock_worlds
+    ):
+        raise ValueError("entire declared clock domain required")
     expected_protocol = (
         "robonaldo.reference_clock_authority.v1"
         if clock_probe
@@ -68,7 +76,8 @@ def main():
     )
     if (
         source["status"] != "LIVE_NEURAL_TRANSITION_DIAGNOSED_NOT_PROMOTED"
-        or len(source["records"]) != (4 if aim_probe or torque_trial or clock_probe else 8)
+        or len(source["records"])
+        != (clock_worlds if clock_probe else 4 if aim_probe or torque_trial else 8)
         or source["source_head"] != a.producer_head
         or declaration["duration_controls"] != 20
         or declaration["protocol"] != expected_protocol
@@ -211,8 +220,10 @@ def main():
             source_hash=a.source_hash,
             source_head=a.expected_head,
             input_file_hashes=pins,
-            worlds=4 if aim_probe or torque_trial or clock_probe else 8,
-            native_step_ceiling=26080 if aim_probe or torque_trial or clock_probe else 52160,
+            worlds=clock_worlds if clock_probe else 4 if aim_probe or torque_trial else 8,
+            native_step_ceiling=6520 * clock_worlds
+            if clock_probe
+            else (26080 if aim_probe or torque_trial else 52160),
             independent_torque_frame_and_application=torque_trial,
             shared_core_neural_inference_implementation=torque_trial,
             independent_clock=True,
