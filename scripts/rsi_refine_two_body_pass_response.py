@@ -25,6 +25,7 @@ def main():
     clean(a.expected_head)
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
+    from scripts.rsi_output_capacity import require_output_capacity
     from scripts.rsi_self_teacher_search_common import calibrations, compare_common, open_setup
     from scripts.rsi_two_body_response_common import (
         actual_response,
@@ -35,6 +36,7 @@ def main():
 
     if a.output.exists():
         raise ValueError("unused bounded refinement output required")
+    require_output_capacity(a.output, 2 * 1024**3)
     models, plans, source, cal, scope, pf, pins, bank, cr, sr = admit_models(
         a.model_root, a.model_hash, a.model_head, a.state_id
     )
@@ -115,6 +117,7 @@ def main():
             return
 
         def run(plan, z, tag, role, index=None, prediction=None):
+            require_output_capacity(a.output, 256 * 1024**2)
             if len(records) >= 16:
                 raise ValueError("declared16-world refinement exhausted")
             course = anchors[plan["task"]]["row"]["course"] | dict(latent=z)
