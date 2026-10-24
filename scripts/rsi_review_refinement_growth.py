@@ -16,6 +16,11 @@ def main():
     for k in ("parent-pass-hash", "parent-retention-hash", "expected-head"):
         p.add_argument("--" + k, required=True)
     p.add_argument(
+        "--checkpoint-kind",
+        choices=("consolidated-refinement-v1", "support-masked-refinement-v1"),
+        default="consolidated-refinement-v1",
+    )
+    p.add_argument(
         "--candidate",
         nargs=4,
         action="append",
@@ -101,13 +106,21 @@ def main():
     reports = []
     for seed, training_hash, pass_root, old_root in a.candidate:
         passed, retained = closed(Path(pass_root)), closed(Path(old_root))
-        training, scope = validate_pair(passed, retained, "consolidated-refinement-v1")
+        training, scope = validate_pair(passed, retained, a.checkpoint_kind)
+        supported = a.checkpoint_kind == "support-masked-refinement-v1"
+        if supported:
+            _, borrowed = receipt(pins, training["source_refinement_training_hash"])
+            parent_checkpoint_hash = borrowed["parent_checkpoint_hash"]
+            updates = training["new_optimizer_updates"]
+        else:
+            parent_checkpoint_hash = training["parent_checkpoint_hash"]
+            updates = training["new_head_steps"]
         if (
             passed["training_hash"] != training_hash
             or training["config"]["seed"] != int(seed)
             or training["parent_training_hash"] != parent_pass["training_hash"]
-            or training["parent_checkpoint_hash"] != parent_training["checkpoint_hash"]
-            or training["new_head_steps"] != 2048
+            or parent_checkpoint_hash != parent_training["checkpoint_hash"]
+            or updates != (0 if supported else 2048)
             or scope["contexts"] != parent_scope["contexts"]
         ):
             raise ValueError("all three exact new heads must derive from the same whole parent")
@@ -124,7 +137,9 @@ def main():
                 pass_own_hash=digest(Path(pass_root) / "complete.json"),
                 retention_own_hash=digest(Path(old_root) / "complete.json"),
                 checkpoint_hash=training["checkpoint_hash"],
-                new_head_updates=2048,
+                new_head_updates=updates,
+                checkpoint_kind=a.checkpoint_kind,
+                reused_head_updates=2048 if supported else 0,
                 **report,
             )
         )
