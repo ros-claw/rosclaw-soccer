@@ -23,11 +23,24 @@ def main():
     parser.add_argument("--aim-y", type=float, default=0.0)
     parser.add_argument("--single-player-only", action="store_true")
     parser.add_argument("--torque-teacher", action="store_true")
+    parser.add_argument("--torque-candidate-root", type=Path)
+    parser.add_argument("--torque-candidate-hash")
+    parser.add_argument("--torque-intervention-fraction", type=float, default=1.0)
     parser.add_argument("--identity-reference", type=Path)
     parser.add_argument("--identity-reference-hash")
     parser.add_argument("--identity-own", type=Path)
     parser.add_argument("--identity-own-hash")
     a = parser.parse_args()
+    candidate_mode = a.torque_candidate_root is not None
+    torque_mode = a.torque_teacher or candidate_mode
+    if (
+        candidate_mode != (a.torque_candidate_hash is not None)
+        or (candidate_mode and a.torque_teacher)
+        or a.torque_intervention_fraction not in (0.0, 1.0)
+        or (not candidate_mode and a.torque_intervention_fraction != 1.0)
+        or (candidate_mode and not a.single_player_only)
+    ):
+        parser.error("declared single-player candidate and fraction0/1 ablation required")
     if not math.isfinite(a.aim_y) or abs(a.aim_y) > 1.2:
         parser.error("finite qualified neural aim input in [-1.2,1.2] required")
     if (a.single_player_only or a.aim_y != 0.0) and not (
@@ -36,7 +49,7 @@ def main():
         parser.error(
             "new aim reachability protocol requires contact release and single-player-only"
         )
-    if a.torque_teacher:
+    if torque_mode:
         if (
             not a.contact_release
             or a.aim_y != 0.0
@@ -98,7 +111,7 @@ def main():
         a.own_hash,
     )
     identity_source = None
-    if a.torque_teacher:
+    if torque_mode:
         for root, expected in (
             (a.identity_reference, a.identity_reference_hash),
             (a.identity_own, a.identity_own_hash),
@@ -123,6 +136,30 @@ def main():
             ):
                 raise ValueError("confined exact raw identity parent required")
             pins[str(path)] = record["artifact"]["hash"]
+    trained = None
+    if candidate_mode:
+        training_path = a.torque_candidate_root / "complete.json"
+        if digest(training_path) != a.torque_candidate_hash:
+            raise ValueError("exact trained Core torque candidate required")
+        trained = json.loads(training_path.read_text())
+        if (
+            trained["status"] != "CORE_TORQUE_ACTOR_BC_TRAINED_NOT_PHYSICALLY_QUALIFIED"
+            or trained["actual_BC_actor_optimizer_updates"] <= 0
+        ):
+            raise ValueError("actual BC optimizer updates required, not an initialized model")
+        for path, expected in trained["input_file_hashes"].items():
+            if path in pins and pins[path] != expected:
+                raise ValueError("conflicting candidate ancestry")
+            pins[path] = expected
+        pins[str(training_path)] = a.torque_candidate_hash
+        policy_path = a.torque_candidate_root / trained["policy"]["path"]
+        if (
+            policy_path.parent.resolve() != a.torque_candidate_root.resolve()
+            or policy_path.is_symlink()
+            or digest(policy_path) != trained["policy"]["hash"]
+        ):
+            raise ValueError("confined exact learned Core torque binary required")
+        pins[str(policy_path)] = trained["policy"]["hash"]
     source_pins(pins)
     check_pins(pins)
     import mujoco
@@ -266,38 +303,76 @@ def main():
                 (arm, index, world, state, output, kick, recorder, stream, other, oldpd, newpd)
             )
     torque_layers = {}
-    if a.torque_teacher:
-        from rosclaw.simforge.g1_neural_torque import G1TeacherTorqueCollector
+    torque_nn_counts = {}
+    if torque_mode:
+        from rosclaw.simforge.g1_neural_torque import (
+            G1NeuralTorquePolicy,
+            G1TeacherTorqueCollector,
+            load_g1_neural_torque_artifact,
+        )
 
         from rosclaw_soccer.rsi.shared_native_torque_layer import SharedNativeTorqueLayer
 
         for entry in prepared:
             world = entry[2]
-            torque_layers[id(world)] = {
-                prefix: SharedNativeTorqueLayer(
+            torque_layers[id(world)], torque_nn_counts[id(world)] = {}, {}
+            for prefix in world.layouts:
+                policy = G1TeacherTorqueCollector()
+                if candidate_mode:
+                    assert trained is not None
+                    artifact = load_g1_neural_torque_artifact(
+                        policy_path,
+                        expected_hash=trained["policy"]["hash"],
+                        expected_body_hash=trained["body_hash"],
+                    )
+                    policy = G1NeuralTorquePolicy(
+                        artifact,
+                        expected_body_hash=trained["body_hash"],
+                        expected_parent_policy_hash=trained["parent_policy_hash"],
+                    )
+                    counts = dict(gru_calls=0, head_calls=0)
+                    advance_hidden, infer = policy._advance_hidden, policy._infer_normalized
+
+                    def measured_gru(values, original=advance_hidden, counts=counts):
+                        counts["gru_calls"] += 1
+                        return original(values)
+
+                    def measured_head(values, original=infer, counts=counts):
+                        counts["head_calls"] += 1
+                        return original(values)
+
+                    policy._advance_hidden, policy._infer_normalized = measured_gru, measured_head
+                    torque_nn_counts[id(world)][prefix] = counts
+                torque_layers[id(world)][prefix] = SharedNativeTorqueLayer(
                     world,
                     prefix,
-                    G1TeacherTorqueCollector(),
+                    policy,
                     target_y_m=0.0,
                     target_z_m=0.11,
                     horizon_controls=652,
+                    expected_parent_policy_hash=trained["parent_policy_hash"]
+                    if trained is not None
+                    else None,
+                    intervention_fraction=a.torque_intervention_fraction,
                 )
-                for prefix in world.layouts
-            }
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
         dict(
             protocol=(
-                "robonaldo.native_torque_teacher.v1"
-                if a.torque_teacher
+                "robonaldo.native_learned_torque_trial.v1"
+                if candidate_mode
                 else (
-                    "robonaldo.neural_aim_reachability.v1"
-                    if a.single_player_only
+                    "robonaldo.native_torque_teacher.v1"
+                    if a.torque_teacher
                     else (
-                        "robonaldo.contact_release_blend.v1"
-                        if a.contact_release
-                        else "robonaldo.live_neural_blend.v1"
+                        "robonaldo.neural_aim_reachability.v1"
+                        if a.single_player_only
+                        else (
+                            "robonaldo.contact_release_blend.v1"
+                            if a.contact_release
+                            else "robonaldo.live_neural_blend.v1"
+                        )
                     )
                 )
             ),
@@ -323,6 +398,8 @@ def main():
             actual_history_both_ABIs=True,
             same_effort_caps=True,
             torque_teacher=a.torque_teacher,
+            torque_candidate_hash=a.torque_candidate_hash,
+            torque_intervention_fraction=a.torque_intervention_fraction if torque_mode else None,
             teacher_motion_recovery_not_precision_qualified=a.torque_teacher,
             physics_retuned=False,
             optimizer_updates=0,
@@ -498,11 +575,14 @@ def main():
                     full_identity = {
                         key: bool(np.array_equal(arrays[key], ref[key])) for key in ref.files
                     }
-                if not all(full_identity.values()) or np.any(arrays["applied_torque_change"]):
+                if (a.torque_teacher or a.torque_intervention_fraction == 0.0) and (
+                    not all(full_identity.values()) or np.any(arrays["applied_torque_change"])
+                ):
                     raise ValueError("pass-through teacher changed parent physics or controls")
                 for prefix, layer in layers.items():
                     episode = layer.policy.episode()
-                    path = a.output / f"teacher-{arm}-{index}-{prefix.rstrip('/')}.npz"
+                    artifact_kind = "teacher" if a.torque_teacher else "learned"
+                    path = a.output / f"{artifact_kind}-{arm}-{index}-{prefix.rstrip('/')}.npz"
                     np.savez_compressed(
                         path,
                         observations=episode.observations,
@@ -516,6 +596,10 @@ def main():
                         observations=len(episode.observations),
                         commands=layer.commands,
                         applied=layer.applied,
+                        policy_receipt=layer.policy.build_receipt().to_dict()
+                        if candidate_mode
+                        else None,
+                        actual_NN_call_counts=torque_nn_counts[id(w)].get(prefix),
                     )
             baseline = next(
                 row
@@ -538,7 +622,19 @@ def main():
             row = dict(
                 arm=arm,
                 index=index,
-                torque_teacher_artifacts=teacher_artifacts,
+                torque_teacher_artifacts=teacher_artifacts if a.torque_teacher else {},
+                torque_execution_artifacts=teacher_artifacts,
+                torque_intervention_fraction=a.torque_intervention_fraction
+                if torque_mode
+                else None,
+                actual_torque_change_rms_nm=float(
+                    np.sqrt(np.mean(np.square(arrays["applied_torque_change"])))
+                )
+                if layers
+                else None,
+                actual_torque_change_peak_nm=float(np.max(np.abs(arrays["applied_torque_change"])))
+                if layers
+                else None,
                 zero_intervention_full_identity=full_identity,
                 neural_aim_input_y_m=a.aim_y,
                 actual_goal_plane=plane,
