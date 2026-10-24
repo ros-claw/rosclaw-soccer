@@ -12,10 +12,12 @@ import numpy as np
 from rosclaw_soccer.rsi.contact_stroke_intent import LEG_SUFFIXES
 
 
-def feedback_parameters(variant: int) -> dict[str, Any]:
+def feedback_parameters(variant: int, *, anticipation_seconds: float = 0.0) -> dict[str, Any]:
     if type(variant) is not int or not 0 <= variant <= 3:
         raise ValueError("one of four declared causal feedback variants required")
-    return dict(
+    if type(anticipation_seconds) is not float or anticipation_seconds not in (0.0, 0.12):
+        raise ValueError("explicit original zero or preregistered120ms anticipation required")
+    cfg = dict(
         variant=variant,
         gain=[0.0, 0.25, 0.5, 1.0][variant],
         desired_closing_speed_mps=3.0,
@@ -32,6 +34,45 @@ def feedback_parameters(variant: int) -> dict[str, Any]:
         direction_target="ORIGINAL_PASS_TARGET",
         total_authority_rad=0.2,
     )
+    if anticipation_seconds:
+        cfg.update(
+            anticipation_seconds=anticipation_seconds,
+            distance_gate="CURRENT_RELATIVE_VELOCITY_CLOSEST_APPROACH_NOT_SIMULATION",
+        )
+    return cfg
+
+
+def closest_approach(
+    relative_position: np.ndarray, relative_velocity: np.ndarray, *, seconds: float
+) -> tuple[float, float]:
+    """Linear current-state gate heuristic, NEVER a verified future trajectory.
+
+    Both vectors are ball minus foot-point in world coordinates. Include all
+    three axes, bound time to the declared horizon, and do not extrapolate a
+    receding pair backwards. No contact, control, or safety truth is inferred.
+    """
+    if (
+        type(seconds) is not float
+        or seconds not in (0.0, 0.12)
+        or any(
+            not isinstance(x, np.ndarray)
+            or x.shape != (3,)
+            or x.dtype != np.float64
+            or not np.isfinite(x).all()
+            for x in (relative_position, relative_velocity)
+        )
+    ):
+        raise ValueError("finite current relative state and declared linear gate horizon required")
+    speed_squared = float(relative_velocity @ relative_velocity)
+    time = (
+        0.0
+        if speed_squared <= 1e-12
+        else float(np.clip(-(relative_position @ relative_velocity) / speed_squared, 0, seconds))
+    )
+    distance = float(np.linalg.norm(relative_position + time * relative_velocity))
+    if not math.isfinite(distance):
+        raise ValueError("finite bounded linear gate estimate required")
+    return distance, time
 
 
 def task_displacement(
@@ -106,10 +147,19 @@ def damped_joint_delta(jacobian: np.ndarray, task: np.ndarray) -> np.ndarray:
 class CausalFootBallFeedback:
     """Scratch-free measured Jacobian adapter for the exact shared two-G1 model."""
 
-    def __init__(self, world: Any, ep: Any, *, goal: np.ndarray, variant: int) -> None:
+    def __init__(
+        self,
+        world: Any,
+        ep: Any,
+        *,
+        goal: np.ndarray,
+        variant: int,
+        anticipation_seconds: float = 0.0,
+    ) -> None:
         from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 
-        self.cfg = feedback_parameters(variant)
+        self.cfg = feedback_parameters(variant, anticipation_seconds=anticipation_seconds)
+        self.anticipation_seconds = anticipation_seconds
         self.world, self.ep = world, ep
         if goal.shape != (3,) or goal.dtype != np.float64 or not np.isfinite(goal).all():
             raise ValueError("finite actual original pass target required")
@@ -126,11 +176,13 @@ class CausalFootBallFeedback:
     def apply(
         self, proposal: np.ndarray, reference: np.ndarray, *, frame: int, standing: bool
     ) -> tuple[np.ndarray, np.ndarray, bool, np.ndarray]:
-        """Return action, HG29 proposed correction, authority clip, 24 diagnostics.
+        """Return action, HG29 correction, authority clip, 24 or26 diagnostics.
 
         Diagnostics: point3,ball3,point_velocity3,ball_velocity3,
         closing/lateral_gap/lateral_speed3, task3, gate, joint_norm,
         actual_extra_joint_norm, total_authority_max, task_norm, variant.
+        Anticipatory mode appends heuristic closest distance and time, NOT
+        measured future contact or a verified forward simulation.
         Exact zero outside the declared window. Extra correction is never
         mislabelled as learned inference or a measured contact force.
         """
@@ -146,7 +198,7 @@ class CausalFootBallFeedback:
         ):
             raise ValueError("finite original policy-unit proposal and nominal required")
         cfg = self.cfg
-        delta, diagnostics = np.zeros(29), np.zeros(24)
+        delta, diagnostics = np.zeros(29), np.zeros(26 if self.anticipation_seconds else 24)
         if (
             standing
             or not cfg["first_control"] <= frame < cfg["last_control_exclusive"]
@@ -170,6 +222,11 @@ class CausalFootBallFeedback:
         )
         gate = 0.5 * (1 - math.cos(math.pi * phase))
         separation = float(np.linalg.norm(ball - point))
+        time_to_closest = 0.0
+        if self.anticipation_seconds:
+            separation, time_to_closest = closest_approach(
+                ball - point, bv - pv, seconds=self.anticipation_seconds
+            )
         if separation >= cfg["near_distance_m"]:
             gate = 0.0
         elif separation > 0.25:
@@ -186,7 +243,7 @@ class CausalFootBallFeedback:
         action[~changed] = proposal[~changed]
         actual_extra = (action[ep.order] - proposal[ep.order]) * ep.scale
         total = (action[ep.order] - reference[ep.order]) * ep.scale
-        diagnostics[:] = np.concatenate(
+        diagnostics[:24] = np.concatenate(
             [
                 point,
                 ball,
@@ -204,4 +261,6 @@ class CausalFootBallFeedback:
                 ],
             ]
         )
+        if self.anticipation_seconds:
+            diagnostics[24:] = [separation, time_to_closest]
         return action, delta, info["oracle_authority_clipped"], diagnostics

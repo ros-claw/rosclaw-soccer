@@ -5,6 +5,7 @@ import pytest
 
 from rosclaw_soccer.rsi.causal_foot_ball_feedback import (
     CausalFootBallFeedback,
+    closest_approach,
     damped_joint_delta,
     feedback_parameters,
     task_displacement,
@@ -157,3 +158,59 @@ def test_feedback_rejects_stacked_teachers_before_prepare(collector):
     else:
         with pytest.raises(ValueError):
             module.collect_trial(setup, None, dict(assisted=True), **common)
+
+
+@pytest.mark.parametrize(
+    "position,velocity,expected_time,expected_distance",
+    [
+        ([0.6, 0, 0], [-4.0, 0, 0], 0.12, 0.12),
+        ([0.2, 0, 0], [-4.0, 0, 0], 0.05, 0.0),
+        ([0.6, 0, 0], [4.0, 0, 0], 0.0, 0.6),
+        ([0.6, 0, 0], [0.0, 0, 0], 0.0, 0.6),
+        ([0.6, 0.4, 0], [-4.0, 0, 0], 0.12, float(np.hypot(0.12, 0.4))),
+    ],
+)
+def test_bounded_current_velocity_closest_approach(
+    position, velocity, expected_time, expected_distance
+):
+    p, v = np.array(position, dtype=np.float64), np.array(velocity, dtype=np.float64)
+    p0, v0 = p.copy(), v.copy()
+    distance, time = closest_approach(p, v, seconds=0.12)
+    assert time == pytest.approx(expected_time)
+    assert distance == pytest.approx(expected_distance)
+    np.testing.assert_array_equal(p, p0)
+    np.testing.assert_array_equal(v, v0)
+
+
+@pytest.mark.parametrize("seconds", [True, 0.1, 0.5, float("nan")])
+def test_undeclared_anticipation_is_not_a_tunable_runtime_horizon(seconds):
+    with pytest.raises(ValueError):
+        closest_approach(np.ones(3), -np.ones(3), seconds=seconds)
+    with pytest.raises(ValueError):
+        feedback_parameters(1, anticipation_seconds=seconds)
+
+
+def test_anticipatory_gate_acts_before_instantaneous_distance_gate_without_stepping():
+    import mujoco
+
+    w, ep, original = measured_adapter(2)
+    foot = original.foot
+    point = w.data.xpos[foot] + w.data.xmat[foot].reshape(3, 3) @ np.array(
+        original.cfg["point_body_local_m"]
+    )
+    w.data.qpos[original.layout.bq : original.layout.bq + 3] = point + np.array([0.6, 0.02, 0.01])
+    mujoco.mj_forward(w.model, w.data)
+    future = CausalFootBallFeedback(w, ep, goal=original.goal, variant=2, anticipation_seconds=0.12)
+    proposal = np.zeros(29, np.float32)
+    old = original.apply(proposal, proposal, frame=100, standing=False)
+    new = future.apply(proposal, proposal, frame=100, standing=False)
+    assert old[3][18] == 0 and not old[1].any()
+    assert new[3].shape == (26,) and new[3][18] > 0 and new[1].any()
+    assert 0 <= new[3][25] <= 0.12
+    assert new[3][24] < 0.35
+    assert w.native_steps == 0 and w.data.time == 0
+
+
+def test_default_feedback_declaration_remains_original_without_anticipation():
+    assert feedback_parameters(2) == feedback_parameters(2, anticipation_seconds=0.0)
+    assert "anticipation_seconds" not in feedback_parameters(2)

@@ -6,16 +6,21 @@ from rosclaw_soccer.rsi.causal_foot_ball_feedback import feedback_parameters
 from rosclaw_soccer.rsi.joint_delivery_teacher import PILOTS, joint_delivery_rank
 
 
-def pilot_config(state: int) -> dict[str, Any]:
+def pilot_config(state: int, *, anticipatory: bool = False) -> dict[str, Any]:
     if type(state) is not int or state not in PILOTS:
         raise ValueError("two diagnosed public TRAIN states only")
     seed, task = PILOTS[state]
-    return dict(
+    if type(anticipatory) is not bool:
+        raise ValueError("explicit original or preregistered anticipatory study required")
+    cfg = dict(
         protocol="soccer.causal_foot_ball_feedback_TRAIN10.v1",
         state_id=state,
         source_expert_seed=seed,
         task=task,
-        variants=[feedback_parameters(i) for i in range(4)],
+        variants=[
+            feedback_parameters(i, anticipation_seconds=0.12 if anticipatory else 0.0)
+            for i in range(4)
+        ],
         search_variants=[1, 2, 3],
         nominal_repeats=2,
         unsearched_TRAIN_offsets_forward_m=[-0.005, 0.005],
@@ -29,6 +34,12 @@ def pilot_config(state: int) -> dict[str, Any]:
         new_optimizer_updates=0,
         Fresh_cases_read=0,
     )
+    if anticipatory:
+        cfg.update(
+            protocol="soccer.causal_foot_ball_feedback_TRAIN10.v2", anticipation_seconds=0.12
+        )
+        cfg["offset_role"] = "PREVIOUSLY_CONSUMED_PUBLIC_TRAIN_REGRESSION_NOT_UNSEEN_GENERALIZATION"
+    return cfg
 
 
 def selection(baseline: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -58,7 +69,8 @@ def verify_study(
     report: dict[str, Any], baseline: dict[str, Any], variants: list[dict[str, Any]]
 ) -> None:
     rows = report["records"]
-    cfg = pilot_config(report["config"]["state_id"])
+    anticipatory = report["config"].get("protocol") == "soccer.causal_foot_ball_feedback_TRAIN10.v2"
+    cfg = pilot_config(report["config"]["state_id"], anticipatory=anticipatory)
     if report["config"] != cfg or len(rows) != 10 or len(variants) != 2:
         raise ValueError("all10 predeclared feedback worlds required")
     selected = selection(baseline, rows[:6])
@@ -69,6 +81,7 @@ def verify_study(
             row["index"] != i
             or row["course"] != expected_course
             or row["feedback_variant"] != expected_variant
+            or row.get("feedback_anticipation_seconds", 0.0) != (0.12 if anticipatory else 0.0)
             or row["neural_actor_optimizer_updates"] != 0
             or (
                 i < 6

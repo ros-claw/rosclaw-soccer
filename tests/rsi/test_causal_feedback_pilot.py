@@ -119,3 +119,17 @@ def test_bad_audit_cli_cannot_create_output(tmp_path, extra):
         capture_output=True,
     )
     assert result.returncode == 2 and not output.exists()
+
+
+def test_anticipatory_study_requires_explicit_distinct_protocol_and_every_row_horizon():
+    report, baseline, variants = fixture()
+    report["config"] = pilot_config(26, anticipatory=True)
+    assert report["config"]["protocol"].endswith(".v2")
+    with pytest.raises(ValueError):
+        verify_study(report, baseline, variants)
+    for r in report["records"]:
+        r["feedback_anticipation_seconds"] = 0.12
+    verify_study(report, baseline, variants)
+    report["records"][8]["feedback_anticipation_seconds"] = 0.0
+    with pytest.raises(ValueError):
+        verify_study(report, baseline, variants)

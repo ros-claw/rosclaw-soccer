@@ -79,3 +79,33 @@ def test_no_successor_on_unclosed_or_conflicting_study(tmp_path, fault):
         (tmp_path / "complete.json").write_text(json.dumps(complete))
     with pytest.raises(ValueError):
         resolve(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "document_bytes,accepted", [(65052656, True), (128 * 1024 * 1024 + 1, False)]
+)
+def test_large_source_ancestry_has_finite_bound_before_json_read(
+    tmp_path, monkeypatch, document_bytes, accepted
+):
+    import os
+    from pathlib import Path
+
+    complete = source(tmp_path)
+    p = tmp_path / "complete.json"
+    p.write_text(json.dumps(complete))
+    original_stat = Path.stat
+
+    def stat(path, *args, **kwargs):
+        result = original_stat(path, *args, **kwargs)
+        if path == p:
+            fields = list(result)
+            fields[6] = document_bytes
+            return os.stat_result(fields)
+        return result
+
+    monkeypatch.setattr(Path, "stat", stat)
+    if accepted:
+        assert resolve(tmp_path) == digest(p)
+    else:
+        with pytest.raises(ValueError):
+            resolve(tmp_path)

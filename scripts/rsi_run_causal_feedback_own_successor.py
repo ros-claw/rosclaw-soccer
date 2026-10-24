@@ -13,16 +13,29 @@ from pathlib import Path
 from rosclaw_soccer.rsi.causal_feedback_pilot import pilot_config
 from scripts.rsi_native_context_recovery_common import digest
 
+# Exact source-pinned ancestry can exceed16MiB. Keep a finite allocation bound;
+# this raises no world/action budget and does not bypass any source validation.
+MAX_DOCUMENT_BYTES = 128 * 1024 * 1024
+
 
 def resolve_source(
-    root: Path, *, producer_head: str, expert_root: Path, expert_hash: str, state: int
+    root: Path,
+    *,
+    producer_head: str,
+    expert_root: Path,
+    expert_hash: str,
+    state: int,
+    anticipatory: bool = False,
 ) -> str:
-    cfg = pilot_config(state)
+    cfg = pilot_config(state, anticipatory=anticipatory)
     cp, dp = root / "complete.json", root / "declaration.json"
     if (
         root.is_symlink()
         or (root / "failed.json").exists()
-        or any(p.is_symlink() or not p.is_file() or p.stat().st_size > 16777216 for p in (cp, dp))
+        or any(
+            p.is_symlink() or not p.is_file() or p.stat().st_size > MAX_DOCUMENT_BYTES
+            for p in (cp, dp)
+        )
     ):
         raise ValueError("closed bounded ordinary causal feedback source required")
     source, declaration = [json.loads(p.read_text()) for p in (cp, dp)]
@@ -68,6 +81,7 @@ def main():
     for name in ("producer-head", "expert-own-hash", "expected-head"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--state-id", type=int, choices=(25, 26), required=True)
+    p.add_argument("--anticipatory", action="store_true")
     a = p.parse_args()
     from scripts.rsi_native_fresh_common import clean
 
@@ -80,6 +94,7 @@ def main():
         expert_root=a.expert_own_root,
         expert_hash=a.expert_own_hash,
         state=a.state_id,
+        anticipatory=a.anticipatory,
     )
     subprocess.run(
         [
@@ -102,6 +117,7 @@ def main():
             source_hash,
             "--output",
             str(a.output),
+            *(["--anticipatory"] if a.anticipatory else []),
         ],
         check=True,
     )

@@ -36,19 +36,23 @@ def replay_trial(
     student_prefix_controls=None,
     emit_course_rows=True,
     feedback_variant=None,
+    feedback_anticipation_seconds=0.0,
 ):
     if feedback_variant is not None:
         from rosclaw_soccer.rsi.causal_foot_ball_feedback import feedback_parameters
 
-        feedback_parameters(feedback_variant)
+        feedback_parameters(feedback_variant, anticipation_seconds=feedback_anticipation_seconds)
         if (
             student is not None
             or course["assisted"] is not False
             or claim.get("feedback_variant") != feedback_variant
+            or claim.get("feedback_anticipation_seconds", 0.0) != feedback_anticipation_seconds
         ):
             raise ValueError("same explicit unassisted-NN feedback configuration required")
     elif "feedback_variant" in claim:
         raise ValueError("feedback source requires independent causal rule replay")
+    elif feedback_anticipation_seconds != 0.0:
+        raise ValueError("anticipation requires an explicit feedback study")
     if type(emit_course_rows) is not bool:
         raise ValueError("explicit course log disclosure mode required before physics")
     if (student is None) != (student_prefix_controls is None) or (
@@ -93,7 +97,13 @@ def replay_trial(
     if feedback_variant is not None:
         from rosclaw_soccer.rsi.causal_foot_ball_feedback import CausalFootBallFeedback
 
-        feedback = CausalFootBallFeedback(w, ep, goal=goal, variant=feedback_variant)
+        feedback = CausalFootBallFeedback(
+            w,
+            ep,
+            goal=goal,
+            variant=feedback_variant,
+            anticipation_seconds=feedback_anticipation_seconds,
+        )
         feedback_trace = load(claim, "feedback")
     anchor = goal[:2] + 0.25 * forward + 0.12 * np.array([-forward[1], forward[0]])
     passer = SharedNativeNeuralPlayer(
@@ -284,6 +294,8 @@ def replay_trial(
     )
     if feedback is not None:
         result["feedback_variant"] = feedback_variant
+        if feedback_anticipation_seconds:
+            result["feedback_anticipation_seconds"] = feedback_anticipation_seconds
     if pair is not None:
         result.update(
             student_prefix_controls=student_prefix_controls,

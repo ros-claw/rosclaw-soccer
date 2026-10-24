@@ -18,6 +18,7 @@ def main():
         p.add_argument("--" + name, required=True)
     p.add_argument("--state-id", type=int, choices=(25, 26), required=True)
     p.add_argument("--preflight-only", action="store_true")
+    p.add_argument("--anticipatory", action="store_true")
     p.add_argument("--source-root", type=Path)
     p.add_argument("--source-hash")
     p.add_argument("--producer-head")
@@ -44,7 +45,7 @@ def main():
         verify_study,
     )
 
-    cfg = pilot_config(a.state_id)
+    cfg = pilot_config(a.state_id, anticipatory=a.anticipatory)
     pins, scope, bank, pf, inherited_root, baseline = admit(
         a.expert_own_root, a.expert_own_hash, cfg
     )
@@ -146,6 +147,7 @@ def main():
                     counts=counts,
                     emit_course_rows=False,
                     feedback_variant=variant,
+                    feedback_anticipation_seconds=cfg.get("anticipation_seconds", 0.0),
                 )
                 records.append(row)
                 row["prefix_identity_fields"] = (
@@ -192,6 +194,7 @@ def main():
                     prior_initial=previous,
                     emit_course_rows=False,
                     feedback_variant=row["feedback_variant"],
+                    feedback_anticipation_seconds=cfg.get("anticipation_seconds", 0.0),
                 )
                 prefix = (
                     compare_common(a.source_root, row, inherited_root, baseline, prefix=80)
