@@ -53,6 +53,12 @@ def main():
     pins = {str(a.plan): a.plan_hash}
     selected, anchors, proofs = [], [], []
     counts = dict(native_steps=0, actor_calls=0)
+    recovery_counts = dict(
+        reused_source_worlds=0,
+        new_source_worlds_this_execution=0,
+        previously_uncommitted_worlds=0,
+        previously_uncommitted_native_steps_upper_bound=0,
+    )
     for state in plan["states"]:
         root = a.shards_root / f"state{state}"
         paths = [
@@ -100,6 +106,27 @@ def main():
             )
         ):
             raise ValueError("exact all16 independent native proof required per shard")
+        if (
+            plan.get("recovery_hash") is not None
+            and d.get("recovery_hash") != plan["recovery_hash"]
+        ):
+            raise ValueError("same preregistered partial-data recovery required")
+        reused = s.get("reused_worlds", 0)
+        new = s.get("new_physical_worlds", 16)
+        if (
+            type(reused) is not int
+            or type(new) is not int
+            or min(reused, new) < 0
+            or reused + new != 16
+        ):
+            raise ValueError("exact reused/new source accounting required")
+        recovery_counts["reused_source_worlds"] += reused
+        recovery_counts["new_source_worlds_this_execution"] += new
+        for k in (
+            "previously_uncommitted_worlds",
+            "previously_uncommitted_native_steps_upper_bound",
+        ):
+            recovery_counts[k] += s.get(k, 0)
         # Own auditor already re-admitted full raw ancestry and reconstructed all choices.
         for x in (s, o):
             for key, h in x["input_file_hashes"].items():
@@ -157,6 +184,8 @@ def main():
         new_worlds_source=64,
         new_worlds_own=64,
         new_native_steps_source_plus_own=2 * counts["native_steps"],
+        recovery_accounting=recovery_counts,
+        uncommitted_executions_excluded_from_success_counts=True,
         physical_steps_this_aggregation=0,
         student_optimizer_updates=0,
         Fresh_cases_read=0,

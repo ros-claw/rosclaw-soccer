@@ -17,6 +17,8 @@ def main():
         p.add_argument("--" + k, required=True)
     p.add_argument("--state-id", type=int, choices=(20, 23, 26, 29), required=True)
     p.add_argument("--preflight-only", action="store_true")
+    p.add_argument("--recovery-seal", type=Path)
+    p.add_argument("--recovery-hash")
     a = p.parse_args()
     from scripts.rsi_native_fresh_common import clean
 
@@ -37,6 +39,15 @@ def main():
         a.model_root, a.model_hash, a.model_head, a.state_id
     )
     anchors = [anchor(p, source, cal, cr, sr) for p in plans]
+    reuse_root, reused, recovery = None, [], None
+    if (a.recovery_seal is None) != (a.recovery_hash is None):
+        raise ValueError("recovery seal and commitment must be supplied together")
+    if a.recovery_seal is not None:
+        from scripts.rsi_response_refinement_recovery import admit_recovery
+
+        reuse_root, reused, recovery = admit_recovery(
+            a.recovery_seal, a.recovery_hash, a.state_id, a.model_hash, pins
+        )
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
@@ -49,6 +60,9 @@ def main():
             model_head=a.model_head,
             state_id=a.state_id,
             preflight_only=a.preflight_only,
+            recovery_seal=None if a.recovery_seal is None else str(a.recovery_seal),
+            recovery_hash=a.recovery_hash,
+            recovery=recovery,
             maximum_worlds=16,
             maximum_native_steps=64000,
             maximum_actor_calls=12800,
@@ -104,15 +118,38 @@ def main():
             if len(records) >= 16:
                 raise ValueError("declared16-world refinement exhausted")
             course = anchors[plan["task"]]["row"]["course"] | dict(latent=z)
-            row = collect_trial(
-                setup,
-                actor,
-                course,
-                output=a.output,
-                index=len(records),
-                counts=counts,
-                emit_course_rows=False,
+            metadata = dict(
+                tag=tag,
+                task=plan["task"],
+                role=role,
+                model_candidate_index=index,
+                predicted_response=prediction,
             )
+            if len(records) < len(reused):
+                import shutil
+
+                row = dict(reused[len(records)])
+                if (
+                    row["index"] != len(records)
+                    or row["course"] != course
+                    or any(row[k] != v for k, v in metadata.items())
+                ):
+                    raise ValueError("recovery prefix must follow unchanged planned execution")
+                (a.output / f"trial{row['index']}").mkdir()
+                for art in row["artifacts"].values():
+                    shutil.copyfile(reuse_root / art["path"], a.output / art["path"])
+                for key in counts:
+                    counts[key] += row[key]
+            else:
+                row = collect_trial(
+                    setup,
+                    actor,
+                    course,
+                    output=a.output,
+                    index=len(records),
+                    counts=counts,
+                    emit_course_rows=False,
+                )
             row.update(
                 tag=tag,
                 task=plan["task"],
@@ -174,6 +211,17 @@ def main():
                 state_id=a.state_id,
                 model_hash=a.model_hash,
                 counts=counts,
+                reused_worlds=len(reused),
+                new_physical_worlds=len(records) - len(reused),
+                previously_uncommitted_worlds=0
+                if recovery is None
+                else recovery["uncommitted_worlds"],
+                previously_uncommitted_native_steps_upper_bound=0
+                if recovery is None
+                else recovery["uncommitted_native_steps_upper_bound"],
+                new_counts_this_execution={
+                    k: counts[k] - sum(r[k] for r in reused) for k in counts
+                },
                 records=records,
                 selections=selections,
                 all_model_proposals_physically_tested=True,
