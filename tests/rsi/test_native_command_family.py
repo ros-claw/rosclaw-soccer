@@ -45,3 +45,23 @@ def test_learned_physics_cannot_run_without_exact_training_and_clearance_commitm
     )
     assert result.returncode == 2
     assert "learned command contrast requires exact training" in result.stderr
+
+
+def test_single_player_scope_requires_explicit_residual_before_allocation():
+    command = [sys.executable, "-m", "scripts.rsi_probe_native_team_intent"]
+    for key in (
+        "parent",
+        "own",
+        "core-source-root",
+        "output",
+        "parent-hash",
+        "own-hash",
+        "core-expected-head",
+        "expected-head",
+    ):
+        command += ["--" + key, "unused"]
+    result = subprocess.run(
+        command + ["--residual-agent", "red_finisher"], capture_output=True, text=True
+    )
+    assert result.returncode == 2
+    assert "single-player residual scope requires an explicit residual head" in result.stderr

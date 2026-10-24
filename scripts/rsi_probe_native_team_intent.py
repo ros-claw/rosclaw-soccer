@@ -27,6 +27,14 @@ def main():
     p.add_argument("--command-residual", type=Path)
     p.add_argument("--command-residual-hash")
     p.add_argument("--residual-exploration-seed", type=int)
+    p.add_argument(
+        "--residual-agent",
+        choices=tuple(
+            team + "_" + role
+            for team in ("red", "blue")
+            for role in ("goalkeeper", "defender", "playmaker", "finisher")
+        ),
+    )
     p.add_argument("--previous", type=Path)
     p.add_argument("--previous-hash")
     p.add_argument(
@@ -41,6 +49,8 @@ def main():
         default="outbound-north",
     )
     a = p.parse_args()
+    if a.residual_agent is not None and a.command_residual is None:
+        p.error("single-player residual scope requires an explicit residual head")
     if (a.command_residual is None) != (a.command_residual_hash is None) or (
         a.command_residual is not None and a.command_training is None
     ):
@@ -266,7 +276,9 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="native8_parent_role_residual_contrast.v7"
+            protocol="native8_single_player_role_residual_contrast.v8"
+            if a.residual_agent is not None
+            else "native8_parent_role_residual_contrast.v7"
             if a.command_residual is not None
             else "native8_learned_role_command_contrast.v6"
             if trained is not None
@@ -278,6 +290,8 @@ def main():
             if a.intercept_course
             else "native8_coached_ball_intent_baseline.v1",
             source_head=a.expected_head,
+            residual_active_agent=a.residual_agent,
+            unselected_players_receive_no_learned_residual=a.residual_agent is not None,
             input_file_hashes=pins,
             agents=agents,
             starts_red_m=starts,
@@ -629,7 +643,14 @@ def main():
                                 False,
                             )
                             noise = np.zeros(3)
-                            if arm == "role-command-residual" and frame >= 50:
+                            if (
+                                arm == "role-command-residual"
+                                and frame >= 50
+                                and (
+                                    a.residual_agent is None
+                                    or team + "_" + role == a.residual_agent
+                                )
+                            ):
                                 noise = exploration_state[agent_index].copy()
                                 proposal = residual_policy.propose(
                                     observation, parent_command, latent_noise=noise
@@ -750,6 +771,38 @@ def main():
                         break
                 arrays = {k: np.concatenate(v) for k, v in raw.items()}
                 arrays.update({k: np.asarray(v) for k, v in controls.items()})
+                isolated_identity = None
+                if a.residual_agent is not None and residual_policy is not None:
+                    selected = np.array(
+                        [team + "_" + role == a.residual_agent for team, role, _ in agents]
+                    )
+                    expected_valid = np.zeros((w.control_steps, 8), np.bool_)
+                    if arm == "role-command-residual":
+                        expected_valid[50:, selected] = True
+                    unselected = ~selected
+                    isolated_identity = dict(
+                        model_called_only_for_declared_player=bool(
+                            np.array_equal(arrays["residual_model_valid"], expected_valid)
+                            and residual_calls == int(expected_valid.sum())
+                        ),
+                        unselected_commands_exact_parent=bool(
+                            np.array_equal(
+                                arrays["commands"][:, unselected].view(np.uint32),
+                                arrays["residual_parent_commands"][:, unselected].view(np.uint32),
+                            )
+                        ),
+                        unselected_residuals_noise_and_features_zero=all(
+                            not np.any(arrays[key][:, unselected])
+                            for key in (
+                                "residual_features131",
+                                "residual_normalized_actions",
+                                "residual_deltas",
+                                "residual_latent_noise",
+                            )
+                        ),
+                    )
+                    if not all(isolated_identity.values()):
+                        raise ValueError("single-player residual isolation violated")
                 own_exact = None
                 legacy_identity = None
                 foot_identity = None
@@ -876,6 +929,8 @@ def main():
                     preceding_clearance_identity=command_identity,
                     zero_residual_parent_identity=residual_identity,
                     actual_residual_model_calls=residual_calls,
+                    residual_active_agent=a.residual_agent,
+                    isolated_player_identity=isolated_identity,
                     residual_update_index=residual_policy.metadata["update_index"]
                     if residual_policy is not None
                     else None,
