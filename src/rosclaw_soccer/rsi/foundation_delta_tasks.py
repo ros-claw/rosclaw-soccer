@@ -18,6 +18,8 @@ def solve_foundation_delta(
     previous_delta: np.ndarray,
     limits: np.ndarray,
     tasks: tuple[LinearJointTask, ...],
+    *,
+    sparse_admissible: bool = False,
 ) -> tuple[np.ndarray | None, dict[str, Any]]:
     for a, shape in (
         (current, (29,)),
@@ -46,7 +48,7 @@ def solve_foundation_delta(
     upper = np.minimum.reduce(
         (limits[:12, 1] - nominal[:12], np.full(12, 0.12), previous_delta[:12] + 0.03)
     )
-    report = dict(
+    report: dict[str, Any] = dict(
         nominal_tracking_error_rad=float(np.max(abs(nominal[:12] - current[:12]))),
         measured_pose_ik=False,
         maximum_increment_rad=0.12,
@@ -54,8 +56,17 @@ def solve_foundation_delta(
         fallback_to_parent_resets_increment=True,
         physical_response_proven=False,
     )
-    if np.any(lower > upper):
+    feasible = lower <= upper
+    if not sparse_admissible and not feasible.all():
         return None, dict(report, status="ABSTAIN_INCREMENT_BOUND_INTERSECTION")
+    if sparse_admissible:
+        # Inadmissible joints have no new authority. Their parent targets are
+        # frozen verbatim, not repaired and not claimed physically qualified.
+        if not feasible.any():
+            return None, dict(report, status="ABSTAIN_NO_ADMISSIBLE_INCREMENT_AXIS")
+        lower[~feasible] = 0.0
+        upper[~feasible] = 0.0
+        report["active_joint_indices"] = np.flatnonzero(feasible).tolist()
     matrix = np.vstack(
         [*(np.sqrt(t.cost) * t.jacobian[:, :12] for t in tasks), np.sqrt(0.1) * np.eye(12)]
     )
@@ -90,6 +101,7 @@ def incremental_task_candidate(
     surfaces: dict[str, Any],
     *,
     contact: bool,
+    sparse_admissible: bool = False,
 ) -> tuple[np.ndarray | None, str]:
     feet = [(n, s) for n, s in surfaces.items() if n.endswith("foot") and s["available"]]
     if len(feet) != 2:
@@ -118,5 +130,6 @@ def incremental_task_candidate(
         previous,
         layout.model.jnt_range[layout.joints].astype(np.float64),
         tuple(tasks),
+        sparse_admissible=sparse_admissible,
     )
     return candidate, report["status"]

@@ -54,3 +54,23 @@ def test_opposed_foot_shin_tasks_share_increment_and_do_not_move_frozen_joints()
         ),
     )
     np.testing.assert_allclose(target, q, atol=1e-12)
+
+
+def test_sparse_scope_keeps_admissible_axes_without_repairing_inadmissible_parent():
+    q = np.zeros(29)
+    nominal = q.copy()
+    nominal[4] = 3.0
+    jac = np.zeros((3, 29))
+    jac[0, 0] = 1.0
+    target, report = solve_foundation_delta(
+        q,
+        nominal,
+        q,
+        np.tile([-2.0, 2.0], (29, 1)),
+        (LinearJointTask("foot", jac, np.array([0.02, 0.0, 0.0]), 100.0),),
+        sparse_admissible=True,
+    )
+    assert 0.019 < target[0] < 0.021
+    assert target[4] == 3.0
+    assert 4 not in report["active_joint_indices"]
+    assert len(report["active_joint_indices"]) == 11

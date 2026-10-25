@@ -33,3 +33,15 @@ def test_composite_history_quantizes_only_changed_legs_and_does_not_commit_early
 def test_excessive_original_action_is_abstention_not_clip_disguised_as_command():
     p = policy()
     assert encode_modified_target(p, np.full(29, 100.0), np.arange(29)) is None
+
+
+def test_sparse_encoding_leaves_inadmissible_frozen_leg_and_its_history_verbatim():
+    p = policy()
+    nominal = (p.default_q_mj + p.action_scale_mj * p.last_action_il).astype(np.float64)
+    nominal[4] = 3.0
+    candidate = nominal.copy()
+    candidate[0] += 0.02
+    target, encoded = encode_modified_target(p, candidate, np.arange(29), modified_indices=(0,))
+    assert target[4] == 3.0
+    assert encoded[4] == p.last_action_il[4]
+    np.testing.assert_array_equal(target[1:], nominal[1:])

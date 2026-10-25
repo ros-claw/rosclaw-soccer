@@ -17,11 +17,21 @@ LEG_JOINTS = tuple(range(12))
 
 
 def encode_modified_target(
-    policy: Any, target: np.ndarray, mapping: np.ndarray
+    policy: Any,
+    target: np.ndarray,
+    mapping: np.ndarray,
+    *,
+    modified_indices: tuple[int, ...] = LEG_JOINTS,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Quantize changed legs to the original float32 PD/action encoding BEFORE prediction."""
     encoded = policy.last_action_il.copy()
-    legs = np.asarray(LEG_JOINTS)
+    if (
+        not modified_indices
+        or len(set(modified_indices)) != len(modified_indices)
+        or any(type(i) is not int or not 0 <= i < 12 for i in modified_indices)
+    ):
+        raise ValueError("explicit changed leg indices required")
+    legs = np.asarray(modified_indices)
     il = mapping[legs]
     raw = ((target[legs] - policy.default_q_mj[legs]) / policy.action_scale_mj[legs]).astype(
         np.float32
@@ -95,6 +105,7 @@ class TaskSpaceKickPlayer(SharedRoboNaldoPlayer):
     """Own history commits the actual composite action, never an unexecuted prior."""
 
     foundation_relative = False
+    precontact_sparse = False
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -115,6 +126,7 @@ class TaskSpaceKickPlayer(SharedRoboNaldoPlayer):
         self.changed_controls = 0
         self.previous_delta = np.zeros(29, np.float64)
         self.nominal_for_commit: np.ndarray | None = None
+        self.first_foot_control: int | None = None
         self.selected_records: list[tuple[int, dict[str, Any]]] = []
 
     def propose(self) -> tuple[np.ndarray, dict[str, Any]]:
@@ -126,7 +138,12 @@ class TaskSpaceKickPlayer(SharedRoboNaldoPlayer):
         foot_gaps = [
             s["gap_m"] for n, s in surfaces.items() if n.endswith("foot") and s["available"]
         ]
-        if self.world.control_steps >= 300 or not foot_gaps or min(foot_gaps) > 0.18:
+        if (
+            self.world.control_steps >= 300
+            or not foot_gaps
+            or min(foot_gaps) > 0.18
+            or (self.precontact_sparse and self.first_foot_control is not None)
+        ):
             self.events.append(
                 dict(
                     frame=self.world.control_steps,
@@ -146,6 +163,7 @@ class TaskSpaceKickPlayer(SharedRoboNaldoPlayer):
 
             candidate_function = incremental_task_candidate
         for contact in (False, True):
+            extra = dict(sparse_admissible=True) if self.precontact_sparse else {}
             candidate, status = candidate_function(
                 self.layout,
                 self.world.data,
@@ -153,16 +171,26 @@ class TaskSpaceKickPlayer(SharedRoboNaldoPlayer):
                 self.previous_delta if self.foundation_relative else self.previous_target,
                 surfaces,
                 contact=contact,
+                **extra,
             )
             statuses.append(status)
             if candidate is None:
                 continue
-            result = encode_modified_target(self.policy, candidate, self.mapping)
+            modified = (
+                tuple(int(i) for i in np.flatnonzero(candidate != nominal))
+                if self.precontact_sparse
+                else LEG_JOINTS
+            )
+            if not modified:
+                continue
+            result = encode_modified_target(
+                self.policy, candidate, self.mapping, modified_indices=modified
+            )
             if result is None:
                 statuses.append("ABSTAIN_ORIGINAL_ACTION_LIMIT")
                 continue
             candidate, history = result
-            ids = list(LEG_JOINTS)
+            ids = list(modified)
             limits = self.world.model.jnt_range[self.layout.joints]
             if (
                 (candidate[ids] < limits[ids, 0]) | (candidate[ids] > limits[ids, 1])
@@ -264,3 +292,8 @@ class TaskSpaceKickPlayer(SharedRoboNaldoPlayer):
         if self.nominal_for_commit is None:
             raise ValueError("committed target lacks its corresponding foundation target")
         self.previous_delta = target - self.nominal_for_commit
+        feet = {self.prefix + side + "_ankle_roll_link" for side in ("left", "right")}
+        if self.first_foot_control is None and feet & set(
+            self.world.last_ball_contact_bodies[self.prefix]
+        ):
+            self.first_foot_control = self.world.control_steps - 1

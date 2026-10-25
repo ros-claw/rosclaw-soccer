@@ -13,7 +13,9 @@ def main():
     p.add_argument("--expected-head", required=True)
     p.add_argument("--shard-root", type=Path, nargs=4, required=True)
     p.add_argument(
-        "--interface", choices=("measured-pose", "foundation-increment"), default="measured-pose"
+        "--interface",
+        choices=("measured-pose", "foundation-increment", "precontact-sparse"),
+        default="measured-pose",
     )
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
@@ -94,7 +96,8 @@ def main():
     instances = []
 
     class Controlled(TaskSpaceKickPlayer):
-        foundation_relative = a.interface == "foundation-increment"
+        foundation_relative = a.interface != "measured-pose"
+        precontact_sparse = a.interface == "precontact-sparse"
 
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
@@ -106,6 +109,8 @@ def main():
         dict(
             protocol="soccer.g2.bounded_surface_contact_pilot.v2",
             interface=a.interface,
+            freeze_inadmissible_parent_joints=a.interface == "precontact-sparse",
+            end_alignment_after_actual_first_foot=a.interface == "precontact-sparse",
             source_head=a.expected_head,
             input_file_hashes=pins,
             course_indices=indices,
@@ -122,9 +127,7 @@ def main():
             max_nominal_delta_rad=0.12,
             max_current_delta_rad=0.2 if a.interface == "measured-pose" else None,
             max_command_step_rad=0.1 if a.interface == "measured-pose" else None,
-            candidate_increment_step_cap_rad=0.03
-            if a.interface == "foundation-increment"
-            else None,
+            candidate_increment_step_cap_rad=0.03 if a.interface != "measured-pose" else None,
             fallback_to_parent_resets_increment=True,
             foot_shin_cost=100.0,
             posture_cost=0.1,
@@ -204,6 +207,12 @@ def main():
                         ):
                             raise ValueError("chosen prediction differs at native substeps: " + key)
                 row["controller_events"] = controller.events
+                if a.interface == "precontact-sparse":
+                    first_foot = row["outcome"]["first_foot_contact_frame"]
+                    if first_foot is not None and any(
+                        e["changed"] and e["frame"] > first_foot for e in controller.events
+                    ):
+                        raise ValueError("contact alignment continued after actual first foot")
                 row["changed_controls"] = controller.changed_controls
                 row["forecasts"] = controller.forecaster.counters()
                 forecasts += controller.forecaster.integrated_steps
