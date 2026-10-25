@@ -7,11 +7,14 @@ physics reset, integration, gain change or automatic policy promotion occurs.
 
 import contextlib
 import io
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
+
+if TYPE_CHECKING:
+    from rosclaw_soccer.providers.g1.kick_measured_history import KickMeasuredSample
 
 
 class SharedRoboNaldoPlayer:
@@ -81,6 +84,7 @@ class SharedRoboNaldoPlayer:
         self.failed = False
         self.proposals = 0
         self.commits = 0
+        self.measured_entry_receipt: str | None = None
         owners[prefix] = identities
         self._observe()
         policy.target_pos_w = self.goal.copy()
@@ -90,6 +94,47 @@ class SharedRoboNaldoPlayer:
         except BaseException:
             self.failed = True
             raise
+
+    def install_measured_entry(
+        self, samples: tuple["KickMeasuredSample", ...], *, reference_frame: int
+    ) -> str:
+        """Replace cold software history before the first proposal, never physics.
+
+        The caller must already have declared/switched the PD profile. This
+        method does not claim torque continuity or account for root momentum.
+        A failed installation poisons the private skill, not the shared world.
+        """
+        from rosclaw_soccer.providers.g1.kick_measured_history import (
+            install_measured_kick_history,
+        )
+        from rosclaw_soccer.providers.g1.kick_warmstart import rebase_kick_reference
+
+        w, p = self.world, self.policy
+        w._require_current_boundary()
+        if (
+            self.failed
+            or self.proposals
+            or self.pending is not None
+            or self.boundary != w.control_steps
+            or self.measured_entry_receipt is not None
+            or type(reference_frame) is not int
+            or not 0 <= reference_frame < p.motion_total_steps
+        ):
+            raise ValueError("one pre-proposal measured entry at the same boundary required")
+        try:
+            self._observe()
+            # Install validates the ACTUAL five samples before buffer mutation;
+            # unlike prepare_kick_handoff this never repeats today's state.
+            receipt = install_measured_kick_history(
+                p, samples, frame=w.control_steps, time_sec=float(w.data.time)
+            )
+            rebase_kick_reference(p, entry_frame=reference_frame)
+            p.time_step = int(p.WARMUP_STEPS) + reference_frame
+        except BaseException:
+            self.failed = True
+            raise
+        self.measured_entry_receipt = receipt
+        return receipt
 
     def _observe(self) -> tuple[np.ndarray, np.ndarray]:
         w, layout = self.world, self.layout
