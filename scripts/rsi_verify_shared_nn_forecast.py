@@ -18,13 +18,27 @@ def main():
     p.add_argument("--whole-joint-reference", action="store_true")
     p.add_argument("--aim-goal-y", type=float)
     p.add_argument("--executed-synergy", action="store_true")
+    p.add_argument("--executed-task-axis", type=int)
     p.add_argument("--target-feasible-axes", action="store_true")
     a = p.parse_args()
     if a.pre_proposal_96 and a.pre_proposal_128:
         raise ValueError("one explicit forecast qualification protocol required")
     pre_proposal = a.pre_proposal_96 or a.pre_proposal_128
     aim_command = a.aim_goal_y is not None
-    if a.target_feasible_axes and not a.executed_synergy:
+    task_axis = a.executed_task_axis is not None
+    target_conditioning = a.executed_synergy or task_axis
+    if task_axis and (
+        not 0 <= a.executed_task_axis < 29
+        or not a.pre_proposal_128
+        or not a.target_feasible_axes
+        or a.executed_synergy
+        or a.synergy_model is not None
+        or a.synergy_model_hash is not None
+        or a.whole_joint_reference
+        or aim_command
+    ):
+        raise ValueError("separate128 per-axis actual-task direction, without PCA/reference mixing")
+    if a.target_feasible_axes and not target_conditioning:
         raise ValueError("per-axis target feasibility is an explicit executed-target study")
     if a.executed_synergy and (
         not a.pre_proposal_128 or a.synergy_model is None or a.whole_joint_reference or aim_command
@@ -157,7 +171,7 @@ def main():
     scheduled_frames = (80, 100, 150, 220)
     frames = (
         (reference["entry_control"], *scheduled_frames)
-        if aim_command or a.executed_synergy
+        if aim_command or target_conditioning
         else scheduled_frames
     )
     if len(set(frames)) != len(frames):
@@ -201,7 +215,7 @@ def main():
                 )
                 condition_aim_goal(self.policy, command)
                 self.goal = self.policy.target_pos_w.copy()
-            if a.executed_synergy:
+            if target_conditioning:
                 self.original_reference = {
                     k: getattr(self.policy, k).copy()
                     for k in (
@@ -211,12 +225,19 @@ def main():
                         "motion_body_quat",
                     )
                 }
-                self.target_plan = ExecutedTargetSynergy(
-                    self.world.control_steps,
-                    tuple(tuple(float(x) for x in r) for r in basis_hg),
-                    ((0.01, 0.0, 0.0, 0.0, 0.0, 0.0), (-0.01, 0.0, 0.0, 0.0, 0.0, 0.0)),
-                    projection_mode="per_axis" if a.target_feasible_axes else "whole_tick",
-                )
+                if task_axis:
+                    from rosclaw_soccer.rsi.actuated_task_response import actuated_task_plan
+
+                    delta = np.zeros(29, np.float64)
+                    delta[a.executed_task_axis] = 0.03
+                    self.target_plan = actuated_task_plan(self.world.control_steps, delta)
+                else:
+                    self.target_plan = ExecutedTargetSynergy(
+                        self.world.control_steps,
+                        tuple(tuple(float(x) for x in r) for r in basis_hg),
+                        ((0.01, 0.0, 0.0, 0.0, 0.0, 0.0), (-0.01, 0.0, 0.0, 0.0, 0.0, 0.0)),
+                        projection_mode="per_axis" if a.target_feasible_axes else "whole_tick",
+                    )
                 self.predictions.append(
                     self.predictor.forecast(
                         controls=horizon, before_proposal=True, target_plan=self.target_plan
@@ -266,7 +287,7 @@ def main():
             controls_per_probe=horizon,
             before_proposal=pre_proposal,
             reference_conditioning="OFF_original_arrays"
-            if a.executed_synergy
+            if target_conditioning
             else "whole_joint_reference_nonzero"
             if a.whole_joint_reference
             else "feedback_complement_nonzero"
@@ -280,9 +301,13 @@ def main():
             every_future_target_and_native_array_must_match=True,
             no_changed_targets=synergy_model is None
             and not a.whole_joint_reference
-            and not aim_command,
+            and not aim_command
+            and not target_conditioning,
             command_goal_conditioning="entry_nonzero_world_aim" if aim_command else "OFF",
-            executed_target_conditioning=a.executed_synergy,
+            executed_target_conditioning=target_conditioning,
+            actuated_task_axis=a.executed_task_axis,
+            actuated_task_probe_rad=0.03 if task_axis else None,
+            fitted_pca_basis_used=synergy_model is not None,
             executed_target_projection_mode="per_axis" if a.target_feasible_axes else "whole_tick",
             task_scoring_goal_world_point=[8.0, 0.0, 0.11],
             desired_command_world_point=[8.0, a.aim_goal_y, 0.11]
@@ -304,6 +329,52 @@ def main():
         hard_limits=np.array(G1_HARD_TORQUE_LIMITS),
         player_type=Probe,
     )
+    if task_axis:
+        # A failed new qualification must retain its charged actual trajectory.
+        actual_unvalidated = a.output / "actual-unvalidated.npz"
+        np.savez_compressed(actual_unvalidated, **arrays)
+        unvalidated_predictions = []
+        for j, predicted in enumerate(instances[0].predictions if instances else []):
+            path = a.output / f"forecast-unvalidated-{j:02d}.npz"
+            np.savez_compressed(
+                path,
+                **{
+                    k: predicted[k]
+                    for k in (
+                        "qpos",
+                        "qvel",
+                        "torque",
+                        "ball_forces",
+                        "joint_targets",
+                        "policy_ticks",
+                    )
+                },
+            )
+            unvalidated_predictions.append(
+                dict(
+                    artifact=path.name,
+                    hash=digest(path),
+                    donor_control_frame=predicted["donor_control_frame"],
+                    controls=predicted["controls"],
+                    body_failed=predicted["body_failed"],
+                )
+            )
+        write_once(
+            a.output / "executed-unvalidated.json",
+            dict(
+                actual_record=row,
+                artifact=actual_unvalidated.name,
+                hash=digest(actual_unvalidated),
+                target_edits=instances[0].target_edits if instances else [],
+                predictions=unvalidated_predictions,
+                actual_native_steps=row["native_steps"],
+                optimizer_updates=0,
+                physical_interface_qualified=False,
+                hardware_authorized=False,
+            ),
+        )
+        if row["controls"] != 360 or not row["healthy_full_horizon"]:
+            raise ValueError("task-direction qualification requires a healthy full actual horizon")
     if len(instances) != 1 or row["entry_control"] is None:
         raise ValueError("actual admitted neural skill required")
     probe = instances[0]
@@ -311,7 +382,7 @@ def main():
         raise ValueError("all preregistered NN forecast boundaries required")
     if aim_command and not probe.predictions[0]["aim_command_conditioned"]:
         raise ValueError("entry forecast must apply the nonzero command on an unchanged donor")
-    if a.executed_synergy and (
+    if target_conditioning and (
         not probe.predictions[0]["executed_target_plan"]
         or not any(e["applied"] for e in probe.target_edits)
         or any(e["reference_modified"] for e in probe.target_edits)
@@ -345,9 +416,15 @@ def main():
         same = set(old.files) == set(arrays) and all(
             np.array_equal(old[k], v) for k, v in arrays.items()
         )
-        if synergy_model is None and not a.whole_joint_reference and not aim_command and not same:
+        unconditioned = (
+            synergy_model is None
+            and not a.whole_joint_reference
+            and not aim_command
+            and not target_conditioning
+        )
+        if unconditioned and not same:
             raise ValueError("owned forecasts changed original actual whole trajectory")
-        if (synergy_model is not None or a.whole_joint_reference or aim_command) and same:
+        if not unconditioned and same:
             raise ValueError(
                 "nonzero reference qualification did not change actual whole trajectory"
             )
@@ -360,7 +437,9 @@ def main():
         a.output / "complete.json",
         dict(
             status=(
-                "G1_EXECUTED_TARGET_SYNERGY_NN_FUTURES_EXACT"
+                "G1_ACTUATED_TASK_DIRECTION_NN_FUTURES_EXACT"
+                if task_axis
+                else "G1_EXECUTED_TARGET_SYNERGY_NN_FUTURES_EXACT"
                 if a.executed_synergy
                 else "G1_AIM_GOAL_COMMAND_NN_FUTURES_EXACT"
                 if aim_command
@@ -374,7 +453,7 @@ def main():
             ),
             before_proposal=pre_proposal,
             reference_conditioning="OFF_original_arrays"
-            if a.executed_synergy
+            if target_conditioning
             else "whole_joint_reference_nonzero"
             if a.whole_joint_reference
             else "feedback_complement_nonzero"
@@ -384,12 +463,15 @@ def main():
             else "OFF_original_arrays",
             source_head=a.expected_head,
             command_goal_conditioning="entry_nonzero_world_aim" if aim_command else "OFF",
-            executed_target_conditioning=a.executed_synergy,
+            executed_target_conditioning=target_conditioning,
+            actuated_task_axis=a.executed_task_axis,
+            actuated_task_probe_rad=0.03 if task_axis else None,
+            fitted_pca_basis_used=synergy_model is not None,
             executed_target_projection_mode="per_axis" if a.target_feasible_axes else "whole_tick",
             executed_target_edits=probe.target_edits,
-            reference_arrays_unchanged_by_target_plan=bool(a.executed_synergy),
+            reference_arrays_unchanged_by_target_plan=bool(target_conditioning),
             future_target_semantics="original_NN_plus_executed_target_plan"
-            if a.executed_synergy
+            if target_conditioning
             else "original_NN",
             task_scoring_goal_world_point=[8.0, 0.0, 0.11],
             desired_command_world_point=[8.0, a.aim_goal_y, 0.11]
@@ -406,7 +488,8 @@ def main():
             all_future_nn_targets_and_native_arrays_exact=True,
             actual_whole_trajectory_unchanged=synergy_model is None
             and not a.whole_joint_reference
-            and not aim_command,
+            and not aim_command
+            and not target_conditioning,
             teacher_effectiveness_proven=False,
             optimizer_updates=0,
             promotion_authorized=False,
