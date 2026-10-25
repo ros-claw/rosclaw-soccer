@@ -14,10 +14,19 @@ def main():
     p.add_argument("--shard-root", type=Path, nargs=4, required=True)
     p.add_argument(
         "--interface",
-        choices=("measured-pose", "foundation-increment", "precontact-sparse", "nn-outcome"),
+        choices=(
+            "measured-pose",
+            "foundation-increment",
+            "precontact-sparse",
+            "nn-outcome",
+            "nn-outcome-full-leg",
+        ),
         default="measured-pose",
     )
     a = p.parse_args()
+    nn_outcome = a.interface in ("nn-outcome", "nn-outcome-full-leg")
+    axes = tuple(range(12)) if a.interface == "nn-outcome-full-leg" else (0, 3, 4, 6, 9, 10)
+    forecast_cap = (1 + 2 * len(axes)) * 640 * 16 if nn_outcome else 172800
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
@@ -28,7 +37,7 @@ def main():
     qualification = json.loads(a.qualification.read_text())
     required = (
         "G1_COPIED_NN_CLOSED_LOOP_64_CONTROL_FORECASTS_EXACT"
-        if a.interface == "nn-outcome"
+        if nn_outcome
         else "ACTUAL_G1_MATERIAL_POINT_HG29_DERIVATIVES_VERIFIED"
     )
     if qualification["status"] != required:
@@ -101,9 +110,10 @@ def main():
     preflight_receiving_courses(courses)
     instances = []
 
-    parent_type = OutcomeForecastKickPlayer if a.interface == "nn-outcome" else TaskSpaceKickPlayer
+    parent_type = OutcomeForecastKickPlayer if nn_outcome else TaskSpaceKickPlayer
 
     class Controlled(parent_type):
+        candidate_axes = axes
         foundation_relative = a.interface != "measured-pose"
         precontact_sparse = a.interface == "precontact-sparse"
 
@@ -125,31 +135,29 @@ def main():
             arms=["B", "C"],
             actual_world_ceiling=32,
             actual_native_step_ceiling=115200,
-            forecast_native_step_ceiling=133120 if a.interface == "nn-outcome" else 172800,
-            forecast_controls_per_candidate=64 if a.interface == "nn-outcome" else 1,
-            candidate_set=["parent", "one_admissible_pitch_joint_0_3_4_6_9_10_plusminus_0.03"]
-            if a.interface == "nn-outcome"
+            forecast_native_step_ceiling=forecast_cap,
+            forecast_controls_per_candidate=64 if nn_outcome else 1,
+            candidate_set=["parent", "one_admissible_declared_joint_plusminus_0.03"]
+            if nn_outcome
             else [
                 "original",
                 "foot_nominal_plus_shin_clearance",
                 "foot_contact_alignment_plus_shin_clearance",
             ],
-            active_joints=[0, 3, 4, 6, 9, 10] if a.interface == "nn-outcome" else list(range(12)),
-            max_nominal_delta_rad=0.03 if a.interface == "nn-outcome" else 0.12,
+            active_joints=list(axes) if nn_outcome else list(range(12)),
+            max_nominal_delta_rad=0.03 if nn_outcome else 0.12,
             max_current_delta_rad=0.2 if a.interface == "measured-pose" else None,
             max_command_step_rad=0.1 if a.interface == "measured-pose" else None,
             candidate_increment_step_cap_rad=0.03 if a.interface != "measured-pose" else None,
             fallback_to_parent_resets_increment=True,
-            foot_shin_cost=None if a.interface == "nn-outcome" else 100.0,
-            posture_cost=None if a.interface == "nn-outcome" else 0.1,
-            shin_margin_m=None if a.interface == "nn-outcome" else 0.015,
-            maximum_retreat_m=None if a.interface == "nn-outcome" else 0.04,
-            contact_alignment_correction_m=None
-            if a.interface == "nn-outcome"
-            else [0.02, 0.03, 0.015],
-            activation_foot_gap_m=0.06 if a.interface == "nn-outcome" else 0.18,
-            maximum_actual_interventions_per_world=1 if a.interface == "nn-outcome" else None,
-            candidate_selection_requires_observed_window_rescue=a.interface == "nn-outcome",
+            foot_shin_cost=None if nn_outcome else 100.0,
+            posture_cost=None if nn_outcome else 0.1,
+            shin_margin_m=None if nn_outcome else 0.015,
+            maximum_retreat_m=None if nn_outcome else 0.04,
+            contact_alignment_correction_m=None if nn_outcome else [0.02, 0.03, 0.015],
+            activation_foot_gap_m=0.06 if nn_outcome else 0.18,
+            maximum_actual_interventions_per_world=1 if nn_outcome else None,
+            candidate_selection_requires_observed_window_rescue=nn_outcome,
             no_model_or_gain_changes=True,
             privileged_per_course_approach=True,
             original_exam_unchanged=True,
@@ -223,7 +231,7 @@ def main():
                             arrays[key][frame * 10 : (frame + predicted_controls) * 10],
                         ):
                             raise ValueError("chosen prediction differs at native substeps: " + key)
-                    if a.interface == "nn-outcome" and not np.array_equal(
+                    if nn_outcome and not np.array_equal(
                         prediction["joint_targets"],
                         arrays["joint_targets"][frame : frame + predicted_controls],
                     ):
@@ -239,7 +247,7 @@ def main():
                 row["forecasts"] = controller.forecaster.counters()
                 forecasts += controller.forecaster.integrated_steps
                 forecast_attempted += controller.forecaster.attempted_steps
-                if a.interface == "nn-outcome":
+                if nn_outcome:
                     if controller.changed_controls > 1:
                         raise ValueError("one-intervention protocol exceeded")
                     saved = []
@@ -275,7 +283,6 @@ def main():
                     ) as old:
                         if any(not np.array_equal(old[k], v) for k, v in arrays.items()):
                             raise ValueError("zero/off branch altered the legacy trajectory")
-            forecast_cap = 133120 if a.interface == "nn-outcome" else 172800
             if worlds > 32 or native > 115200 or forecast_attempted > forecast_cap:
                 raise ValueError("frozen physical budget exceeded")
             artifact = folder / f"{arm}.npz"
@@ -325,6 +332,8 @@ def main():
         a.output / "complete.json",
         dict(
             status="BOUNDED_SURFACE_CONTACT_PILOT_COMPLETE",
+            interface=a.interface,
+            declaration_hash=digest(a.output / "declaration.json"),
             source_head=a.expected_head,
             input_file_hashes=pins,
             results=results,

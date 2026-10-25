@@ -1,6 +1,10 @@
 import numpy as np
+import pytest
 
-from rosclaw_soccer.rsi.outcome_forecast_kick_player import choose_window_rescue
+from rosclaw_soccer.rsi.outcome_forecast_kick_player import (
+    candidate_native_budget,
+    choose_window_rescue,
+)
 
 
 def candidate(
@@ -61,3 +65,14 @@ def test_eligible_observed_rescue_then_reward_and_smallest_change_tie_break():
         )
         == 3
     )
+
+
+def test_axis_scope_has_exact_declared_forecast_budget():
+    assert candidate_native_budget((0, 3, 4, 6, 9, 10)) == 8320
+    assert candidate_native_budget(tuple(range(12))) == 16000
+
+
+@pytest.mark.parametrize("axes", [(), (0, 0), (12,), (True,), [0, 1]])
+def test_invalid_axis_scope_cannot_expand_forecast_authority(axes):
+    with pytest.raises(ValueError):
+        candidate_native_budget(axes)

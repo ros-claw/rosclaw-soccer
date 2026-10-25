@@ -21,8 +21,14 @@ def main():
     if a.output.exists() or digest(cp) != a.pilot_hash:
         raise ValueError("unused readback output and exact closed pilot required")
     report = json.loads(cp.read_text())
+    mode = report.get("interface", "nn-outcome")
+    if mode not in ("nn-outcome", "nn-outcome-full-leg"):
+        raise ValueError("declared NN-outcome protocol required")
+    per_world_cap = 16000 if mode == "nn-outcome-full-leg" else 8320
     pins = dict(report["input_file_hashes"])
     pins[str(cp)] = a.pilot_hash
+    if "declaration_hash" in report:
+        pins[str(a.pilot / "declaration.json")] = report["declaration_hash"]
     pairs = []
     for result in report["results"]:
         pair = {}
@@ -147,7 +153,7 @@ def main():
             attempted_native_steps=attempted,
             integrated_native_steps=integrated,
             future_nn_calls=future_nn,
-            maximum_native_steps=8320,
+            maximum_native_steps=per_world_cap,
         ):
             raise ValueError("forecast budget/NN call readback differs")
         if "forecasts" not in c and calls:

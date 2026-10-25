@@ -18,6 +18,17 @@ from rosclaw_soccer.rsi.task_space_kick_player import encode_modified_target
 PITCH_AXES = (0, 3, 4, 6, 9, 10)
 
 
+def candidate_native_budget(axes: tuple[int, ...]) -> int:
+    if (
+        type(axes) is not tuple
+        or not axes
+        or len(set(axes)) != len(axes)
+        or any(type(i) is not int or not 0 <= i < 12 for i in axes)
+    ):
+        raise ValueError("explicit unique candidate leg axes required")
+    return (1 + 2 * len(axes)) * 640
+
+
 def choose_window_rescue(
     candidates: list[tuple[str, np.ndarray, np.ndarray | None, dict[str, Any], dict[str, Any]]],
 ) -> int:
@@ -49,6 +60,8 @@ def choose_window_rescue(
 
 
 class OutcomeForecastKickPlayer(SharedRoboNaldoPlayer):
+    candidate_axes = PITCH_AXES
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         from importlib import import_module
@@ -58,7 +71,7 @@ class OutcomeForecastKickPlayer(SharedRoboNaldoPlayer):
             self,
             expected_policy_type=type(self.policy),
             expected_model_hash=compiled_model_hash(self.world.model),
-            native_step_budget=8320,
+            native_step_budget=candidate_native_budget(self.candidate_axes),
         )
         self.forecaster = self.predictor
         self.decided = self.foot_seen = self.nonfoot_seen = False
@@ -102,7 +115,7 @@ class OutcomeForecastKickPlayer(SharedRoboNaldoPlayer):
         ] = [("parent", nominal, None, parent, baseline)]
         skipped = []
         if not baseline["window_pass"]:
-            for axis in PITCH_AXES:
+            for axis in self.candidate_axes:
                 for sign in (-1.0, 1.0):
                     target = nominal.copy()
                     target[axis] += sign * 0.03
@@ -129,7 +142,7 @@ class OutcomeForecastKickPlayer(SharedRoboNaldoPlayer):
                         start_control=frame,
                     )
                     candidates.append(
-                        (f"pitch-{axis}-{sign:+.0f}", target, history, predicted, outcome)
+                        (f"axis-{axis}-{sign:+.0f}", target, history, predicted, outcome)
                     )
         chosen = choose_window_rescue(candidates)
         name, target, chosen_history, prediction, outcome = candidates[chosen]
