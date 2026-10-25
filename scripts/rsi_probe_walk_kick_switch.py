@@ -13,6 +13,9 @@ def main():
     parser.add_argument("--composed-complete", type=Path, required=True)
     parser.add_argument("--composed-hash", required=True)
     parser.add_argument("--reference-record", type=Path, required=True)
+    parser.add_argument("--reference-hash")
+    parser.add_argument("--failed-teacher-record", type=Path)
+    parser.add_argument("--failed-teacher-hash")
     parser.add_argument("--expected-head", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -31,13 +34,47 @@ def main():
         raise ValueError("qualified composed native future required")
     pins = dict(proof["input_file_hashes"])
     pins[str(args.composed_complete)] = args.composed_hash
-    if args.reference_record.is_symlink() or pins.get(str(args.reference_record)) != digest(
-        args.reference_record
+    failure_mode = args.reference_hash is not None
+    if failure_mode != (args.failed_teacher_record is not None) or failure_mode != (
+        args.failed_teacher_hash is not None
     ):
+        raise ValueError("public failure mode requires both exact baseline and teacher commitments")
+    reference_hash = args.reference_hash if failure_mode else pins.get(str(args.reference_record))
+    if args.reference_record.is_symlink() or reference_hash != digest(args.reference_record):
         raise ValueError("original pinned record required")
     reference = json.loads(args.reference_record.read_text())
-    if reference["arm"] != "onnx" or reference["entry_control"] != 77:
-        raise ValueError("same frozen source course and original entry77 required")
+    if failure_mode:
+        if (
+            args.failed_teacher_record.is_symlink()
+            or digest(args.failed_teacher_record) != args.failed_teacher_hash
+        ):
+            raise ValueError("exact public failed teacher record required")
+        teacher = json.loads(args.failed_teacher_record.read_text())
+        if (
+            reference["arm"] != "B"
+            or teacher["arm"] != "C"
+            or reference["outcome"]["task_pass"] is not False
+            or teacher["outcome"]["task_pass"] is not False
+            or reference["course"] != teacher["course"]
+            or reference["parameters"] != teacher["parameters"]
+            or reference["experimental_fast_approach"] != teacher["experimental_fast_approach"]
+        ):
+            raise ValueError("paired unchanged-course public baseline/teacher failures required")
+        pins[str(args.failed_teacher_record)] = args.failed_teacher_hash
+        pins[str(args.reference_record)] = reference_hash
+        artifact = args.reference_record.parent / reference["artifact"]["path"]
+        if (
+            artifact.parent != args.reference_record.parent
+            or digest(artifact) != reference["artifact"]["hash"]
+        ):
+            raise ValueError("original local baseline raw commitment required")
+        pins[str(artifact)] = reference["artifact"]["hash"]
+    elif reference["arm"] != "onnx" or reference["entry_control"] != 77:
+        raise ValueError("same frozen qualification source and original entry77 required")
+    entry = reference["entry_control"]
+    if type(entry) is not int or not 50 <= entry <= 219:
+        raise ValueError("original entry with complete bounded switch horizons required")
+    origin = entry - 1
     source_pins(pins)
     check_pins(pins)
     context = load_walk_kick_context(pins)
@@ -63,7 +100,9 @@ def main():
             actual_world_ceiling=1,
             actual_native_step_ceiling=3600,
             forecast_native_step_ceiling=4050,
-            from_actual_control=76,
+            from_actual_control=origin,
+            public_baseline_and_teacher_failed=failure_mode,
+            original_entry_control=entry,
             delays_relative_to_original_entry=[0, 6, 12],
             velocity_controls=[1, 7, 13],
             kick_controls=128,
@@ -91,7 +130,7 @@ def main():
             history.append(measured_kick_sample(world, "a/"))
             contacted |= bool(world.last_ball_contact_bodies["a/"])
         prior, previous = previous.copy(), command.copy()
-        if frame != 76:
+        if frame != origin:
             return
         forecaster = SharedWalkKickForecaster(
             world,
@@ -128,7 +167,7 @@ def main():
                     kick_only,
                     ball_address=world.layouts["a/"].bq,
                     root_address=world.layouts["a/"].rq,
-                    start_control=76 + velocity,
+                    start_control=origin + velocity,
                     diagnostic_tail=True,
                 )
             scores.append(dict(delay=velocity - 1, window=window, eligible=window is not None))
@@ -162,10 +201,17 @@ def main():
             not np.array_equal(v, old[k]) for k, v in actual.items()
         ):
             raise ValueError("previews changed the original actual rollout")
-    with np.load(args.composed_complete.parent / "future.npz", allow_pickle=False) as old:
-        for key in old.files:
-            if not np.array_equal(forecasts[0][key], old[key]):
-                raise ValueError("zero-delay baseline differs from qualified future: " + key)
+    for key in ("qpos", "qvel", "torque", "ball_forces"):
+        if not np.array_equal(forecasts[0][key], actual[key][origin * 10 : (origin + 129) * 10]):
+            raise ValueError("zero-delay future differs from original actual raw: " + key)
+    for key in ("joint_targets", "commands"):
+        if not np.array_equal(forecasts[0][key], actual[key][origin : origin + 129]):
+            raise ValueError("zero-delay future differs from original actual control: " + key)
+    if not failure_mode:
+        with np.load(args.composed_complete.parent / "future.npz", allow_pickle=False) as old:
+            for key in old.files:
+                if not np.array_equal(forecasts[0][key], old[key]):
+                    raise ValueError("zero-delay baseline differs from qualified future: " + key)
     check_pins(pins)
     clean(args.expected_head)
     write_once(
@@ -173,6 +219,7 @@ def main():
         dict(
             status="THREE_MEASURED_SWITCH_PREVIEWS_RECORDED_NOT_ACTUAL_GAIN",
             source_head=args.expected_head,
+            public_baseline_and_teacher_failed=failure_mode,
             input_file_hashes=pins,
             scores=scores,
             forecasts=forecaster.counters(),
