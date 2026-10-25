@@ -31,6 +31,7 @@ def propose_clearance_velocity(
     approach_gain: float = 0.6,
     additional_halfplanes: np.ndarray | None = None,
     experimental_fast_navigation: bool = False,
+    experimental_velocity_envelope: bool = False,
 ) -> ClearanceProposal:
     if (
         nominal.shape != (2,)
@@ -40,7 +41,11 @@ def propose_clearance_velocity(
         or not np.all(np.isfinite(nominal))
         or not np.all(np.isfinite(neighbor_offsets))
         or type(experimental_fast_navigation) is not bool
-        or not 0.1 <= maximum_speed_mps <= (1.5 if experimental_fast_navigation else 1.0)
+        or type(experimental_velocity_envelope) is not bool
+        or (experimental_fast_navigation and experimental_velocity_envelope)
+        or not 0.1
+        <= maximum_speed_mps
+        <= (2.0 if experimental_velocity_envelope else 1.5 if experimental_fast_navigation else 1.0)
         or not 0.5 <= clearance_m <= 1.0
         or not clearance_m < influence_m <= 2.0
         or not 0.1 <= approach_gain <= 2.0

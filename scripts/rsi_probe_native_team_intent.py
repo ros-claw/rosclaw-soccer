@@ -30,6 +30,8 @@ def main():
     p.add_argument("--residual-exploration-seed", type=int)
     p.add_argument("--foot-contact-config", type=Path)
     p.add_argument("--foot-contact-config-hash")
+    p.add_argument("--experimental-approach-config", type=Path)
+    p.add_argument("--experimental-approach-config-hash")
     p.add_argument(
         "--residual-agent",
         choices=tuple(
@@ -52,6 +54,10 @@ def main():
         default="outbound-north",
     )
     a = p.parse_args()
+    if (a.experimental_approach_config is None) != (
+        a.experimental_approach_config_hash is None
+    ) or (a.experimental_approach_config is not None and a.foot_contact_config is None):
+        p.error("experimental approach requires exact config and paired contact-teacher contract")
     if (a.foot_contact_config is None) != (a.foot_contact_config_hash is None) or (
         a.foot_contact_config is not None
         and (not a.clearance_course or a.command_training is not None)
@@ -270,6 +276,60 @@ def main():
             ):
                 raise ValueError("exact confined physical teacher-parent arrays required")
             pins[str(path)] = row["artifact"]["hash"]
+    approach_config = None
+    if a.experimental_approach_config is not None:
+        if (
+            a.experimental_approach_config.is_symlink()
+            or digest(a.experimental_approach_config) != a.experimental_approach_config_hash
+        ):
+            raise ValueError("exact separately declared experimental approach config required")
+        pins[str(a.experimental_approach_config)] = a.experimental_approach_config_hash
+        approach_config = json.loads(a.experimental_approach_config.read_text())
+        if (
+            set(approach_config)
+            != {"schema", "point_root", "point_hash", "reference_source", "reference_hash"}
+            or approach_config["schema"] != "soccer.native_single_finisher_experimental_approach.v1"
+        ):
+            raise ValueError("fixed single-finisher experimental approach contract required")
+        point_root = Path(approach_config["point_root"])
+        path = point_root / "complete.json"
+        if path.is_symlink() or digest(path) != approach_config["point_hash"]:
+            raise ValueError("exact completed experimental point evidence required")
+        point_report = json.loads(path.read_text())
+        declaration = json.loads((point_root / "declaration.json").read_text())
+        if (
+            point_report["status"]
+            != "EXPERIMENTAL_VELOCITY_POINTS_MEASURED_NOT_A_DOMAIN_QUALIFICATION"
+            or declaration["protocol"] != "native_one_body_experimental_velocity_heading_hold.v2"
+            or len(point_report["records"]) != 16
+            or not all(
+                r["point_feasible"] and r["no_ball_contact"] for r in point_report["records"]
+            )
+            or not all(
+                all(r["fresh_reexecution_exact"].values())
+                for r in point_report["records"]
+                if r["repeat"]
+            )
+        ):
+            raise ValueError("all preregistered heading-held native points must have passed")
+        pins[str(path)] = approach_config["point_hash"]
+        for key, value in point_report["input_file_hashes"].items():
+            if key in pins and pins[key] != value:
+                raise ValueError("conflicting native locomotion ancestry")
+            pins[key] = value
+        for row in point_report["records"]:
+            path = point_root / row["artifact"]["path"]
+            if (
+                path.parent.resolve() != point_root.resolve()
+                or path.is_symlink()
+                or digest(path) != row["artifact"]["hash"]
+            ):
+                raise ValueError("exact confined point-qualification arrays required")
+            pins[str(path)] = row["artifact"]["hash"]
+        path = Path(approach_config["reference_source"])
+        if path.is_symlink() or digest(path) != approach_config["reference_hash"]:
+            raise ValueError("exact upstream training reference required")
+        pins[str(path)] = approach_config["reference_hash"]
     source_pins(pins)
     check_pins(pins)
     from rosclaw_soccer.training.native_team_courses import native_team_course_bank
@@ -282,7 +342,12 @@ def main():
     import numpy as np
     from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
 
+    from rosclaw_soccer.providers.g1 import experimental_velocity_envelope as envelope_module
     from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
+    from rosclaw_soccer.providers.g1.experimental_velocity_envelope import (
+        ExperimentalVelocityEnvelopeStream,
+    )
+    from rosclaw_soccer.rsi.experimental_approach_command import experimental_approach_command
     from rosclaw_soccer.rsi.native_foot_contact_teacher import (
         FootContactTeacherConfig,
         NativeFootContactTeacher,
@@ -302,6 +367,15 @@ def main():
     )
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
     from rosclaw_soccer.sim.contracts import hash_json
+
+    if approach_config is not None:
+        verified_codec_hashes = {
+            v
+            for k, v in point_report["input_file_hashes"].items()
+            if k.endswith("/providers/g1/experimental_velocity_envelope.py")
+        }
+        if verified_codec_hashes != {digest(Path(envelope_module.__file__))}:
+            raise ValueError("exact experimentally measured observation/actor codec required")
 
     teacher_parameters = (
         None if teacher_config is None else FootContactTeacherConfig(**teacher_config["parameters"])
@@ -336,11 +410,15 @@ def main():
         arms = ("role-foot-clearance", "role-command-residual")
     if teacher_config is not None:
         arms = ("role-foot-clearance", "role-foot-contact-teacher")
+    if approach_config is not None:
+        arms = ("role-foot-clearance", "role-experimental-approach", "role-foot-contact-teacher")
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="native8_single_player_foot_contact_teacher.v9"
+            protocol="native8_single_player_accelerated_approach_contact.v10"
+            if approach_config is not None
+            else "native8_single_player_foot_contact_teacher.v9"
             if teacher_config is not None
             else "native8_single_player_role_residual_contrast.v8"
             if a.residual_agent is not None
@@ -359,6 +437,17 @@ def main():
             residual_active_agent=a.residual_agent,
             foot_contact_teacher=teacher_config,
             foot_contact_config_hash=a.foot_contact_config_hash,
+            experimental_approach_config=approach_config,
+            experimental_approach_config_hash=a.experimental_approach_config_hash,
+            approach_nominal_teacher_history_is_own_previous_proposal=approach_config is not None,
+            approach_experimental_speed_norm_mps=2.0 if approach_config is not None else None,
+            approach_slew_per_body_component_per_control=0.08
+            if approach_config is not None
+            else None,
+            foot_tracking_slew_describes_nominal_teacher=approach_config is not None,
+            experimental_axis_points_do_not_qualify_the_full_command_domain=True
+            if approach_config is not None
+            else None,
             gait_previous_action_is_previous_base_network_output=teacher_config is not None,
             unselected_players_receive_no_learned_residual=a.residual_agent is not None,
             input_file_hashes=pins,
@@ -429,16 +518,31 @@ def main():
             for repeat in (0, 1):
                 m = mujoco.MjModel.from_xml_string(xml)
                 d = mujoco.MjData(m)
-                streams = {
-                    prefix: ContinuousVelocityStream(
-                        models[0],
-                        configs[0],
+                streams = {}
+                for prefix in prefixes:
+                    stream_kwargs = dict(
                         expected_model_hash=pins[str(models[0])],
                         expected_config_hash=pins[str(configs[0])],
                         horizon_controls=horizon,
                     )
-                    for prefix in prefixes
-                }
+                    if (
+                        approach_config is not None
+                        and prefix == "red_finisher/"
+                        and arm != "role-foot-clearance"
+                    ):
+                        streams[prefix] = ExperimentalVelocityEnvelopeStream(
+                            models[0],
+                            configs[0],
+                            reference_source=Path(approach_config["reference_source"]),
+                            expected_reference_hash=approach_config["reference_hash"],
+                            **stream_kwargs,
+                        )
+                    else:
+                        streams[prefix] = ContinuousVelocityStream(
+                            models[0],
+                            configs[0],
+                            **stream_kwargs,
+                        )
                 if len({id(x.last_action) for x in streams.values()}) != 8:
                     raise ValueError("all8 private action memories required")
                 layouts, params = {}, {}
@@ -496,6 +600,7 @@ def main():
                 }
                 touched = np.zeros(8, np.bool_)
                 previous_world_commands = np.zeros((8, 2))
+                previous_nominal_world_commands = np.zeros((8, 2))
                 previous_body_commands = np.zeros((8, 3), np.float32)
                 command_policy = None
                 residual_policy = None
@@ -610,6 +715,19 @@ def main():
                             )
                         }
                     )
+                approach_keys = (
+                    "parent_commands",
+                    "parent_history_world_commands",
+                    "raw_commands",
+                    "slewed_commands",
+                    "scale",
+                    "active",
+                    "feasible",
+                    "projection_changed",
+                    "parent_fallback",
+                )
+                if approach_config is not None:
+                    controls.update({"approach_" + k: [] for k in approach_keys})
                 for frame in range(horizon):
                     if a.foot_track_course:
                         metric.qpos[:] = d.qpos
@@ -623,6 +741,7 @@ def main():
                     clearance_feasible, clearance_constrained = [], []
                     role_observations, role_actor_commands = [], []
                     residual_values = {key: [] for key in residual_keys}
+                    approach_values = {key: [] for key in approach_keys}
                     if (
                         residual_policy is not None
                         and arm == "role-command-residual"
@@ -650,6 +769,7 @@ def main():
                                 "role-foot-clearance",
                                 "role-command-residual",
                                 "role-foot-contact-teacher",
+                                "role-experimental-approach",
                             )
                             and role == "finisher"
                         ):
@@ -674,6 +794,7 @@ def main():
                                     "role-foot-clearance",
                                     "role-command-residual",
                                     "role-foot-contact-teacher",
+                                    "role-experimental-approach",
                                 )
                                 else 0.8,
                             )
@@ -685,6 +806,7 @@ def main():
                                 "role-foot-clearance",
                                 "role-command-residual",
                                 "role-foot-contact-teacher",
+                                "role-experimental-approach",
                             )
                             and role == "finisher"
                             and frame >= 50
@@ -696,7 +818,9 @@ def main():
                                 metric.xpos[feet[prefix], :2].copy(),
                                 ball_xy,
                                 d.qvel[lo.bv : lo.bv + 2].copy(),
-                                previous_world_commands[agent_index],
+                                previous_nominal_world_commands[agent_index]
+                                if approach_config is not None
+                                else previous_world_commands[agent_index],
                             )
                         if command_policy is not None:
                             observation = role_command_observation(
@@ -719,6 +843,7 @@ def main():
                                 "role-command-learned",
                                 "role-command-residual",
                                 "role-foot-contact-teacher",
+                                "role-experimental-approach",
                             )
                             and frame >= 50
                         ):
@@ -799,6 +924,53 @@ def main():
                                 residual_values[key].append(value)
                         clearance_feasible.append(feasible)
                         clearance_constrained.append(constrained)
+                        if approach_config is not None:
+                            parent_command = command.copy()
+                            parent_history = previous_nominal_world_commands[agent_index].copy()
+                            parent_c, parent_s = math.cos(yaw), math.sin(yaw)
+                            previous_nominal_world_commands[agent_index] = [
+                                parent_c * command[0] - parent_s * command[1],
+                                parent_s * command[0] + parent_c * command[1],
+                            ]
+                            effect_active = (
+                                prefix == "red_finisher/"
+                                and arm != "role-foot-clearance"
+                                and frame >= 50
+                            )
+                            effect = dict(
+                                raw_command=command.astype(np.float64),
+                                slewed_command=command.astype(np.float64),
+                                scale=1.0,
+                                feasible=True,
+                                projection_changed=False,
+                                parent_fallback=False,
+                            )
+                            if effect_active:
+                                effect = experimental_approach_command(
+                                    command,
+                                    previous_body_commands[agent_index],
+                                    root_xy=q[:2].copy(),
+                                    ball_xy=ball_xy.copy(),
+                                    yaw=yaw,
+                                    neighbor_offsets=neighbors,
+                                )
+                                command = effect["command"]
+                            for key, value in zip(
+                                approach_keys,
+                                (
+                                    parent_command,
+                                    parent_history,
+                                    effect["raw_command"],
+                                    effect["slewed_command"],
+                                    effect["scale"],
+                                    effect_active,
+                                    effect["feasible"],
+                                    effect["projection_changed"],
+                                    effect["parent_fallback"],
+                                ),
+                                strict=True,
+                            ):
+                                approach_values[key].append(value)
                         previous_body_commands[agent_index] = command
                         c, s = math.cos(yaw), math.sin(yaw)
                         previous_world_commands[agent_index] = [
@@ -850,6 +1022,9 @@ def main():
                     if residual_policy is not None:
                         for key in residual_keys:
                             controls[key].append(residual_values[key])
+                    if approach_config is not None:
+                        for key in approach_keys:
+                            controls["approach_" + key].append(approach_values[key])
                     step = w.advance(targets)
                     charged += 10
                     for key in raw:
@@ -955,14 +1130,14 @@ def main():
                             teacher_parent_identity = {
                                 k: bool(np.array_equal(v, original[k]))
                                 for k, v in arrays.items()
-                                if not k.startswith("teacher_")
+                                if not k.startswith(("teacher_", "approach_"))
                             }
                     elif teacher_parameters.strength == 0:
                         with np.load(a.output / f"role-foot-clearance-{repeat}.npz") as original:
                             teacher_parent_identity = {
                                 k: bool(np.array_equal(v, original[k]))
                                 for k, v in arrays.items()
-                                if not k.startswith("teacher_")
+                                if not k.startswith(("teacher_", "approach_"))
                             }
                     if teacher_parent_identity is not None and not all(
                         teacher_parent_identity.values()
@@ -970,6 +1145,50 @@ def main():
                         raise ValueError(
                             "teacher measurement or zero strength changed parent physics"
                         )
+                approach_authority = None
+                if approach_config is not None:
+                    selected_index = prefixes.index("red_finisher/")
+                    mask = np.zeros((w.control_steps, 8), np.bool_)
+                    if arm != "role-foot-clearance":
+                        mask[50:, selected_index] = True
+                    others = [i for i in range(8) if i != selected_index]
+                    actual = arrays["commands"]
+                    nonfallback = mask & ~arrays["approach_parent_fallback"]
+                    slew = actual - np.concatenate((np.zeros((1, 8, 3), np.float32), actual[:-1]))
+                    approach_authority = dict(
+                        only_selected_controller_active=bool(
+                            np.array_equal(arrays["approach_active"], mask)
+                        ),
+                        unselected_seven_commands_exact_parent=bool(
+                            np.array_equal(
+                                actual[:, others].view(np.uint32),
+                                arrays["approach_parent_commands"][:, others].view(np.uint32),
+                            )
+                        ),
+                        actual_experimental_domain_pass=bool(
+                            np.all(
+                                (actual[:, selected_index, 0] >= -1)
+                                & (actual[:, selected_index, 0] <= 2)
+                            )
+                            and np.all(abs(actual[:, selected_index, 1:]) <= 1)
+                            and np.all(
+                                np.linalg.norm(actual[:, selected_index, :2], axis=1) <= 2 + 1e-6
+                            )
+                        ),
+                        nonfallback_slew_pass=bool(
+                            not nonfallback.any() or np.max(abs(slew[nonfallback])) <= 0.08 + 1e-6
+                        ),
+                        explicit_parent_fallback=bool(
+                            np.array_equal(
+                                actual[arrays["approach_parent_fallback"]],
+                                arrays["approach_parent_commands"][
+                                    arrays["approach_parent_fallback"]
+                                ],
+                            )
+                        ),
+                    )
+                    if not all(approach_authority.values()):
+                        raise ValueError("actual experimental approach authority or scope changed")
                 isolated_identity = None
                 if a.residual_agent is not None and residual_policy is not None:
                     selected = np.array(
@@ -1132,6 +1351,8 @@ def main():
                     isolated_player_identity=isolated_identity,
                     teacher_target_authority=teacher_identity,
                     teacher_parent_identity=teacher_parent_identity,
+                    experimental_approach_authority=approach_authority,
+                    gait_profile_hashes={p: str(s.contract_hash) for p, s in streams.items()},
                     teacher_active_controls=int(arrays["teacher_active"].sum())
                     if contact_teacher is not None
                     else 0,
@@ -1153,7 +1374,9 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="NATIVE8_CONTACT_TEACHER_AUTHORITY_MEASURED_NOT_LEARNED"
+                status="NATIVE8_ACCELERATED_APPROACH_CONTACT_MEASURED_NOT_LEARNED"
+                if approach_config is not None
+                else "NATIVE8_CONTACT_TEACHER_AUTHORITY_MEASURED_NOT_LEARNED"
                 if teacher_config is not None
                 else "NATIVE8_LEARNED_ROLE_COMMANDS_MEASURED_NOT_A_MATCH"
                 if trained is not None

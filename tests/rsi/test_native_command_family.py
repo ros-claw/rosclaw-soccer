@@ -20,6 +20,7 @@ import pytest
         "rsi_probe_native_team_intent.py",
         "rsi_run_native_contact_authority.py",
         "rsi_probe_experimental_velocity_envelope.py",
+        "rsi_run_accelerated_approach_contact.py",
     ],
 )
 def test_command_family_bootstrap_does_not_train_or_allocate_physics(script, tmp_path, monkeypatch):
@@ -68,3 +69,23 @@ def test_single_player_scope_requires_explicit_residual_before_allocation():
     )
     assert result.returncode == 2
     assert "single-player residual scope requires an explicit residual head" in result.stderr
+
+
+def test_experimental_approach_does_not_accept_a_bare_flag_or_unbound_physics():
+    command = [sys.executable, "-m", "scripts.rsi_probe_native_team_intent"]
+    for key in (
+        "parent",
+        "own",
+        "core-source-root",
+        "output",
+        "parent-hash",
+        "own-hash",
+        "core-expected-head",
+        "expected-head",
+    ):
+        command += ["--" + key, "unused"]
+    result = subprocess.run(
+        command + ["--experimental-approach-config", "unused"], capture_output=True, text=True
+    )
+    assert result.returncode == 2
+    assert "experimental approach requires exact config" in result.stderr
