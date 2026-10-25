@@ -14,7 +14,7 @@ def main():
     p.add_argument("--shard-root", type=Path, nargs=4, required=True)
     p.add_argument(
         "--interface",
-        choices=("measured-pose", "foundation-increment", "precontact-sparse"),
+        choices=("measured-pose", "foundation-increment", "precontact-sparse", "nn-outcome"),
         default="measured-pose",
     )
     a = p.parse_args()
@@ -26,7 +26,12 @@ def main():
     if a.output.exists() or digest(a.qualification) != a.qualification_hash:
         raise ValueError("unused pilot output and exact measured-G1 qualification required")
     qualification = json.loads(a.qualification.read_text())
-    if qualification["status"] != "ACTUAL_G1_MATERIAL_POINT_HG29_DERIVATIVES_VERIFIED":
+    required = (
+        "G1_COPIED_NN_CLOSED_LOOP_64_CONTROL_FORECASTS_EXACT"
+        if a.interface == "nn-outcome"
+        else "ACTUAL_G1_MATERIAL_POINT_HG29_DERIVATIVES_VERIFIED"
+    )
+    if qualification["status"] != required:
         raise ValueError("actual body derivative prerequisite missing")
     pins = dict(qualification["input_file_hashes"])
     pins[str(a.qualification)] = a.qualification_hash
@@ -54,6 +59,7 @@ def main():
 
     from rosclaw_soccer.rsi.experimental_velocity_evidence import admit_heading_evidence
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+    from rosclaw_soccer.rsi.outcome_forecast_kick_player import OutcomeForecastKickPlayer
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
     from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
     from rosclaw_soccer.rsi.task_space_kick_player import TaskSpaceKickPlayer
@@ -95,7 +101,9 @@ def main():
     preflight_receiving_courses(courses)
     instances = []
 
-    class Controlled(TaskSpaceKickPlayer):
+    parent_type = OutcomeForecastKickPlayer if a.interface == "nn-outcome" else TaskSpaceKickPlayer
+
+    class Controlled(parent_type):
         foundation_relative = a.interface != "measured-pose"
         precontact_sparse = a.interface == "precontact-sparse"
 
@@ -107,7 +115,7 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="soccer.g2.bounded_surface_contact_pilot.v2",
+            protocol="soccer.g2.bounded_contact_authority_pilot.v3",
             interface=a.interface,
             freeze_inadmissible_parent_joints=a.interface == "precontact-sparse",
             end_alignment_after_actual_first_foot=a.interface == "precontact-sparse",
@@ -117,24 +125,31 @@ def main():
             arms=["B", "C"],
             actual_world_ceiling=32,
             actual_native_step_ceiling=115200,
-            forecast_native_step_ceiling=172800,
-            candidate_set=[
+            forecast_native_step_ceiling=133120 if a.interface == "nn-outcome" else 172800,
+            forecast_controls_per_candidate=64 if a.interface == "nn-outcome" else 1,
+            candidate_set=["parent", "one_admissible_pitch_joint_0_3_4_6_9_10_plusminus_0.03"]
+            if a.interface == "nn-outcome"
+            else [
                 "original",
                 "foot_nominal_plus_shin_clearance",
                 "foot_contact_alignment_plus_shin_clearance",
             ],
-            active_joints=list(range(12)),
-            max_nominal_delta_rad=0.12,
+            active_joints=[0, 3, 4, 6, 9, 10] if a.interface == "nn-outcome" else list(range(12)),
+            max_nominal_delta_rad=0.03 if a.interface == "nn-outcome" else 0.12,
             max_current_delta_rad=0.2 if a.interface == "measured-pose" else None,
             max_command_step_rad=0.1 if a.interface == "measured-pose" else None,
             candidate_increment_step_cap_rad=0.03 if a.interface != "measured-pose" else None,
             fallback_to_parent_resets_increment=True,
-            foot_shin_cost=100.0,
-            posture_cost=0.1,
-            shin_margin_m=0.015,
-            maximum_retreat_m=0.04,
-            contact_alignment_correction_m=[0.02, 0.03, 0.015],
-            activation_foot_gap_m=0.18,
+            foot_shin_cost=None if a.interface == "nn-outcome" else 100.0,
+            posture_cost=None if a.interface == "nn-outcome" else 0.1,
+            shin_margin_m=None if a.interface == "nn-outcome" else 0.015,
+            maximum_retreat_m=None if a.interface == "nn-outcome" else 0.04,
+            contact_alignment_correction_m=None
+            if a.interface == "nn-outcome"
+            else [0.02, 0.03, 0.015],
+            activation_foot_gap_m=0.06 if a.interface == "nn-outcome" else 0.18,
+            maximum_actual_interventions_per_world=1 if a.interface == "nn-outcome" else None,
+            candidate_selection_requires_observed_window_rescue=a.interface == "nn-outcome",
             no_model_or_gain_changes=True,
             privileged_per_course_approach=True,
             original_exam_unchanged=True,
@@ -151,7 +166,7 @@ def main():
             ),
         ),
     )
-    results, worlds, native, forecasts = [], 0, 0, 0
+    results, worlds, native, forecasts, forecast_attempted = [], 0, 0, 0, 0
     for index in indices:
         folder = a.output / f"course-{index:02d}"
         folder.mkdir()
@@ -201,11 +216,18 @@ def main():
                     raise ValueError("one private local controller required")
                 controller = instances[0]
                 for frame, prediction in controller.selected_records:
+                    predicted_controls = prediction.get("controls", 1)
                     for key in ("qpos", "qvel", "torque", "ball_forces"):
                         if not np.array_equal(
-                            prediction[key], arrays[key][frame * 10 : (frame + 1) * 10]
+                            prediction[key],
+                            arrays[key][frame * 10 : (frame + predicted_controls) * 10],
                         ):
                             raise ValueError("chosen prediction differs at native substeps: " + key)
+                    if a.interface == "nn-outcome" and not np.array_equal(
+                        prediction["joint_targets"],
+                        arrays["joint_targets"][frame : frame + predicted_controls],
+                    ):
+                        raise ValueError("selected future NN targets differ from actual branch")
                 row["controller_events"] = controller.events
                 if a.interface == "precontact-sparse":
                     first_foot = row["outcome"]["first_foot_contact_frame"]
@@ -216,13 +238,45 @@ def main():
                 row["changed_controls"] = controller.changed_controls
                 row["forecasts"] = controller.forecaster.counters()
                 forecasts += controller.forecaster.integrated_steps
+                forecast_attempted += controller.forecaster.attempted_steps
+                if a.interface == "nn-outcome":
+                    if controller.changed_controls > 1:
+                        raise ValueError("one-intervention protocol exceeded")
+                    saved = []
+                    for i, (name, prediction) in enumerate(controller.candidate_predictions):
+                        forecast_file = folder / f"C-forecast-{i:02d}.npz"
+                        np.savez_compressed(
+                            forecast_file,
+                            **{
+                                k: prediction[k]
+                                for k in (
+                                    "qpos",
+                                    "qvel",
+                                    "torque",
+                                    "ball_forces",
+                                    "joint_targets",
+                                    "policy_ticks",
+                                )
+                            },
+                        )
+                        saved.append(
+                            dict(
+                                name=name,
+                                artifact=dict(path=forecast_file.name, hash=digest(forecast_file)),
+                                donor_control_frame=prediction["donor_control_frame"],
+                                controls=prediction["controls"],
+                                requested_controls=prediction["requested_controls"],
+                            )
+                        )
+                    row["candidate_forecasts"] = saved
                 if controller.changed_controls == 0:
                     with np.load(
                         original_paths[index].parent / original["artifact"]["path"]
                     ) as old:
                         if any(not np.array_equal(old[k], v) for k, v in arrays.items()):
                             raise ValueError("zero/off branch altered the legacy trajectory")
-            if worlds > 32 or native > 115200 or forecasts > 172800:
+            forecast_cap = 133120 if a.interface == "nn-outcome" else 172800
+            if worlds > 32 or native > 115200 or forecast_attempted > forecast_cap:
                 raise ValueError("frozen physical budget exceeded")
             artifact = folder / f"{arm}.npz"
             np.savez_compressed(artifact, **arrays)
@@ -277,6 +331,7 @@ def main():
             actual_worlds=worlds,
             actual_native_steps=native,
             forecast_native_steps=forecasts,
+            forecast_attempted_native_steps=forecast_attempted,
             rescues=rescues,
             regressions=regressions,
             qualified_for_expansion=len(rescues) >= 2 and not regressions,
