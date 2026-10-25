@@ -61,3 +61,25 @@ def test_start_order_is_not_completion_of_simple_service():
     assert producer_finished(dict(ActiveState="inactive", MainPID="0", Result="success", Job=""))
     with pytest.raises(ValueError, match="failed producer"):
         producer_finished(dict(ActiveState="failed", MainPID="0", Result="exit-code"))
+
+
+def test_expanded_cohort_cannot_mix_banks_or_relax_baseline(tmp_path):
+    paths = roots(tmp_path)
+    for i, path in enumerate(paths):
+        rp = path / "complete.json"
+        r = json.loads(rp.read_text())
+        r.update(
+            status="PUBLIC40_TEACHER_CEM_SHARD_MEASURED_NOT_TRAINED",
+            expanded_public_bank=True,
+            baseline_uses_original_strict_codec=True,
+            worlds=190,
+            results=[dict(course_index=k) for k in range(i, 40, 4)],
+        )
+        rp.write_text(json.dumps(r))
+    assert closed_shard_arguments(paths, "frozen").count("--shard") == 4
+    rp = paths[0] / "complete.json"
+    r = json.loads(rp.read_text())
+    r["baseline_uses_original_strict_codec"] = False
+    rp.write_text(json.dumps(r))
+    with pytest.raises(ValueError):
+        closed_shard_arguments(paths, "frozen")

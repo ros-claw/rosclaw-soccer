@@ -75,23 +75,37 @@ def closed_shard_arguments(roots, producer_head):
         raise ValueError("four unique declared roots required")
     args = []
     fast_mode = None
+    expanded_mode = None
     for i, root in enumerate(roots):
         path = root / "complete.json"
         if root.is_symlink() or path.is_symlink() or not path.is_file():
             raise ValueError("missing closed shard; no physics restart authorized")
         report = json.loads(path.read_text())
         fast = report.get("experimental_fast_approach", False)
+        expanded = report.get("expanded_public_bank", False)
+        count = 40 if expanded else 16
         if (
             report["source_head"] != producer_head
-            or report["status"] != "PUBLIC16_TEACHER_CEM_SHARD_MEASURED_NOT_TRAINED"
-            or report["worlds"] != 76
+            or report["status"]
+            != (
+                "PUBLIC40_TEACHER_CEM_SHARD_MEASURED_NOT_TRAINED"
+                if expanded
+                else "PUBLIC16_TEACHER_CEM_SHARD_MEASURED_NOT_TRAINED"
+            )
+            or report["worlds"] != (count // 4) * 19
             or report["promotion_authorized"] is not False
-            or [r["course_index"] for r in report["results"]] != list(range(i, 16, 4))
+            or [r["course_index"] for r in report["results"]] != list(range(i, count, 4))
+            or type(expanded) is not bool
+            or (expanded_mode is not None and expanded is not expanded_mode)
+            or (
+                expanded and (not fast or report["baseline_uses_original_strict_codec"] is not True)
+            )
             or type(fast) is not bool
             or (fast_mode is not None and fast != fast_mode)
         ):
             raise ValueError("entire immutable producer cohort required before audit")
         fast_mode = fast
+        expanded_mode = expanded
         args.extend(["--shard", str(root), file_hash(path)])
     return args
 

@@ -27,19 +27,34 @@ def teacher_courses() -> tuple[FirstTouchCourse, ...]:
     return rows
 
 
-def search_bounds(*, experimental_fast: bool = False) -> np.ndarray:
-    if type(experimental_fast) is not bool:
+def search_course_bank(*, expanded_public: bool = False) -> tuple[FirstTouchCourse, ...]:
+    if type(expanded_public) is not bool:
+        raise ValueError("explicit course protocol required")
+    if expanded_public:
+        from rosclaw_soccer.rsi.walk_kick_hybrid_teacher import expanded_validation_courses
+
+        # Already consumed validation states become PUBLIC OPTIMIZATION states.
+        return expanded_validation_courses()
+    return teacher_courses()
+
+
+def search_bounds(*, experimental_fast: bool = False, expanded_public: bool = False) -> np.ndarray:
+    if type(experimental_fast) is not bool or type(expanded_public) is not bool:
         raise ValueError("explicit experimental domain switch required")
+    if expanded_public and not experimental_fast:
+        raise ValueError("expanded search requires separately bound experimental velocity")
     bounds = BOUNDS.copy()
     if experimental_fast:
-        bounds[0] = (1.0, 2.0)
+        bounds[0] = (0.5 if expanded_public else 1.0, 2.0)
     return bounds
 
 
-def uniform_candidates(seed: int, *, experimental_fast: bool = False) -> np.ndarray:
+def uniform_candidates(
+    seed: int, *, experimental_fast: bool = False, expanded_public: bool = False
+) -> np.ndarray:
     if type(seed) is not int or not 0 <= seed < 2**32:
         raise ValueError("uint32 search seed required")
-    bounds = search_bounds(experimental_fast=experimental_fast)
+    bounds = search_bounds(experimental_fast=experimental_fast, expanded_public=expanded_public)
     return np.random.default_rng(seed).uniform(bounds[:, 0], bounds[:, 1], size=(8, 4))
 
 
@@ -49,6 +64,7 @@ def elite_candidates(
     *,
     seed: int,
     experimental_fast: bool = False,
+    expanded_public: bool = False,
 ) -> np.ndarray:
     """Second and final CEM generation, two elites, bounded conditional normal.
 
@@ -56,7 +72,7 @@ def elite_candidates(
     This is privileged offline simulation search, not a deployment policy.
     """
     x = np.asarray(first)
-    bounds = search_bounds(experimental_fast=experimental_fast)
+    bounds = search_bounds(experimental_fast=experimental_fast, expanded_public=expanded_public)
     if (
         x.shape != (8, 4)
         or not np.isfinite(x).all()
@@ -83,9 +99,11 @@ def elite_candidates(
     raise ValueError("bounded conditional sampler exhausted before physical allocation")
 
 
-def candidate_parameters(row: np.ndarray, *, experimental_fast: bool = False) -> dict[str, Any]:
+def candidate_parameters(
+    row: np.ndarray, *, experimental_fast: bool = False, expanded_public: bool = False
+) -> dict[str, Any]:
     x = np.asarray(row)
-    bounds = search_bounds(experimental_fast=experimental_fast)
+    bounds = search_bounds(experimental_fast=experimental_fast, expanded_public=expanded_public)
     if (
         x.shape != (4,)
         or not np.isfinite(x).all()

@@ -8,6 +8,7 @@ from rosclaw_soccer.rsi.walk_kick_teacher_plan import (
     elite_candidates,
     outcome_rank,
     search_bounds,
+    search_course_bank,
     teacher_courses,
     uniform_candidates,
 )
@@ -85,3 +86,28 @@ def test_experimental_domain_is_explicit_and_does_not_mutate_old_search():
     assert candidate_parameters(fast[0], experimental_fast=True)["speed_mps"] > 1
     second = elite_candidates(fast, tuple((i,) for i in range(8)), seed=43, experimental_fast=True)
     assert (second[:, 0] >= 1).all() and (second[:, 0] <= 2).all()
+
+
+def test_expanded_optimization_reuses_consumed40_but_has_new_explicit_bounds():
+    from rosclaw_soccer.rsi.walk_kick_hybrid_teacher import expanded_validation_courses
+
+    courses = search_course_bank(expanded_public=True)
+    assert courses == expanded_validation_courses() and len(courses) == 40
+    assert len(search_course_bank()) == 16
+    with pytest.raises(ValueError):
+        search_bounds(expanded_public=True)
+    broad = search_bounds(experimental_fast=True, expanded_public=True)
+    assert broad[0].tolist() == [0.5, 2.0]
+    first = uniform_candidates(42, experimental_fast=True, expanded_public=True)
+    second = elite_candidates(
+        first, tuple((i,) for i in range(8)), seed=43, experimental_fast=True, expanded_public=True
+    )
+    for vector in np.concatenate((first, second)):
+        assert (
+            0.5
+            <= candidate_parameters(vector, experimental_fast=True, expanded_public=True)[
+                "speed_mps"
+            ]
+            <= 2
+        )
+    assert search_bounds(experimental_fast=True)[0].tolist() == [1.0, 2.0]

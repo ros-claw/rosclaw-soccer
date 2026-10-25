@@ -29,13 +29,20 @@ def main():
         candidate_parameters,
         elite_candidates,
         outcome_rank,
-        teacher_courses,
+        search_course_bank,
         uniform_candidates,
     )
     from rosclaw_soccer.sim.contracts import hash_json
     from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
 
-    courses = teacher_courses()
+    first_path = Path(a.shard[0][0]) / "complete.json"
+    if first_path.is_symlink() or digest(first_path) != a.shard[0][1]:
+        raise ValueError("exact first shard required before selecting protocol")
+    first_report = json.loads(first_path.read_text())
+    expanded = first_report.get("expanded_public_bank", False)
+    if type(expanded) is not bool:
+        raise ValueError("explicit public optimization bank protocol required")
+    courses = search_course_bank(expanded_public=expanded)
     bank_hash = preflight_receiving_courses(courses)
     pins, summaries, seen = {}, [], set()
     model_layout = None
@@ -52,10 +59,18 @@ def main():
             raise ValueError("one explicit velocity-domain protocol across all shards required")
         experimental_fast = fast
         if (
-            shard["status"] != "PUBLIC16_TEACHER_CEM_SHARD_MEASURED_NOT_TRAINED"
+            shard["status"]
+            != (
+                "PUBLIC40_TEACHER_CEM_SHARD_MEASURED_NOT_TRAINED"
+                if expanded
+                else "PUBLIC16_TEACHER_CEM_SHARD_MEASURED_NOT_TRAINED"
+            )
+            or shard.get("expanded_public_bank", False) is not expanded
+            or (expanded and (not fast or shard["baseline_uses_original_strict_codec"] is not True))
             or shard["course_bank_hash"] != bank_hash
-            or [r["course_index"] for r in shard["results"]] != list(range(shard_index, 16, 4))
-            or shard["worlds"] != 76
+            or [r["course_index"] for r in shard["results"]]
+            != list(range(shard_index, len(courses), 4))
+            or shard["worlds"] != (len(courses) // 4) * 19
             or shard["promotion_authorized"] is not False
         ):
             raise ValueError("whole declared shard with no outcome omission required")
@@ -103,7 +118,13 @@ def main():
                 if rp.is_symlink() or digest(rp) != summary["raw_record_hashes"][record_name]:
                     raise ValueError("exact original physical record required")
                 row = json.loads(rp.read_text())
-                if row.get("experimental_fast_approach", False) != fast:
+                strict_baseline = expanded and (
+                    record_name in ("baseline", "baseline-reexecution")
+                    or (record_name == "selected-reexecution" and summary["selected"] == "baseline")
+                )
+                if row.get("experimental_fast_approach", False) != (
+                    False if strict_baseline else fast
+                ):
                     raise ValueError("record domain differs from campaign")
                 artifact = course_root / row["artifact"]["path"]
                 if (
@@ -147,16 +168,19 @@ def main():
                 pins[str(rp)] = summary["raw_record_hashes"][record_name]
                 pins[str(artifact)] = row["artifact"]["hash"]
                 total_steps += row["native_steps"]
-            first = uniform_candidates(c.seed, experimental_fast=fast)
+            first = uniform_candidates(c.seed, experimental_fast=fast, expanded_public=expanded)
             second = elite_candidates(
                 first,
                 tuple(outcome_rank(rows[f"candidate-{i:02d}"]) for i in range(8)),
                 seed=c.seed + 1000,
                 experimental_fast=fast,
+                expanded_public=expanded,
             )
             for i, vector in enumerate(np.concatenate((first, second))):
                 if rows[f"candidate-{i:02d}"]["parameters"] != candidate_parameters(
-                    vector, experimental_fast=fast
+                    vector,
+                    experimental_fast=fast,
+                    expanded_public=expanded,
                 ):
                     raise ValueError("search differs from frozen two-generation rule")
             selected = max(names[:17], key=lambda n: outcome_rank(rows[n]))
@@ -192,8 +216,8 @@ def main():
                     per_state_privileged_oracle=True,
                 )
             )
-    if seen != set(range(16)):
-        raise ValueError("complete balanced sixteen-state bank required")
+    if seen != set(range(len(courses))):
+        raise ValueError("complete balanced declared state bank required")
     source_pins(pins)
     check_pins(pins)
     clean(a.expected_head)
@@ -205,13 +229,17 @@ def main():
     write_once(
         a.output,
         dict(
-            status="PUBLIC16_CEM_ALL304_RAW_LABELS_AND_REEXECUTION_AUTHENTICATED_NOT_PROMOTED",
+            status="PUBLIC40_CEM_ALL760_RAW_LABELS_AND_REEXECUTION_AUTHENTICATED_NOT_PROMOTED"
+            if expanded
+            else "PUBLIC16_CEM_ALL304_RAW_LABELS_AND_REEXECUTION_AUTHENTICATED_NOT_PROMOTED",
+            expanded_public_bank=expanded,
+            baseline_uses_original_strict_codec=expanded or not experimental_fast,
             experimental_fast_approach=experimental_fast,
             source_head=a.expected_head,
             input_file_hashes=pins,
             course_bank_hash=bank_hash,
             results=summaries,
-            worlds=304,
+            worlds=len(courses) * 19,
             native_steps=total_steps,
             baseline_passes=sum(passes(r, "baseline") for r in summaries),
             per_state_oracle_passes=sum(passes(r, "selected") for r in summaries),

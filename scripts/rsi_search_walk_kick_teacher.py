@@ -14,10 +14,13 @@ def main():
     p.add_argument("--shard", type=int, choices=range(4), required=True)
     p.add_argument("--experimental-approach-config", type=Path)
     p.add_argument("--experimental-approach-config-hash")
+    p.add_argument("--expanded-public-bank", action="store_true")
     a = p.parse_args()
     if (a.experimental_approach_config is None) != (a.experimental_approach_config_hash is None):
         p.error("explicit experimental config and hash must be provided together")
-    from rosclaw_soccer.rsi.walk_kick_teacher_plan import teacher_courses
+    if a.expanded_public_bank and a.experimental_approach_config is None:
+        p.error("expanded public40 search requires explicit experimental locomotion evidence")
+    from rosclaw_soccer.rsi.walk_kick_teacher_plan import search_course_bank
     from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -25,8 +28,11 @@ def main():
     from scripts.rsi_probe_walk_to_kick import authenticated_case_pins
 
     clean(a.expected_head)
-    courses = teacher_courses()
-    bank_hash = preflight_receiving_courses(courses)  # ENTIRE16 before any NN/model allocation
+    expanded = a.expanded_public_bank
+    courses = search_course_bank(expanded_public=expanded)
+    bank_hash = preflight_receiving_courses(courses)  # ENTIRE bank before any NN/model allocation
+    indices = list(range(a.shard, len(courses), 4))
+    maximum_worlds = len(indices) * 19
     path = a.source / "complete.json"
     if a.output.exists() or path.is_symlink() or digest(path) != a.source_hash:
         raise ValueError("new output and exact completed source required")
@@ -98,9 +104,16 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="soccer.public16_walk_kick_teacher_fast_cem.v2"
-            if fast
-            else "soccer.public16_walk_kick_teacher_cem.v1",
+            protocol="soccer.public40_walk_kick_teacher_broad_cem.v3"
+            if expanded
+            else (
+                "soccer.public16_walk_kick_teacher_fast_cem.v2"
+                if fast
+                else "soccer.public16_walk_kick_teacher_cem.v1"
+            ),
+            expanded_public_bank=expanded,
+            baseline_uses_original_strict_codec=expanded or not fast,
+            previously_consumed_validation_relabelled_optimization=expanded,
             experimental_fast_approach=fast,
             source_head=a.expected_head,
             input_file_hashes=pins,
@@ -110,8 +123,10 @@ def main():
                 for i, c in enumerate(courses)
             ],
             shard=a.shard,
-            assigned_indices=list(range(a.shard, 16, 4)),
-            candidate_bounds=search_bounds(experimental_fast=fast).tolist(),
+            assigned_indices=indices,
+            candidate_bounds=search_bounds(
+                experimental_fast=fast, expanded_public=expanded
+            ).tolist(),
             generations=2,
             candidates_per_generation=8,
             elites=2,
@@ -128,8 +143,8 @@ def main():
             ball_launch_spin="vyaw0, omega_y=vx/.11",
             ranking="lexicographic healthy360_and_safe, pass, unchanged_reward, earlier_touch",
             baseline_and_selected_fresh_nn_reexecution=True,
-            maximum_worlds=76,
-            maximum_native_steps=273600,
+            maximum_worlds=maximum_worlds,
+            maximum_native_steps=maximum_worlds * 3600,
             original_exam_body_identity_claimed=False,
             original52_regraded=False,
             privileged_search=True,
@@ -143,17 +158,30 @@ def main():
     )
     results, native_steps = [], 0
     try:
-        for index in range(a.shard, 16, 4):
+        for index in indices:
             c = courses[index]
             root = a.output / f"course-{index:02d}"
             root.mkdir()
             rows, files = {}, {}
 
-            def evaluate(name, params, *, c=c, root=root, index=index, rows=rows, files=files):
+            def evaluate(
+                name,
+                params,
+                *,
+                use_experimental=None,
+                c=c,
+                root=root,
+                index=index,
+                rows=rows,
+                files=files,
+            ):
                 nonlocal native_steps
+                owned_assets = dict(assets)
+                if use_experimental is not None:
+                    owned_assets["experimental_fast"] = use_experimental
                 row, arrays = evaluate_episode(
                     model=model,
-                    assets=assets,
+                    assets=owned_assets,
                     policy_types=types,
                     course=c.course,
                     parameters=params,
@@ -171,7 +199,7 @@ def main():
                 write_once(root / (name + ".json"), row)
                 return row
 
-            first = uniform_candidates(c.seed, experimental_fast=fast)
+            first = uniform_candidates(c.seed, experimental_fast=fast, expanded_public=expanded)
             write_once(
                 root / "generation-one-declaration.json",
                 dict(
@@ -182,9 +210,18 @@ def main():
                     search_outcomes_observed=False,
                 ),
             )
-            base = evaluate("baseline", baseline_parameters)
+            base = evaluate(
+                "baseline", baseline_parameters, use_experimental=False if expanded else None
+            )
             generation_one = [
-                evaluate(f"candidate-{i:02d}", candidate_parameters(x, experimental_fast=fast))
+                evaluate(
+                    f"candidate-{i:02d}",
+                    candidate_parameters(
+                        x,
+                        experimental_fast=fast,
+                        expanded_public=expanded,
+                    ),
+                )
                 for i, x in enumerate(first)
             ]
             second = elite_candidates(
@@ -192,6 +229,7 @@ def main():
                 tuple(outcome_rank(row) for row in generation_one),
                 seed=c.seed + 1000,
                 experimental_fast=fast,
+                expanded_public=expanded,
             )
             write_once(
                 root / "generation-two-declaration.json",
@@ -206,7 +244,14 @@ def main():
                 ),
             )
             for i, x in enumerate(second, 8):
-                evaluate(f"candidate-{i:02d}", candidate_parameters(x, experimental_fast=fast))
+                evaluate(
+                    f"candidate-{i:02d}",
+                    candidate_parameters(
+                        x,
+                        experimental_fast=fast,
+                        expanded_public=expanded,
+                    ),
+                )
             # Include the measured baseline as a retention fallback, never
             # manufacture net growth by dropping an already successful parent.
             eligible = ["baseline", *[f"candidate-{i:02d}" for i in range(16)]]
@@ -216,7 +261,11 @@ def main():
                 ("baseline-reexecution", "baseline"),
                 ("selected-reexecution", selected),
             ):
-                evaluate(label, rows[original]["parameters"])
+                evaluate(
+                    label,
+                    rows[original]["parameters"],
+                    use_experimental=rows[original]["experimental_fast_approach"],
+                )
                 with np.load(files[original]) as old, np.load(files[label]) as new:
                     exact = {key: bool(np.array_equal(old[key], new[key])) for key in old.files}
                 if not all(exact.values()):
@@ -248,7 +297,11 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="PUBLIC16_TEACHER_CEM_SHARD_MEASURED_NOT_TRAINED",
+                status="PUBLIC40_TEACHER_CEM_SHARD_MEASURED_NOT_TRAINED"
+                if expanded
+                else "PUBLIC16_TEACHER_CEM_SHARD_MEASURED_NOT_TRAINED",
+                expanded_public_bank=expanded,
+                baseline_uses_original_strict_codec=expanded or not fast,
                 experimental_fast_approach=fast,
                 source_head=a.expected_head,
                 input_file_hashes=pins,
