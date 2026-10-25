@@ -10,7 +10,8 @@ from scripts.rsi_review_motion_timing_teacher import verify_synergy_search
 
 
 @pytest.mark.parametrize(
-    "mode,expected_calls", [("parent", 1), ("rescue", 37), ("fail", 37), ("response", 38)]
+    "mode,expected_calls",
+    [("parent", 1), ("rescue", 37), ("fail", 37), ("response", 38), ("long", 1)],
 )
 def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
     monkeypatch, mode, expected_calls
@@ -26,14 +27,15 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
     p.basis_isaac = tuple(tuple(float(i == j) for j in range(29)) for i in range(6))
     p.basis_hg = np.eye(6, 29, dtype=np.float64)
     p.synergy_response_enabled = mode == "response"
+    p.forecast_controls = 128 if mode == "long" else 96
     calls, installed = [], []
 
     def forecast(*, controls, before_proposal, reference_plan):
-        assert controls == 96 and before_proposal
+        assert controls == p.forecast_controls and before_proposal
         calls.append(reference_plan)
-        r = prediction(n=96)
+        r = prediction(n=controls)
         r["donor_control_frame"] = 100
-        passes = mode == "parent" or (
+        passes = mode in ("parent", "long") or (
             mode == "rescue"
             and reference_plan is not None
             and reference_plan.coefficients[0][0] > 0
@@ -69,7 +71,7 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
     if installed:
         assert installed[0] in calls
         assert p.events[0]["selected_window"]["window_pass"]
-    if mode != "parent":
+    if mode not in ("parent", "long"):
         assert len(p.events[0]["generations"]) == 3
         rng = np.random.default_rng(7001)
         noise = rng.normal(size=(6, 2, 6))

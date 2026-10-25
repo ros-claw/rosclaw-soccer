@@ -36,9 +36,12 @@ def synergy_search_rank(
 class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
     basis_hg: np.ndarray | None = None
     synergy_response_enabled = False
+    forecast_controls = 96
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        if type(self.forecast_controls) is not int or self.forecast_controls not in (96, 128):
+            raise ValueError("explicit qualified96/128 observation protocol required")
         if self.basis_hg is None or self.basis_hg.shape != (6, 29):
             raise ValueError("explicit fitted HG29 rank6 motion subspace required")
         mapping = np.array(import_module(type(self.policy).__module__).MUJOCO_TO_ISAAC)
@@ -51,7 +54,9 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
             self,
             expected_policy_type=type(self.policy),
             expected_model_hash=compiled_model_hash(self.world.model),
-            native_step_budget=(38 if self.synergy_response_enabled else 37) * 960,
+            native_step_budget=(38 if self.synergy_response_enabled else 37)
+            * self.forecast_controls
+            * 10,
         )
         self.decided = self.plan_applied = False
         self.events: list[dict[str, Any]] = []
@@ -87,7 +92,7 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
                 )
             )
             return super().propose()
-        horizon = min(96, 360 - frame)
+        horizon = min(self.forecast_controls, 360 - frame)
         candidates: list[tuple[str, MotionSynergyPlan | None, dict[str, Any], dict[str, Any]]] = []
 
         def preview(

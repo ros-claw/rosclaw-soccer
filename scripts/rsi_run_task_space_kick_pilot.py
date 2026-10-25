@@ -14,6 +14,8 @@ def main():
     p.add_argument("--shard-root", type=Path, nargs=4, required=True)
     p.add_argument("--synergy-model", type=Path)
     p.add_argument("--synergy-model-hash")
+    p.add_argument("--window-qualification", type=Path)
+    p.add_argument("--window-qualification-hash")
     p.add_argument(
         "--interface",
         choices=(
@@ -26,12 +28,19 @@ def main():
             "motion-timing",
             "motion-synergy",
             "motion-synergy-response",
+            "motion-synergy-full-window",
         ),
         default="measured-pose",
     )
     a = p.parse_args()
     synergy_response = a.interface == "motion-synergy-response"
-    synergy = a.interface in ("motion-synergy", "motion-synergy-response")
+    full_window = a.interface == "motion-synergy-full-window"
+    synergy = a.interface in (
+        "motion-synergy",
+        "motion-synergy-response",
+        "motion-synergy-full-window",
+    )
+    forecast_controls = 128 if full_window else 96
     motion_timing = synergy or a.interface == "motion-timing"
     nn_outcome = motion_timing or a.interface in (
         "nn-outcome",
@@ -46,7 +55,9 @@ def main():
     )
     forecast_cap = (1 + 2 * len(axes) + int(response)) * 640 * 16 if nn_outcome else 172800
     if motion_timing:
-        forecast_cap = (38 if synergy_response else 37 if synergy else 3) * 960 * 16
+        forecast_cap = (
+            (38 if synergy_response else 37 if synergy else 3) * forecast_controls * 10 * 16
+        )
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
@@ -77,6 +88,24 @@ def main():
         raise ValueError("explicit pre-proposal OFF reference qualification required")
     pins = dict(qualification["input_file_hashes"])
     pins[str(a.qualification)] = a.qualification_hash
+    if full_window:
+        if (
+            a.window_qualification is None
+            or digest(a.window_qualification) != a.window_qualification_hash
+        ):
+            raise ValueError("separate exact128 observation qualification required")
+        longer = json.loads(a.window_qualification.read_text())
+        if (
+            longer["status"] != "G1_COPIED_NN_CLOSED_LOOP_128_CONTROL_FORECASTS_EXACT"
+            or not longer["before_proposal"]
+            or longer["reference_conditioning"] != "OFF_original_arrays"
+        ):
+            raise ValueError("original128 pre-proposal OFF qualification required")
+        for key, value in longer["input_file_hashes"].items():
+            if key in pins and pins[key] != value:
+                raise ValueError("conflicting128 qualification source/asset binding")
+            pins[key] = value
+        pins[str(a.window_qualification)] = a.window_qualification_hash
     if synergy and (
         a.synergy_model is None
         or pins.get(str(a.synergy_model)) != a.synergy_model_hash
@@ -172,6 +201,7 @@ def main():
     class Controlled(parent_type):
         basis_hg = fitted_basis
         synergy_response_enabled = synergy_response
+        forecast_controls = 128 if full_window else 96
         candidate_axes = axes
         response_enabled = response
         foundation_relative = a.interface != "measured-pose"
@@ -196,7 +226,11 @@ def main():
             actual_world_ceiling=32,
             actual_native_step_ceiling=115200,
             forecast_native_step_ceiling=forecast_cap,
-            forecast_controls_per_candidate=96 if motion_timing else 64 if nn_outcome else 1,
+            forecast_controls_per_candidate=forecast_controls
+            if motion_timing
+            else 64
+            if nn_outcome
+            else 1,
             timing_intervals=24 if motion_timing and not synergy else None,
             timing_peak_shift_frames=[-3.0, 3.0] if motion_timing and not synergy else None,
             timing_trigger="first_measured_skill_entry_pre_proposal" if motion_timing else None,

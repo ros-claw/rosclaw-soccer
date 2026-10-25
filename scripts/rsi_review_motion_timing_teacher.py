@@ -70,10 +70,16 @@ def main():
     if a.output.exists() or digest(cp) != a.pilot_hash:
         raise ValueError("unused output and exact closed pilot required")
     report = json.loads(cp.read_text())
-    if report["interface"] not in ("motion-timing", "motion-synergy", "motion-synergy-response"):
+    if report["interface"] not in (
+        "motion-timing",
+        "motion-synergy",
+        "motion-synergy-response",
+        "motion-synergy-full-window",
+    ):
         raise ValueError("explicit motion reference protocol required")
     response = report["interface"] == "motion-synergy-response"
-    synergy = report["interface"] in ("motion-synergy", "motion-synergy-response")
+    full_window = report["interface"] == "motion-synergy-full-window"
+    synergy = full_window or report["interface"] in ("motion-synergy", "motion-synergy-response")
     pins = dict(report["input_file_hashes"])
     fitted = None
     if synergy:
@@ -94,7 +100,7 @@ def main():
             )
         )
         or declaration["forecast_native_step_ceiling"]
-        != (583680 if response else 568320 if synergy else 46080)
+        != (757760 if full_window else 583680 if response else 568320 if synergy else 46080)
         or [r["course_index"] for r in report["results"]] != expected_indices
     ):
         raise ValueError("frozen timing experiment differs")
@@ -222,7 +228,7 @@ def main():
             folder = a.pilot / result["arms"]["C"]["record"]
             raw = load_raw(folder.parent, item["artifact"])
             frame, n = item["donor_control_frame"], item["controls"]
-            requested = min(96, 360 - frame)
+            requested = min(128 if full_window else 96, 360 - frame)
             if (
                 frame != c["entry_control"]
                 or item["requested_controls"] != requested
@@ -312,7 +318,13 @@ def main():
                 attempted_native_steps=charged,
                 integrated_native_steps=advanced,
                 future_nn_calls=advanced // 10,
-                maximum_native_steps=36480 if response else 35520 if synergy else 2880,
+                maximum_native_steps=47360
+                if full_window
+                else 36480
+                if response
+                else 35520
+                if synergy
+                else 2880,
             ):
                 raise ValueError("forecast NN/budget accounting differs")
         elif c.get("changed_controls", 0):
