@@ -6,7 +6,7 @@ outside this model. Import only in optional Torch research workflows.
 """
 
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -115,3 +115,36 @@ class KickPriorActor(nn.Module):
         ):
             raise ValueError("finite float32 observation on the actor device required")
         return cast(torch.Tensor, self.actor(observation))
+
+
+class TorchKickSession:
+    """Exact batch1 inference ABI for a separately measured SIM policy instance."""
+
+    def __init__(self, actor: KickPriorActor) -> None:
+        self.actor = actor.eval()
+        self.calls = 0
+
+    def run(self, outputs: list[str], feed: dict[str, np.ndarray]) -> list[np.ndarray]:
+        if outputs != ["actions"] or set(feed) != {"obs"} or feed["obs"].shape != (1, 547):
+            raise ValueError("exact frozen kick inference ABI required")
+        with torch.no_grad():
+            result = self.actor(torch.from_numpy(feed["obs"].copy())).numpy().copy()
+        if result.shape != (1, 29) or not np.isfinite(result).all():
+            raise ValueError("finite raw29 prior actions required")
+        self.calls += 1
+        return [result]
+
+
+def torch_kick_policy_type(original: Any, model: Path) -> Any:
+    """Fresh network per native episode; no shared player state or hardware IO."""
+
+    class TorchKickPolicy(original):  # type: ignore[misc]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            if self.runtime_mode != "sim":
+                raise ValueError("research Torch kick inference is SIM_ONLY")
+            self.ort_session = TorchKickSession(
+                KickPriorActor.from_onnx(model, expected_hash=KICK_PRIOR_HASH)
+            )
+
+    return TorchKickPolicy

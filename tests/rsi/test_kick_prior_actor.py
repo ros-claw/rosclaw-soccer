@@ -3,7 +3,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from rosclaw_soccer.rsi.kick_prior_actor import KickPriorActor  # noqa: E402
+from rosclaw_soccer.rsi.kick_prior_actor import KickPriorActor, TorchKickSession  # noqa: E402
 
 
 def tensors():
@@ -43,3 +43,16 @@ def test_rejects_shape_drift_and_unknown_artifact(tmp_path):
         KickPriorActor(values)
     with pytest.raises(ValueError):
         KickPriorActor.from_onnx(tmp_path / "missing.onnx", expected_hash="unqualified")
+
+
+def test_sim_inference_session_contract_and_private_call_count():
+    session = TorchKickSession(KickPriorActor(tensors()))
+    x = np.zeros((1, 547), np.float32)
+    result = session.run(["actions"], {"obs": x})
+    assert len(result) == 1 and result[0].shape == (1, 29)
+    assert session.calls == 1
+    with pytest.raises(ValueError):
+        session.run(["torque"], {"obs": x})
+    with pytest.raises(ValueError):
+        session.run(["actions"], {"obs": np.zeros((2, 547), np.float32)})
+    assert session.calls == 1
