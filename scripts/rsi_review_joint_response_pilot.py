@@ -52,12 +52,18 @@ def main():
     dp = a.pilot / "declaration.json"
     dec = json.loads(dp.read_text())
     sequential = dec.get("sequential_restoration", False)
-    if type(sequential) is not bool:
+    aim = dec.get("aim_command_search", False)
+    if type(sequential) is not bool or type(aim) is not bool or (aim and sequential):
         raise ValueError("explicit boolean response protocol required")
-    candidate_cap = 273 if sequential else 96
+    candidate_cap = 57 if aim else 273 if sequential else 96
     forecast_cap = 6 * (37 + candidate_cap) * 1280
     if (
-        report["status"] != "FULL_NN_JOINT_TASK_RESPONSE_PILOT_COMPLETE"
+        report["status"]
+        != (
+            "FULL_NN_AIM_COMMAND_PILOT_COMPLETE"
+            if aim
+            else "FULL_NN_JOINT_TASK_RESPONSE_PILOT_COMPLETE"
+        )
         or digest(dp) != report["declaration_hash"]
         or dec["course_indices"] != [0, 2, 8, 22, 27, 30]
         or dec["requested_forecast_native_step_ceiling"] != forecast_cap
@@ -88,6 +94,7 @@ def main():
     context = load_teacher_context(pins, a.backbone_model)
     import numpy as np
 
+    from rosclaw_soccer.rsi.aim_command_kick_player import declared_aim_commands
     from rosclaw_soccer.rsi.joint_task_response import (
         propose_joint_task_response,
         response_features,
@@ -97,6 +104,12 @@ def main():
     from rosclaw_soccer.sim.contracts import hash_json
 
     lo = context["layout"]
+    aim_grid = declared_aim_commands()
+    if aim and (
+        dec["aim_command_world_points"] != [list(c.world_point) for c in aim_grid]
+        or dec["task_scoring_goal_world_point"] != [8.0, 0.0, 0.11]
+    ):
+        raise ValueError("fixed20 desired command grid without task-goal mutation required")
     original_cp = a.champion_root / "complete.json"
     if pins.get(str(original_cp)) != digest(original_cp):
         raise ValueError("bound original full teacher bank required")
@@ -218,6 +231,11 @@ def main():
                         name=f["name"],
                         outcome=window,
                         coefficients=event["candidate_windows"][j]["coefficients"],
+                        **(
+                            dict(aim_world_point=event["candidate_windows"][j]["aim_world_point"])
+                            if aim and arm == "C"
+                            else {}
+                        ),
                     )
                 )
                 peaks.append(float(pred["ball_forces"][:, 0, 2].max()))
@@ -232,6 +250,34 @@ def main():
                 expected = 1 if windows[0]["outcome"]["window_pass"] else 37
                 if len(windows) != expected or event["joint_task_response"] is not None:
                     raise ValueError("old qualified branch must prohibit new search")
+            elif aim:
+                if len(windows) != 57 or event["joint_task_response"] is not None:
+                    raise ValueError("exact20 additional desired command forecasts required")
+                expected_report = dict(
+                    schema="soccer.bounded_neural_aim_command_search.v1",
+                    candidate_count=20,
+                    task_scoring_goal_world_point=[8.0, 0.0, 0.11],
+                    command_world_points=[list(c.world_point) for c in aim_grid],
+                    measured_ball_modified=False,
+                    past_target_history_modified=False,
+                    task_exam_modified=False,
+                    reference_arrays_modified_by_new_commands=False,
+                    neural_optimizer_updates=0,
+                    hardware_authorized=False,
+                )
+                if hash_json(event["additional_candidate_search"]) != hash_json(expected_report):
+                    raise ValueError("aim commands changed task, measurements, or declared search")
+                for j, command in enumerate(aim_grid, 37):
+                    if (
+                        windows[j]["name"] != f"aim-goal-{j - 37:02d}"
+                        or windows[j]["coefficients"] is not None
+                        or windows[j]["aim_world_point"] != list(command.world_point)
+                    ):
+                        raise ValueError("named bounded aim command differs")
+                if any(w["aim_world_point"] is not None for w in windows[:37]):
+                    raise ValueError(
+                        "original frozen candidates cannot contain hidden aim commands"
+                    )
             elif sequential:
                 verify_sequential_response(windows, forecasts, event["joint_task_response"])
             else:
@@ -285,7 +331,13 @@ def main():
             eligible = [j for j, w in enumerate(windows) if j and w["outcome"]["window_pass"]]
             chosen = max(eligible, key=rank) if eligible else 0
             expected_basis = (
-                "parent" if not chosen else "joint-reference" if chosen >= 37 else "backbone"
+                "parent"
+                if not chosen
+                else "aim-command"
+                if aim and chosen >= 37
+                else "joint-reference"
+                if chosen >= 37
+                else "backbone"
             )
             if (
                 event["selected"] != windows[chosen]["name"]
@@ -293,9 +345,39 @@ def main():
                 or row["changed_controls"] != int(chosen != 0)
             ):
                 raise ValueError("physically eligible selection differs")
-            if chosen and event["installation"]["coefficients"] != windows[chosen]["coefficients"]:
+            if (
+                chosen
+                and not (aim and chosen >= 37)
+                and event["installation"]["coefficients"] != windows[chosen]["coefficients"]
+            ):
                 raise ValueError("installed reference coefficients differ")
-            if chosen >= 37:
+            if aim:
+                expected_command = (
+                    aim_grid[chosen - 37].target()
+                    if chosen >= 37
+                    else np.array([8.0, 0.0, 0.11], np.float32)
+                )
+                if (
+                    row["task_scoring_goal_world_point"] != [8.0, 0.0, 0.11]
+                    or row["desired_command_world_point"] != expected_command.tolist()
+                ):
+                    raise ValueError(
+                        "task goal and actually selected desired command were conflated"
+                    )
+                if chosen >= 37 and (
+                    event["installation"]["command_world_point"] != expected_command.tolist()
+                    or any(
+                        event["installation"][k]
+                        for k in (
+                            "past_history_modified",
+                            "measured_ball_modified",
+                            "physical_state_modified",
+                            "task_scoring_goal_modified",
+                        )
+                    )
+                ):
+                    raise ValueError("installed aim command modified measurements/history/task")
+            if chosen >= 37 and not aim:
                 installation = event["installation"]
                 if installation["hg_to_isaac"] != [int(j) for j in context["types"][3]] or any(
                     b["start_frame"] != row["admitted_reference_phase"]
@@ -354,7 +436,10 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="FULL_NN_JOINT_TASK_RESPONSE_RAW_AND_PHYSICAL_EXAM_VERIFIED",
+            status="FULL_NN_AIM_COMMAND_RAW_AND_PHYSICAL_EXAM_VERIFIED"
+            if aim
+            else "FULL_NN_JOINT_TASK_RESPONSE_RAW_AND_PHYSICAL_EXAM_VERIFIED",
+            aim_command_search=aim,
             sequential_restoration=sequential,
             source_head=a.expected_head,
             input_file_hashes=pins,

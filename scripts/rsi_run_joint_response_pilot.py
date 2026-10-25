@@ -16,7 +16,12 @@ def main():
     p.add_argument("--sequential-restoration", action="store_true")
     p.add_argument("--previous-pilot-audit", type=Path)
     p.add_argument("--previous-pilot-audit-hash")
+    p.add_argument("--aim-command-search", action="store_true")
+    p.add_argument("--aim-qualification", type=Path)
+    p.add_argument("--aim-qualification-hash")
     a = p.parse_args()
+    if a.aim_command_search and a.sequential_restoration:
+        raise ValueError("one explicit teacher mechanism per pilot required")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
@@ -59,6 +64,20 @@ def main():
             )
         merge_pins(pins, prior["input_file_hashes"])
         pins[str(path)] = a.previous_pilot_audit_hash
+    if a.aim_command_search:
+        path = a.aim_qualification
+        if path is None or path.is_symlink() or digest(path) != a.aim_qualification_hash:
+            raise ValueError("explicit nonzero aim-command NN physical qualification required")
+        qualified = json.loads(path.read_text())
+        if (
+            qualified["status"] != "G1_AIM_GOAL_COMMAND_NN_FUTURES_EXACT"
+            or not qualified["entry_command_forecast_conditioned"]
+            or qualified["reference_conditioning"] != "OFF_original_arrays"
+            or qualified["task_scoring_goal_world_point"] != [8.0, 0.0, 0.11]
+        ):
+            raise ValueError("same unchanged task and verified entry goal-command branch required")
+        merge_pins(pins, qualified["input_file_hashes"])
+        pins[str(path)] = a.aim_qualification_hash
     audit = json.loads(a.champion_audit.read_text())
     if not audit["perturbed_public_validation"] or audit["actual_worlds"] != 80:
         raise ValueError("fixed consumed perturbed40 source required")
@@ -73,16 +92,25 @@ def main():
     context = load_teacher_context(pins, a.backbone_model)
     import numpy as np
 
+    from rosclaw_soccer.rsi.aim_command_kick_player import (
+        AimCommandKickPlayer,
+        declared_aim_commands,
+    )
     from rosclaw_soccer.rsi.synergy_forecast_kick_player import SynergyForecastKickPlayer
     from rosclaw_soccer.rsi.walk_kick_teacher_episode import evaluate_episode
 
     a.output.mkdir(parents=True)
-    candidate_cap = 273 if a.sequential_restoration else 96
+    candidate_cap = 57 if a.aim_command_search else 273 if a.sequential_restoration else 96
     forecast_cap = 6 * (37 + candidate_cap) * 1280
     write_once(
         a.output / "declaration.json",
         dict(
             protocol="soccer.full_nn_joint_task_response_six_state_pilot.v1",
+            aim_command_search=a.aim_command_search,
+            aim_command_world_points=[list(c.world_point) for c in declared_aim_commands()]
+            if a.aim_command_search
+            else None,
+            task_scoring_goal_world_point=[8.0, 0.0, 0.11],
             source_head=a.expected_head,
             input_file_hashes=pins,
             course_indices=INDICES,
@@ -125,10 +153,14 @@ def main():
         for arm in ("B", "C"):
             instances = []
 
-            class Controlled(SynergyForecastKickPlayer):
+            class Controlled(
+                AimCommandKickPlayer
+                if a.aim_command_search and arm == "C"
+                else SynergyForecastKickPlayer
+            ):
                 basis_hg = context["basis"]
                 forecast_controls = 128
-                joint_task_response_enabled = arm == "C"
+                joint_task_response_enabled = arm == "C" and not a.aim_command_search
                 joint_response_iterations = 4 if a.sequential_restoration and arm == "C" else 1
                 observed_instances = instances
 
@@ -208,6 +240,8 @@ def main():
                 artifact=dict(path=ap.name, hash=digest(ap)),
                 course_index=i,
                 arm=arm,
+                task_scoring_goal_world_point=[8.0, 0.0, 0.11],
+                desired_command_world_point=ctrl.goal.tolist(),
             )
             write_once(folder / f"{arm}.json", row)
             pair[arm] = dict(
@@ -244,7 +278,9 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="FULL_NN_JOINT_TASK_RESPONSE_PILOT_COMPLETE",
+            status="FULL_NN_AIM_COMMAND_PILOT_COMPLETE"
+            if a.aim_command_search
+            else "FULL_NN_JOINT_TASK_RESPONSE_PILOT_COMPLETE",
             source_head=a.expected_head,
             input_file_hashes=pins,
             declaration_hash=digest(a.output / "declaration.json"),

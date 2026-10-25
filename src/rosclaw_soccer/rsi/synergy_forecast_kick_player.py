@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.rsi.aim_goal_command import AimGoalCommand, condition_aim_goal
 from rosclaw_soccer.rsi.motion_synergy_reference import (
     MotionSynergyPlan,
     condition_synergy_reference,
@@ -21,6 +22,13 @@ from rosclaw_soccer.rsi.whole_joint_reference import (
     WholeJointReferencePlan,
     condition_whole_joint_reference,
 )
+
+Candidate = tuple[
+    str,
+    MotionSynergyPlan | WholeJointReferencePlan | AimGoalCommand | None,
+    dict[str, Any],
+    dict[str, Any],
+]
 
 
 def synergy_search_rank(
@@ -45,6 +53,7 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
     plastic_basis_isaac: tuple[tuple[float, ...], ...] | None = None
     joint_task_response_enabled = False
     joint_response_iterations = 1
+    extra_candidate_ceiling = 0
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -56,6 +65,19 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
         if sorted(mapping.tolist()) != list(range(29)):
             raise ValueError("qualified HG-to-Isaac bijection required")
         self.hg_to_isaac = tuple(int(i) for i in mapping)
+        if type(self.extra_candidate_ceiling) is not int or self.extra_candidate_ceiling not in (
+            0,
+            20,
+        ):
+            raise ValueError("explicit bounded additional command-candidate protocol required")
+        if self.extra_candidate_ceiling and (
+            self.joint_task_response_enabled
+            or self.synergy_response_enabled
+            or self.plastic_basis_hg is not None
+        ):
+            raise ValueError(
+                "additional command research cannot mix existing experimental families"
+            )
         if type(
             self.joint_response_iterations
         ) is not int or self.joint_response_iterations not in (1, 4):
@@ -87,19 +109,20 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
             plastic_il = np.zeros_like(self.plastic_basis_hg)
             plastic_il[:, mapping] = self.plastic_basis_hg
             self.plastic_basis_isaac = tuple(tuple(float(x) for x in r) for r in plastic_il)
+        base_candidates = (
+            (273 if self.joint_response_iterations == 4 else 96)
+            if self.joint_task_response_enabled
+            else 73
+            if self.plastic_basis_isaac is not None
+            else 38
+            if self.synergy_response_enabled
+            else 37
+        )
         self.forecaster = SharedNNForecaster(
             self,
             expected_policy_type=type(self.policy),
             expected_model_hash=compiled_model_hash(self.world.model),
-            native_step_budget=(
-                (273 if self.joint_response_iterations == 4 else 96)
-                if self.joint_task_response_enabled
-                else 73
-                if self.plastic_basis_isaac is not None
-                else 38
-                if self.synergy_response_enabled
-                else 37
-            )
+            native_step_budget=(base_candidates + self.extra_candidate_ceiling)
             * self.forecast_controls
             * 10,
         )
@@ -110,13 +133,18 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
 
     @property
     def changed_controls(self) -> int:
-        return int(self.plan_applied)  # Reference installations, not changed PD controls.
+        return int(self.plan_applied)  # Plan installations, not changed PD controls.
 
     @property
     def selected_records(self) -> list[tuple[int, dict[str, Any]]]:
         if self.selected_prediction is None:
             return []
         return [(self.selected_prediction["donor_control_frame"], self.selected_prediction)]
+
+    def _search_additional_candidates(
+        self, candidates: list[Candidate], horizon: int
+    ) -> dict[str, Any] | None:
+        return None
 
     def propose(self) -> tuple[np.ndarray, dict[str, Any]]:
         if self.decided:
@@ -138,14 +166,7 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
             )
             return super().propose()
         horizon = min(self.forecast_controls, 360 - frame)
-        candidates: list[
-            tuple[
-                str,
-                MotionSynergyPlan | WholeJointReferencePlan | None,
-                dict[str, Any],
-                dict[str, Any],
-            ]
-        ] = []
+        candidates: list[Candidate] = []
 
         def preview(
             name: str,
@@ -274,11 +295,14 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
             samples = [
                 (np.array(c[1].coefficients, dtype=np.float64), c[3])
                 for c in candidates
-                if c[1] is not None
+                if isinstance(c[1], MotionSynergyPlan)
             ]
             proposal, response_report = propose_synergy_response(self.basis_hg, samples)
             if proposal is not None:
                 preview("native-synergy-response", proposal)
+        additional_report = None
+        if self.extra_candidate_ceiling and not any(c[3]["window_pass"] for c in candidates):
+            additional_report = self._search_additional_candidates(candidates, horizon)
         eligible = [i for i, c in enumerate(candidates) if i and c[3]["window_pass"]]
         chosen = (
             max(eligible, key=lambda i: synergy_search_rank(candidates[i][2], candidates[i][3]))
@@ -288,7 +312,10 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
         name, plan, prediction, outcome = candidates[chosen]
         install = None
         if plan is not None:
-            if isinstance(plan, WholeJointReferencePlan):
+            if isinstance(plan, AimGoalCommand):
+                install = condition_aim_goal(self.policy, plan)
+                self.goal = self.policy.target_pos_w.copy()
+            elif isinstance(plan, WholeJointReferencePlan):
                 install = condition_whole_joint_reference(self.policy, plan)
             else:
                 install = condition_synergy_reference(self.policy, plan)
@@ -308,7 +335,18 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
                     dict(
                         name=c[0],
                         outcome=c[3],
-                        coefficients=None if c[1] is None else c[1].coefficients,
+                        coefficients=None
+                        if c[1] is None or isinstance(c[1], AimGoalCommand)
+                        else c[1].coefficients,
+                        **(
+                            dict(
+                                aim_world_point=list(c[1].world_point)
+                                if isinstance(c[1], AimGoalCommand)
+                                else None
+                            )
+                            if self.extra_candidate_ceiling
+                            else {}
+                        ),
                     )
                     for c in candidates
                 ],
@@ -317,6 +355,8 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
                 selected_basis=(
                     "parent"
                     if plan is None
+                    else "aim-command"
+                    if isinstance(plan, AimGoalCommand)
                     else "joint-reference"
                     if type(plan) is WholeJointReferencePlan
                     else "plastic"
@@ -325,6 +365,7 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
                 ),
                 response_model=response_report,
                 joint_task_response=joint_response,
+                additional_candidate_search=additional_report,
                 original_actual_target_authority_unchanged=True,
             )
         )

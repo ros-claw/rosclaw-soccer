@@ -7,6 +7,8 @@ from test_predicted_touch_window import prediction
 import rosclaw_soccer.rsi.joint_task_response as joint_response
 import rosclaw_soccer.rsi.synergy_forecast_kick_player as synergy
 import rosclaw_soccer.rsi.synergy_response_model as response_model
+from rosclaw_soccer.rsi.aim_command_kick_player import AimCommandKickPlayer
+from rosclaw_soccer.rsi.aim_goal_command import AimGoalCommand
 from scripts.rsi_review_motion_timing_teacher import (
     verify_stable_plastic_search,
     verify_synergy_search,
@@ -28,12 +30,16 @@ from scripts.rsi_review_motion_timing_teacher import (
         ("joint-retains", 37),
         ("sequential", 95),
         ("sequential-retains", 37),
+        ("aim", 57),
+        ("aim-retains", 37),
     ],
 )
 def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
     monkeypatch, mode, expected_calls
 ):
-    p = object.__new__(synergy.SynergyForecastKickPlayer)
+    p = object.__new__(
+        AimCommandKickPlayer if mode.startswith("aim") else synergy.SynergyForecastKickPlayer
+    )
     p.world = SimpleNamespace(_require_current_boundary=lambda: None, control_steps=100)
     p.policy = SimpleNamespace(time_step=20, WARMUP_STEPS=0, motion_total_steps=100)
     p.pending, p.measured_entry_receipt = None, "actual"
@@ -56,6 +62,8 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
             "joint-retains",
             "sequential",
             "sequential-retains",
+            "aim",
+            "aim-retains",
         )
         else 96
     )
@@ -71,30 +79,34 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
         p.plastic_basis_isaac = tuple(tuple(float(i + 6 == j) for j in range(29)) for i in range(6))
     calls, installed = [], []
 
-    def forecast(*, controls, before_proposal, reference_plan):
+    def forecast(*, controls, before_proposal, reference_plan=None, aim_goal=None):
         assert controls == p.forecast_controls and before_proposal
-        calls.append(reference_plan)
+        calls.append(reference_plan if aim_goal is None else aim_goal)
         r = prediction(n=controls)
         r["donor_control_frame"] = 100
         passes = mode in ("parent", "long", "stable-parent") or (
-            mode in ("rescue", "stable", "joint-retains", "sequential-retains")
+            mode in ("rescue", "stable", "joint-retains", "sequential-retains", "aim-retains")
             and reference_plan is not None
             and reference_plan.coefficients[0][0] > 0
         )
         passes = passes or (mode == "response" and len(calls) == 38)
         passes = passes or (mode == "plastic" and len(calls) > 37)
         passes = passes or (mode in ("joint", "sequential") and len(calls) > 37)
+        passes = passes or (mode == "aim" and len(calls) > 37)
         if not passes:
             r["qpos"][:, 0] *= 0.1
         return r
 
     def install(policy, plan):
         installed.append(plan)
+        if isinstance(plan, AimGoalCommand):
+            policy.target_pos_w = plan.target()
         return {"applied": True}
 
     p.forecaster = SimpleNamespace(forecast=forecast)
     monkeypatch.setattr(synergy, "condition_synergy_reference", install)
     monkeypatch.setattr(synergy, "condition_whole_joint_reference", install)
+    monkeypatch.setattr(synergy, "condition_aim_goal", install)
     monkeypatch.setattr(
         joint_response,
         "propose_joint_task_response",
@@ -121,6 +133,10 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
         assert audit_choice == 0 and event["selected"].startswith("joint-")
         assert event["selected_basis"] == "joint-reference"
         assert len(installed[0].coefficients[0]) == 29
+    elif mode == "aim":
+        assert audit_choice == 0 and event["selected"].startswith("aim-goal-")
+        assert event["selected_basis"] == "aim-command"
+        np.testing.assert_array_equal(p.goal, installed[0].target())
     else:
         assert event["candidate_windows"][audit_choice]["name"] == event["selected"]
     assert bool(installed) == (
@@ -134,6 +150,8 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
             "joint-retains",
             "sequential",
             "sequential-retains",
+            "aim",
+            "aim-retains",
         )
     )
     if mode in ("stable", "plastic", "stable-parent"):

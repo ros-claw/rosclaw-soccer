@@ -56,6 +56,16 @@ def test_real_policy_is_not_an_aim_command_path():
         condition_aim_goal(p, AimGoalCommand((8.0, -0.5, 0.11)))
 
 
+def test_search_grid_is_fixed_twenty_bounded_commands_without_duplicate_parent():
+    from rosclaw_soccer.rsi.aim_command_kick_player import declared_aim_commands
+
+    commands = declared_aim_commands()
+    assert len(commands) == 20 and len({c.world_point for c in commands}) == 20
+    assert (8.0, 0.0, 0.11) not in {c.world_point for c in commands}
+    for command in commands:
+        assert command.target().dtype == np.float32
+
+
 def test_nonzero_forecast_command_copies_private_goal_without_mutating_donor(tmp_path):
     from test_shared_nn_forecast import setup
 
