@@ -54,6 +54,7 @@ def main():
     import numpy as np
 
     from rosclaw_soccer.rsi.ball_surface_tasks import measure_ball_surfaces
+    from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
     from rosclaw_soccer.rsi.walk_kick_teacher_audit import relabel_arrays
@@ -86,6 +87,33 @@ def main():
                 nonfoot_peak_n=float(data[arm]["ball_forces"][:, 0, 2].max()),
             )
         c = rows["C"][0]
+        authority_states = []
+        first = metadata["B"]["first_foot"]
+        entry = rows["B"][0]["entry_control"]
+        if first is not None and entry is not None:
+            for frame in range(max(1, entry), first + 1):
+                state = mujoco.MjData(model)
+                state.qpos[:] = data["B"]["qpos"][frame * 10 - 1]
+                state.qvel[:] = data["B"]["qvel"][frame * 10 - 1]
+                surfaces = measure_ball_surfaces(model, state, layout)["surfaces"]
+                foot_gaps = [
+                    s["gap_m"] for n, s in surfaces.items() if n.endswith("foot") and s["available"]
+                ]
+                if not foot_gaps or min(foot_gaps) > 0.18:
+                    continue
+                nominal = data["B"]["joint_targets"][frame, :12]
+                limits = model.jnt_range[layout.joints[:12]]
+                lower = np.maximum(limits[:, 0] - nominal, -0.03)
+                upper = np.minimum(limits[:, 1] - nominal, 0.03)
+                authority_states.append(
+                    dict(
+                        frame=frame,
+                        no_prior_increment_admissible_joint_count=int((lower <= upper).sum()),
+                        inadmissible_joint_names=[
+                            G1_DDS_JOINT_NAMES[j] for j in np.flatnonzero(lower > upper)
+                        ],
+                    )
+                )
         events = c.get("controller_events", [])
         changes = [e for e in events if e["changed"]]
         if len(changes) != c.get("changed_controls", 0):
@@ -141,6 +169,7 @@ def main():
                 nominal_tracking_error_max_rad=max(
                     (e.get("nominal_tracking_error_rad", 0.0) for e in events), default=0.0
                 ),
+                original_precontact_zero_increment_authority=authority_states,
             )
         )
     if (
