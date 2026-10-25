@@ -13,6 +13,9 @@ def main():
         p.add_argument("--" + k, type=Path, required=True)
     for k in ("champion-audit-hash", "qualification-hash", "expected-head"):
         p.add_argument("--" + k, required=True)
+    p.add_argument("--sequential-restoration", action="store_true")
+    p.add_argument("--previous-pilot-audit", type=Path)
+    p.add_argument("--previous-pilot-audit-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -38,6 +41,24 @@ def main():
             raise ValueError("closed old teacher and new full-reference qualification required")
         merge_pins(pins, report["input_file_hashes"])
         pins[str(path)] = h
+    if a.sequential_restoration:
+        path = a.previous_pilot_audit
+        if path is None or path.is_symlink() or digest(path) != a.previous_pilot_audit_hash:
+            raise ValueError(
+                "explicit closed one-shot counterexample audit required for sequential research"
+            )
+        prior = json.loads(path.read_text())
+        if (
+            prior["status"] != "FULL_NN_JOINT_TASK_RESPONSE_RAW_AND_PHYSICAL_EXAM_VERIFIED"
+            or prior["actual_worlds"] != 12
+            or prior["new_physical_steps"] != 0
+            or prior["qualified_for_expansion"]
+        ):
+            raise ValueError(
+                "independent bounded one-shot failure, not unbounded solver sweeping, required"
+            )
+        merge_pins(pins, prior["input_file_hashes"])
+        pins[str(path)] = a.previous_pilot_audit_hash
     audit = json.loads(a.champion_audit.read_text())
     if not audit["perturbed_public_validation"] or audit["actual_worlds"] != 80:
         raise ValueError("fixed consumed perturbed40 source required")
@@ -56,6 +77,8 @@ def main():
     from rosclaw_soccer.rsi.walk_kick_teacher_episode import evaluate_episode
 
     a.output.mkdir(parents=True)
+    candidate_cap = 273 if a.sequential_restoration else 96
+    forecast_cap = 6 * (37 + candidate_cap) * 1280
     write_once(
         a.output / "declaration.json",
         dict(
@@ -65,12 +88,16 @@ def main():
             course_indices=INDICES,
             actual_world_ceiling=12,
             actual_native_step_ceiling=43200,
-            requested_forecast_native_step_ceiling=1021440,
+            requested_forecast_native_step_ceiling=forecast_cap,
+            sequential_restoration=a.sequential_restoration,
+            maximum_response_rounds=4 if a.sequential_restoration else 1,
+            initial_force_normalization_fixed=a.sequential_restoration,
+            require_observed_ghost_progress_for_new_center=a.sequential_restoration,
             forecast_controls=128,
             controls_retention_indices=[0, 30],
             failure_indices=[2, 8, 22, 27],
             old_candidate_ceiling=37,
-            new_candidate_ceiling=96,
+            new_candidate_ceiling=candidate_cap,
             new_probe_axes=29,
             new_probe_signs=[-1, 1],
             probe_reference_rad=0.03,
@@ -102,6 +129,7 @@ def main():
                 basis_hg = context["basis"]
                 forecast_controls = 128
                 joint_task_response_enabled = arm == "C"
+                joint_response_iterations = 4 if a.sequential_restoration and arm == "C" else 1
                 observed_instances = instances
 
                 def __init__(self, *args, **kwargs):
@@ -193,7 +221,7 @@ def main():
             native += row["native_steps"]
             charged += ctrl.forecaster.attempted_steps
             integrated += ctrl.forecaster.integrated_steps
-            if worlds > 12 or native > 43200 or charged > 1021440:
+            if worlds > 12 or native > 43200 or charged > forecast_cap:
                 raise ValueError("frozen full-NN pilot budget exceeded")
             print(i, arm, pair[arm], flush=True)
         results.append(dict(course_index=i, arms=pair))

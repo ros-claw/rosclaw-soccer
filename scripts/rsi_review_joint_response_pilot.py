@@ -5,6 +5,34 @@ import json
 from pathlib import Path
 
 
+def verify_sequential_response(windows, forecasts, recorded):
+    """Replay the finite optimizer from raw-derived observations, without physics."""
+    import numpy as np
+
+    from rosclaw_soccer.rsi.sequential_joint_response import search_sequential_joint_response
+    from rosclaw_soccer.sim.contracts import hash_json
+
+    cursor = 37
+
+    def evaluate(name, coefficients):
+        nonlocal cursor
+        if (
+            cursor >= len(windows)
+            or windows[cursor]["name"] != name
+            or not np.array_equal(coefficients, np.array(windows[cursor]["coefficients"]))
+        ):
+            raise ValueError(
+                "sequential signed probes/center coefficients differ from physical search"
+            )
+        value = (forecasts[cursor], windows[cursor]["outcome"])
+        cursor += 1
+        return value
+
+    reconstructed = search_sequential_joint_response(forecasts[0], windows[0]["outcome"], evaluate)
+    if cursor != len(windows) or hash_json(reconstructed) != hash_json(recorded):
+        raise ValueError("sequential NN feedback/acceptance/fixed normalization report differs")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for k in ("pilot", "champion-root", "backbone-model", "output"):
@@ -23,16 +51,33 @@ def main():
     report = json.loads(cp.read_text())
     dp = a.pilot / "declaration.json"
     dec = json.loads(dp.read_text())
+    sequential = dec.get("sequential_restoration", False)
+    if type(sequential) is not bool:
+        raise ValueError("explicit boolean response protocol required")
+    candidate_cap = 273 if sequential else 96
+    forecast_cap = 6 * (37 + candidate_cap) * 1280
     if (
         report["status"] != "FULL_NN_JOINT_TASK_RESPONSE_PILOT_COMPLETE"
         or digest(dp) != report["declaration_hash"]
         or dec["course_indices"] != [0, 2, 8, 22, 27, 30]
-        or dec["requested_forecast_native_step_ceiling"] != 1021440
+        or dec["requested_forecast_native_step_ceiling"] != forecast_cap
         or dec["actual_world_ceiling"] != 12
         or dec["actual_native_step_ceiling"] != 43200
         or [r["course_index"] for r in report["results"]] != dec["course_indices"]
     ):
         raise ValueError("fixed whole six-state paired physics pilot required")
+    if sequential and any(
+        dec.get(k) != v
+        for k, v in dict(
+            maximum_response_rounds=4,
+            initial_force_normalization_fixed=True,
+            require_observed_ghost_progress_for_new_center=True,
+            new_candidate_ceiling=273,
+            proposal_l1_trust_rad=0.06,
+            proposal_axis_trust_rad=0.03,
+        ).items()
+    ):
+        raise ValueError("frozen sequential restoration declaration differs")
     pins = dict(report["input_file_hashes"])
     pins[str(cp)], pins[str(dp)] = a.pilot_hash, report["declaration_hash"]
     source_pins(pins)
@@ -187,6 +232,8 @@ def main():
                 expected = 1 if windows[0]["outcome"]["window_pass"] else 37
                 if len(windows) != expected or event["joint_task_response"] is not None:
                     raise ValueError("old qualified branch must prohibit new search")
+            elif sequential:
+                verify_sequential_response(windows, forecasts, event["joint_task_response"])
             else:
                 if len(windows) not in (95, 96):
                     raise ValueError(
@@ -265,7 +312,7 @@ def main():
                 attempted_native_steps=charged_arm,
                 integrated_native_steps=integrated_arm,
                 future_nn_calls=integrated_arm // 10,
-                maximum_native_steps=(37 if arm == "B" else 96) * 1280,
+                maximum_native_steps=(37 if arm == "B" else candidate_cap) * 1280,
             ):
                 raise ValueError("all forecast NN/native budget counters differ")
             actual[arm], outcomes[arm], health[arm] = arrays, outcome, healthy
@@ -296,7 +343,7 @@ def main():
         or worlds != 12
         or charged != report["forecast_requested_native_steps"]
         or integrated != report["forecast_integrated_native_steps"]
-        or charged > 1021440
+        or charged > forecast_cap
         or rescues != report["rescues"]
         or regressions != report["regressions"]
     ):
@@ -308,6 +355,7 @@ def main():
         a.output / "complete.json",
         dict(
             status="FULL_NN_JOINT_TASK_RESPONSE_RAW_AND_PHYSICAL_EXAM_VERIFIED",
+            sequential_restoration=sequential,
             source_head=a.expected_head,
             input_file_hashes=pins,
             results=results,

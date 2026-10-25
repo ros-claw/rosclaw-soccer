@@ -44,6 +44,7 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
     plastic_basis_hg: np.ndarray | None = None
     plastic_basis_isaac: tuple[tuple[float, ...], ...] | None = None
     joint_task_response_enabled = False
+    joint_response_iterations = 1
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -55,6 +56,12 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
         if sorted(mapping.tolist()) != list(range(29)):
             raise ValueError("qualified HG-to-Isaac bijection required")
         self.hg_to_isaac = tuple(int(i) for i in mapping)
+        if type(
+            self.joint_response_iterations
+        ) is not int or self.joint_response_iterations not in (1, 4):
+            raise ValueError(
+                "explicit one-shot or frozen four-round joint-response protocol required"
+            )
         if self.joint_task_response_enabled and (
             self.forecast_controls != 128
             or self.synergy_response_enabled
@@ -85,7 +92,7 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
             expected_policy_type=type(self.policy),
             expected_model_hash=compiled_model_hash(self.world.model),
             native_step_budget=(
-                96
+                (273 if self.joint_response_iterations == 4 else 96)
                 if self.joint_task_response_enabled
                 else 73
                 if self.plastic_basis_isaac is not None
@@ -215,7 +222,29 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
         ):
             plastic_generations = search("plastic-", self.plastic_basis_isaac)
         joint_response = None
-        if self.joint_task_response_enabled and not any(c[3]["window_pass"] for c in candidates):
+        if (
+            self.joint_task_response_enabled
+            and self.joint_response_iterations == 4
+            and not any(c[3]["window_pass"] for c in candidates)
+        ):
+            from rosclaw_soccer.rsi.sequential_joint_response import (
+                search_sequential_joint_response,
+            )
+
+            def evaluate_joint(
+                name: str, coefficients: np.ndarray
+            ) -> tuple[dict[str, Any], dict[str, Any]]:
+                preview(name, coefficients, whole=True)
+                return candidates[-1][2], candidates[-1][3]
+
+            joint_response = search_sequential_joint_response(
+                candidates[0][2], candidates[0][3], evaluate_joint
+            )
+        if (
+            self.joint_task_response_enabled
+            and self.joint_response_iterations == 1
+            and not any(c[3]["window_pass"] for c in candidates)
+        ):
             from rosclaw_soccer.rsi.joint_task_response import (
                 propose_joint_task_response,
                 response_features,
