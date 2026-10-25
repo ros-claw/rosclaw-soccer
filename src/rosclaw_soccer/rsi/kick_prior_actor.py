@@ -150,15 +150,17 @@ class TorchKickSession:
 
 
 def torch_kick_policy_type(original: Any, model: Path) -> Any:
-    """Fresh network per native episode; no shared player state or hardware IO."""
+    """Fresh original policy instance and network, preserving history module ABI."""
 
-    class TorchKickPolicy(original):  # type: ignore[misc]
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            super().__init__(*args, **kwargs)
-            if self.runtime_mode != "sim":
-                raise ValueError("research Torch kick inference is SIM_ONLY")
-            self.ort_session = TorchKickSession(
-                KickPriorActor.from_onnx(model, expected_hash=KICK_PRIOR_HASH)
-            )
+    def create(*args: Any, **kwargs: Any) -> Any:
+        policy = original(*args, **kwargs)
+        if policy.runtime_mode != "sim":
+            raise ValueError("research Torch kick inference is SIM_ONLY")
+        # History and reference helpers read constants from type(policy)'s
+        # original qualified module. Do not subclass or forge __module__.
+        policy.ort_session = TorchKickSession(
+            KickPriorActor.from_onnx(model, expected_hash=KICK_PRIOR_HASH)
+        )
+        return policy
 
-    return TorchKickPolicy
+    return create

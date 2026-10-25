@@ -3,7 +3,11 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from rosclaw_soccer.rsi.kick_prior_actor import KickPriorActor, TorchKickSession  # noqa: E402
+from rosclaw_soccer.rsi.kick_prior_actor import (  # noqa: E402
+    KickPriorActor,
+    TorchKickSession,
+    torch_kick_policy_type,
+)
 
 
 def tensors():
@@ -71,3 +75,15 @@ def test_session_admitted_by_actual_shared_player_contract():
     adapter = player(world, policy=policy)
     assert adapter.boundary == 0
     assert world.native_steps == 0
+
+
+def test_factory_preserves_original_history_module_and_private_instances(monkeypatch, tmp_path):
+    from test_shared_robonaldo_player import Policy
+
+    monkeypatch.setattr(KickPriorActor, "from_onnx", lambda *a, **kw: KickPriorActor(tensors()))
+    factory = torch_kick_policy_type(Policy, tmp_path / "fixture.onnx")
+    first, second = factory(), factory()
+    assert type(first) is Policy and type(second) is Policy
+    assert type(first).__module__ == Policy.__module__
+    assert first is not second and first.state_cmd is not second.state_cmd
+    assert first.ort_session.actor is not second.ort_session.actor
