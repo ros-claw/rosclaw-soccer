@@ -44,6 +44,7 @@ def main():
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("source-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--measured-phase-match", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -91,7 +92,7 @@ def main():
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
     from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
 
-    state_type, output_type, policy_type, _ = _load_robonaldo(root)
+    state_type, output_type, policy_type, mapping = _load_robonaldo(root)
     cap = 0.85 * np.array(G1_HARD_TORQUE_LIMITS)
     arms = ("walk-only", "cold-reference", "measured-reference")
     speeds = (0.5, 1.0)
@@ -99,7 +100,9 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="soccer.native_walk_to_kick_measured_history.v1",
+            protocol="soccer.native_walk_to_kick_measured_history.v2"
+            if a.measured_phase_match
+            else "soccer.native_walk_to_kick_measured_history.v1",
             source_head=a.expected_head,
             input_file_hashes=pins,
             arms=arms,
@@ -112,7 +115,9 @@ def main():
             root_initial_position=[0.0, 0.0, 0.793],
             goal=[8.0, 0.0, 0.11],
             entry="first boundary50..250 with body ball x<=.9 and abs(y)<=.25; no prior contact",
-            kick_reference_frame=0,
+            kick_reference_frame="nearest measured HG29 q/dq in0..250, fixed .02s velocity weight"
+            if a.measured_phase_match
+            else 0,
             kick_warmup_skipped_in_both_kick_arms=True,
             reference_rebased_in_both_kick_arms=True,
             actual_history_only_in_measured_arm=True,
@@ -156,6 +161,7 @@ def main():
                     kick, entry, entry_receipt, pd_receipt = None, None, None, None
                     contacted = False
                     entry_context = None
+                    phase_selection = None
                     raw = {key: [] for key in ("qpos", "qvel", "torque", "ball_forces")}
                     targets, commands, previous = [], [], np.zeros(3, np.float32)
                     for frame in range(400):
@@ -180,6 +186,19 @@ def main():
                             if arm != "walk-only":
                                 with contextlib.redirect_stdout(io.StringIO()):
                                     policy = policy_type(state_type(29), output_type(29))
+                                reference_frame = 0
+                                if a.measured_phase_match:
+                                    from rosclaw_soccer.rsi.kick_reference_phase import (
+                                        nearest_kick_reference_phase,
+                                    )
+
+                                    phase_selection = nearest_kick_reference_phase(
+                                        q[7:36],
+                                        v[6:35],
+                                        policy.motion_joint_pos[:, mapping],
+                                        policy.motion_joint_vel[:, mapping],
+                                    )
+                                    reference_frame = phase_selection["reference_frame"]
                                 kp = NativePDParameters(
                                     np.array(policy.kps), np.array(policy.kds), cap
                                 )
@@ -189,11 +208,11 @@ def main():
                                 )
                                 if arm == "measured-reference":
                                     entry_receipt = kick.install_measured_entry(
-                                        tuple(history), reference_frame=0
+                                        tuple(history), reference_frame=reference_frame
                                     )
                                 else:
-                                    rebase_kick_reference(policy, entry_frame=0)
-                                    policy.time_step = policy.WARMUP_STEPS
+                                    rebase_kick_reference(policy, entry_frame=reference_frame)
+                                    policy.time_step = policy.WARMUP_STEPS + reference_frame
                         yaw = float(np.arctan2(rot[1, 0], rot[0, 0]))
                         wanted = np.array([speed, 0.0, np.clip(-2 * yaw, -1, 1)], np.float32)
                         command = previous + np.clip(wanted - previous, -0.05, 0.05)
@@ -260,6 +279,7 @@ def main():
                         healthy_full_horizon=not w.failed and w.control_steps == 400,
                         entry_control=entry,
                         entry_context=entry_context,
+                        reference_phase_selection=phase_selection,
                         prehandoff_walk_prefix_exact=prefix_exact,
                         handoff_executed=kick is not None,
                         measured_entry_receipt=entry_receipt,
