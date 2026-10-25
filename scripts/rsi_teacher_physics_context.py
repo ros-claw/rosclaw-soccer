@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 
-def load_teacher_context(pins, backbone_model):
+def load_walk_kick_context(pins):
     import mujoco
     import numpy as np
     from rosclaw.simforge.backends.unitree_mujoco_backend import _load_robonaldo
@@ -13,7 +13,6 @@ def load_teacher_context(pins, backbone_model):
     from rosclaw_soccer.rsi.experimental_velocity_evidence import admit_heading_evidence
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
-    from scripts.rsi_native_context_recovery_common import digest
 
     def one(suffix):
         rows = [Path(p) for p in pins if p.endswith(suffix)]
@@ -38,14 +37,6 @@ def load_teacher_context(pins, backbone_model):
             one("/cached-standard/declared-scene.xml").read_text(), prefixes=("a/",)
         )
     )
-    report = json.loads(backbone_model.read_text())
-    artifact = backbone_model.parent / report["artifact"]["path"]
-    if pins.get(str(backbone_model)) != digest(backbone_model) or pins.get(str(artifact)) != digest(
-        artifact
-    ):
-        raise ValueError("exact bound frozen motion basis required")
-    with np.load(artifact, allow_pickle=False) as raw:
-        basis = raw["basis_hg"].copy()
     return dict(
         model=model,
         layout=NativeVelocityLayout(model, robot_prefix="a/", ball_body_name="soccer_ball"),
@@ -57,6 +48,21 @@ def load_teacher_context(pins, backbone_model):
             velocity_config_hash=pins[str(vc)],
             **fast,
         ),
-        basis=basis,
         hard_limits=np.array(G1_HARD_TORQUE_LIMITS),
     )
+
+
+def load_teacher_context(pins, backbone_model):
+    import numpy as np
+
+    from scripts.rsi_native_context_recovery_common import digest
+
+    report = json.loads(backbone_model.read_text())
+    artifact = backbone_model.parent / report["artifact"]["path"]
+    if pins.get(str(backbone_model)) != digest(backbone_model) or pins.get(str(artifact)) != digest(
+        artifact
+    ):
+        raise ValueError("exact bound frozen motion basis required")
+    with np.load(artifact, allow_pickle=False) as raw:
+        basis = raw["basis_hg"].copy()
+    return dict(load_walk_kick_context(pins), basis=basis)
