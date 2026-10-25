@@ -113,8 +113,11 @@ def main():
     pins[str(cp)] = a.pilot_hash
     pins[str(a.pilot / "declaration.json")] = report["declaration_hash"]
     declaration = json.loads((a.pilot / "declaration.json").read_text())
+    independent = report.get("independent_local_validation", False)
+    if type(independent) is not bool or (independent and not plastic):
+        raise ValueError("explicit stable/plastic independent-local protocol required")
     if plastic and (
-        declaration.get("stable_plastic_development") is not True
+        declaration.get("stable_plastic_development") != (not independent)
         or declaration.get("plastic_search_requires_backbone_abstention") is not True
         or a.plastic_model is None
         or pins.get(str(a.plastic_model)) != declaration.get("plastic_model_hash")
@@ -127,6 +130,24 @@ def main():
         raise ValueError("explicit full-window expanded public protocol required")
     if type(perturbed) is not bool or (perturbed and not expanded):
         raise ValueError("explicit local robustness protocol required")
+    if independent and (
+        not perturbed
+        or declaration.get("independent_local_validation") is not True
+        or declaration.get("consumed_perturbation_development") is not False
+    ):
+        raise ValueError("independent local exam must not be a consumed development bank")
+    if independent:
+        from scripts.rsi_stable_plastic_sources import admit_development_gates
+
+        paths = [Path(p) for p in declaration["development_gate_paths"]]
+        hashes = [r["audit_hash"] for r in declaration["development_gates"]]
+        if any(pins.get(str(p)) != h for p, h in zip(paths, hashes, strict=True)):
+            raise ValueError("bound development prerequisites required before independent exam")
+        if (
+            admit_development_gates(paths, hashes, declaration["plastic_model_hash"], pins)
+            != declaration["development_gates"]
+        ):
+            raise ValueError("independent local development qualification differs")
     expected_indices = (
         list(range(40)) if expanded else [b * 10 + j for b in range(4) for j in (0, 1, 2, 3)]
     )
@@ -199,9 +220,16 @@ def main():
         from rosclaw_soccer.rsi.synergy_teacher_perturbations import declare_synergy_perturbations
         from rosclaw_soccer.rsi.walk_kick_teacher_plan import search_course_bank
 
-        perturbed_courses, reconstructed = declare_synergy_perturbations(
-            search_course_bank(expanded_public=True), seed=2026102519
-        )
+        if independent:
+            from rosclaw_soccer.rsi.synergy_teacher_perturbations import declare_feedback_validation
+
+            perturbed_courses, reconstructed = declare_feedback_validation(
+                search_course_bank(expanded_public=True)
+            )
+        else:
+            perturbed_courses, reconstructed = declare_synergy_perturbations(
+                search_course_bank(expanded_public=True), seed=2026102519
+            )
         if hash_json(reconstructed) != hash_json(declaration["perturbation_declaration"]):
             raise ValueError("whole perturbation declaration differs from frozen seed/domain")
 
@@ -496,9 +524,10 @@ def main():
 
         with np.load(artifact, allow_pickle=False) as raw:
             complement_fit = verify_complement_fit(a.plastic_model, pins, raw["basis_hg"].copy())
-        champion_regressions, champion_rescues = compare_champion(
-            a.pilot, Path(declaration["champion_root"]), pins
-        )
+        if not independent:
+            champion_regressions, champion_rescues = compare_champion(
+                a.pilot, Path(declaration["champion_root"]), pins
+            )
         if (
             champion_regressions != report["champion_regressions"]
             or champion_rescues != report["champion_rescues"]
@@ -519,8 +548,9 @@ def main():
             data_synergy_fit_independently_recomputed=synergy,
             expanded_public_validation=expanded,
             perturbed_public_validation=perturbed,
-            stable_plastic_development=plastic,
-            consumed_perturbation_development=plastic and perturbed,
+            stable_plastic_development=plastic and not independent,
+            consumed_perturbation_development=plastic and perturbed and not independent,
+            independent_local_validation=independent,
             complement_fit_reconstructed=complement_fit,
             champion_regressions=champion_regressions,
             champion_rescues=champion_rescues,
@@ -534,7 +564,7 @@ def main():
             ),
             qualified_on_local_perturbations=(
                 perturbed
-                and not plastic
+                and (not plastic or independent)
                 and not regressions
                 and sum(r["C"]["task_pass"] for r in results) >= 32
                 and all(r["C_healthy"] for r in results)

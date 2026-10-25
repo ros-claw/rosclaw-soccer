@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 
 from scripts.rsi_native_context_recovery_common import digest
-from scripts.rsi_stable_plastic_sources import compare_champion, merge_pins
+from scripts.rsi_stable_plastic_sources import (
+    admit_development_gates,
+    compare_champion,
+    merge_pins,
+)
 
 
 def test_pins_never_silently_replace_an_earlier_qualified_input():
@@ -12,6 +16,52 @@ def test_pins_never_silently_replace_an_earlier_qualified_input():
     with pytest.raises(ValueError, match="conflicting"):
         merge_pins(pins, {"model": "new"})
     assert pins == {"model": "old"}
+
+
+@pytest.mark.parametrize(
+    "mode", ["qualified", "no_gain", "31passes", "lost_old", "missing", "wrong_model", "reuse_exam"]
+)
+def test_new_local_exam_requires_complete_verified_gains_on_both_consumed_banks(tmp_path, mode):
+    paths, hashes = [], []
+    for perturbed in (False, True):
+        report = dict(
+            status="MOTION_SYNERGY_TEACHER_RAW_CEM_FUTURES_AND_FULL_EXAM_VERIFIED",
+            stable_plastic_development=True,
+            expanded_public_validation=True,
+            perturbed_public_validation=perturbed,
+            new_physical_steps=0,
+            actual_worlds=80,
+            regressions=[],
+            champion_regressions=[30] if mode == "lost_old" else [],
+            champion_rescues=[] if mode == "no_gain" or not perturbed else [22],
+            results=[
+                dict(
+                    course_index=i,
+                    C=dict(task_pass=i < (31 if mode == "31passes" else 32)),
+                    C_healthy=True,
+                )
+                for i in range(39 if mode == "missing" else 40)
+            ],
+            input_file_hashes={"model": "wrong" if mode == "wrong_model" else "exact-model"},
+            independent_local_validation=mode == "reuse_exam",
+        )
+        path = tmp_path / f"{perturbed}.json"
+        path.write_text(json.dumps(report))
+        paths.append(path)
+        hashes.append(digest(path))
+    pins = {}
+    if mode == "qualified":
+        result = admit_development_gates(paths, hashes, "exact-model", pins)
+        assert result[1]["champion_rescues"] == [22]
+        assert pins[str(paths[0])] == hashes[0]
+    else:
+        with pytest.raises(ValueError, match="verified new motor gain|development32/40"):
+            admit_development_gates(paths, hashes, "exact-model", pins)
+
+
+def test_new_exam_cannot_start_without_explicit_dual_gates():
+    with pytest.raises(ValueError, match="two independently"):
+        admit_development_gates(None, None, "model", {})
 
 
 @pytest.mark.parametrize("mode", ["exact", "rescue", "loss", "drift", "course", "forged"])

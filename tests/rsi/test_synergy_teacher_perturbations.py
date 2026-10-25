@@ -4,7 +4,10 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.rsi.first_touch_mechanism_expansion import validate_public_course
-from rosclaw_soccer.rsi.synergy_teacher_perturbations import declare_synergy_perturbations
+from rosclaw_soccer.rsi.synergy_teacher_perturbations import (
+    declare_feedback_validation,
+    declare_synergy_perturbations,
+)
 from rosclaw_soccer.rsi.walk_kick_hybrid_teacher import expanded_validation_courses
 
 
@@ -31,6 +34,30 @@ def test_invalid_entire_source_bank_rejected_before_random_generator(monkeypatch
     monkeypatch.setattr(np.random, "default_rng", unexpected)
     with pytest.raises(ValueError, match="entire public"):
         declare_synergy_perturbations(tuple(original), seed=1)
+
+
+def test_feedback_validation_is_fixed_and_disjoint_from_both_consumed_banks():
+    originals = expanded_validation_courses()
+    old, _ = declare_synergy_perturbations(originals, seed=2026102519)
+    new, report = declare_feedback_validation(originals)
+    replay, replay_report = declare_feedback_validation(originals)
+    assert new == replay and report == replay_report
+    assert not {c.course for c in new} & {c.course for c in (*originals, *old)}
+    assert not {c.seed for c in new} & {c.seed for c in (*originals, *old)}
+    assert report["seed"] == 2026102529 and report["disjoint_consumed_states"] == 80
+    assert report["teacher_development_audits_still_required"]
+    assert not report["student_training_authorized"] and not report["private_fresh_accessed"]
+    assert [validate_public_course(c.course) for c in new] == [i // 10 for i in range(40)]
+
+
+def test_feedback_validation_rejects_overlap_instead_of_replacing_course(monkeypatch):
+    import rosclaw_soccer.rsi.synergy_teacher_perturbations as module
+
+    original = expanded_validation_courses()
+    old, report = declare_synergy_perturbations(original, seed=2026102519)
+    monkeypatch.setattr(module, "declare_synergy_perturbations", lambda *a, **k: (old, report))
+    with pytest.raises(ValueError, match="overlapping consumed"):
+        declare_feedback_validation(original)
 
 
 def test_out_of_domain_generated_row_is_not_clipped_or_resampled(monkeypatch):

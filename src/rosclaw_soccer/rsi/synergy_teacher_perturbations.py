@@ -72,3 +72,38 @@ def declare_synergy_perturbations(
         no_outcome_based_sampling=True,
         hardware_authorized=False,
     )
+
+
+def declare_feedback_validation(
+    originals: tuple[FirstTouchCourse, ...],
+) -> tuple[tuple[FirstTouchCourse, ...], dict[str, Any]]:
+    """One preregistered local bank, disjoint from both consumed development banks.
+
+    There is intentionally no seed argument: this bank must not become an
+    outcome-driven seed search. Construction alone never authorizes physics,
+    student training, promotion, or a claim of sealed Fresh generalization.
+    """
+    old, old_report = declare_synergy_perturbations(originals, seed=2026102519)
+    new, declaration = declare_synergy_perturbations(originals, seed=2026102529)
+    consumed = {c.course for c in (*originals, *old)}
+    if consumed & {c.course for c in new}:
+        raise ValueError("reject whole local validation bank overlapping consumed development")
+    # Different identity namespace too; identities never enter policy observations.
+    declared = tuple(
+        FirstTouchCourse(c.agent_id, 2026102900 + i, c.course) for i, c in enumerate(new)
+    )
+    for i, record in enumerate(declaration["records"]):
+        record["perturbed"] = asdict(declared[i])
+    declaration.update(
+        schema="soccer.feedback_teacher_disjoint_local_validation.v1",
+        course_bank_hash=preflight_receiving_courses(declared),
+        consumed_perturbation_seed=2026102519,
+        consumed_perturbation_bank_hash=old_report["course_bank_hash"],
+        disjoint_consumed_states=len(consumed),
+        disjoint_from_both_development_banks=True,
+        validation_seed_not_configurable=True,
+        teacher_development_audits_still_required=True,
+        student_training_authorized=False,
+        promotion_authorized=False,
+    )
+    return declared, declaration

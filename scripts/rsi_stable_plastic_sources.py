@@ -12,6 +12,48 @@ def merge_pins(pins, incoming):
         pins[key] = value
 
 
+def admit_development_gates(paths, hashes, model_hash, pins):
+    """Both complete development banks must qualify BEFORE a new local exam."""
+    if paths is None or hashes is None or len(paths) != 2 or len(hashes) != 2:
+        raise ValueError("two independently audited development banks required")
+    summaries = []
+    for perturbed, path, expected in zip((False, True), paths, hashes, strict=True):
+        if path.is_symlink() or digest(path) != expected:
+            raise ValueError("exact independent development audit required")
+        report = json.loads(path.read_text())
+        if (
+            report.get("status") != "MOTION_SYNERGY_TEACHER_RAW_CEM_FUTURES_AND_FULL_EXAM_VERIFIED"
+            or report.get("stable_plastic_development") is not True
+            or report.get("expanded_public_validation") is not True
+            or report.get("perturbed_public_validation", False) != perturbed
+            or report.get("independent_local_validation", False)
+            or report.get("new_physical_steps") != 0
+            or report.get("actual_worlds") != 80
+            or report.get("regressions") != []
+            or report.get("champion_regressions") != []
+            or len(report.get("results", [])) != 40
+            or [r["course_index"] for r in report["results"]] != list(range(40))
+            or sum(r["C"]["task_pass"] for r in report["results"]) < 32
+            or not all(r["C_healthy"] for r in report["results"])
+            or model_hash not in report["input_file_hashes"].values()
+        ):
+            raise ValueError(
+                "complete same-model development32/40 with zero old-skill loss required"
+            )
+        merge_pins(pins, report["input_file_hashes"])
+        pins[str(path)] = expected
+        summaries.append(
+            dict(
+                perturbed=perturbed,
+                audit_hash=expected,
+                champion_rescues=report["champion_rescues"],
+            )
+        )
+    if not any(r["champion_rescues"] for r in summaries):
+        raise ValueError("a real independently verified new motor gain required before new exam")
+    return summaries
+
+
 def admit_stable_plastic_sources(a, pins):
     for path, expected, status in (
         (

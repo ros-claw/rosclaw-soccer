@@ -24,6 +24,9 @@ def main():
     p.add_argument("--expansion-gate", type=Path)
     p.add_argument("--expansion-gate-hash")
     p.add_argument("--perturb-40", action="store_true")
+    p.add_argument("--independent-local-40", action="store_true")
+    p.add_argument("--development-gate", type=Path, nargs=2)
+    p.add_argument("--development-gate-hash", nargs=2)
     p.add_argument(
         "--interface",
         choices=(
@@ -58,6 +61,8 @@ def main():
         raise ValueError("local robustness requires explicit expanded40 protocol and its gate")
     if plastic and not a.expand_40:
         raise ValueError("stable/plastic development requires all40 original context clusters")
+    if a.independent_local_40 and not (plastic and a.perturb_40):
+        raise ValueError("independent local exam requires the qualified stable/plastic teacher")
     course_count = 40 if a.expand_40 else 16
     world_cap, native_cap = 2 * course_count, 2 * course_count * 3600
     motion_timing = synergy or a.interface == "motion-timing"
@@ -134,6 +139,13 @@ def main():
         from scripts.rsi_stable_plastic_sources import admit_stable_plastic_sources
 
         admit_stable_plastic_sources(a, pins)
+    development_gates = None
+    if a.independent_local_40:
+        from scripts.rsi_stable_plastic_sources import admit_development_gates
+
+        development_gates = admit_development_gates(
+            a.development_gate, a.development_gate_hash, a.plastic_model_hash, pins
+        )
     if full_window:
         if (
             a.window_qualification is None
@@ -230,7 +242,14 @@ def main():
     if a.perturb_40:
         from rosclaw_soccer.rsi.synergy_teacher_perturbations import declare_synergy_perturbations
 
-        courses, perturbation_declaration = declare_synergy_perturbations(courses, seed=2026102519)
+        if a.independent_local_40:
+            from rosclaw_soccer.rsi.synergy_teacher_perturbations import declare_feedback_validation
+
+            courses, perturbation_declaration = declare_feedback_validation(courses)
+        else:
+            courses, perturbation_declaration = declare_synergy_perturbations(
+                courses, seed=2026102519
+            )
     instances = []
 
     parent_type = (
@@ -278,8 +297,15 @@ def main():
             interface=a.interface,
             expanded_public_validation=a.expand_40,
             perturbed_public_validation=a.perturb_40,
-            stable_plastic_development=plastic,
-            consumed_perturbation_development=plastic and a.perturb_40,
+            stable_plastic_development=plastic and not a.independent_local_40,
+            consumed_perturbation_development=plastic
+            and a.perturb_40
+            and not a.independent_local_40,
+            independent_local_validation=a.independent_local_40,
+            development_gates=development_gates,
+            development_gate_paths=[str(p) for p in a.development_gate]
+            if a.independent_local_40
+            else None,
             champion_root=str(a.champion_root) if plastic else None,
             plastic_model_hash=a.plastic_model_hash if plastic else None,
             plastic_search_requires_backbone_abstention=plastic,
@@ -515,7 +541,7 @@ def main():
             print(index, arm, pair[arm], flush=True)
         results.append(dict(course_index=index, arms=pair))
     champion_regressions, champion_rescues = [], []
-    if plastic:
+    if plastic and not a.independent_local_40:
         from scripts.rsi_stable_plastic_sources import compare_champion
 
         champion_regressions, champion_rescues = compare_champion(a.output, a.champion_root, pins)
@@ -555,8 +581,11 @@ def main():
             and not champion_regressions,
             expanded_public_validation=a.expand_40,
             perturbed_public_validation=a.perturb_40,
-            stable_plastic_development=plastic,
-            consumed_perturbation_development=plastic and a.perturb_40,
+            stable_plastic_development=plastic and not a.independent_local_40,
+            consumed_perturbation_development=plastic
+            and a.perturb_40
+            and not a.independent_local_40,
+            independent_local_validation=a.independent_local_40,
             champion_regressions=champion_regressions,
             champion_rescues=champion_rescues,
             qualified_on_expanded_public=(
@@ -569,7 +598,7 @@ def main():
             ),
             qualified_on_local_perturbations=(
                 a.perturb_40
-                and not plastic
+                and (not plastic or a.independent_local_40)
                 and not regressions
                 and sum(r["arms"]["C"]["task_pass"] for r in results) >= 32
                 and all(r["arms"]["C"]["healthy"] for r in results)
