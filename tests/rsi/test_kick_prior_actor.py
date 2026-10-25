@@ -47,6 +47,10 @@ def test_rejects_shape_drift_and_unknown_artifact(tmp_path):
 
 def test_sim_inference_session_contract_and_private_call_count():
     session = TorchKickSession(KickPriorActor(tensors()))
+    assert session.get_inputs()[0].name == "obs"
+    assert list(session.get_inputs()[0].shape) == [1, 547]
+    assert session.get_outputs()[0].name == "actions"
+    assert list(session.get_outputs()[0].shape) == [1, 29]
     x = np.zeros((1, 547), np.float32)
     result = session.run(["actions"], {"obs": x})
     assert len(result) == 1 and result[0].shape == (1, 29)
@@ -56,3 +60,14 @@ def test_sim_inference_session_contract_and_private_call_count():
     with pytest.raises(ValueError):
         session.run(["actions"], {"obs": np.zeros((2, 547), np.float32)})
     assert session.calls == 1
+
+
+def test_session_admitted_by_actual_shared_player_contract():
+    from test_shared_robonaldo_player import Policy, player, setup
+
+    world = setup()
+    policy = Policy()
+    policy.ort_session = TorchKickSession(KickPriorActor(tensors()))
+    adapter = player(world, policy=policy)
+    assert adapter.boundary == 0
+    assert world.native_steps == 0

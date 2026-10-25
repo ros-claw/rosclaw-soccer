@@ -5,6 +5,7 @@ hardware interface. The existing PD mapping, clips and execution gates remain
 outside this model. Import only in optional Torch research workflows.
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -117,12 +118,25 @@ class KickPriorActor(nn.Module):
         return cast(torch.Tensor, self.actor(observation))
 
 
+@dataclass(frozen=True)
+class KickTensorContract:
+    name: str
+    shape: tuple[int, int]
+    type: str = "tensor(float)"
+
+
 class TorchKickSession:
     """Exact batch1 inference ABI for a separately measured SIM policy instance."""
 
     def __init__(self, actor: KickPriorActor) -> None:
         self.actor = actor.eval()
         self.calls = 0
+
+    def get_inputs(self) -> list[KickTensorContract]:
+        return [KickTensorContract("obs", (1, 547))]
+
+    def get_outputs(self) -> list[KickTensorContract]:
+        return [KickTensorContract("actions", (1, 29))]
 
     def run(self, outputs: list[str], feed: dict[str, np.ndarray]) -> list[np.ndarray]:
         if outputs != ["actions"] or set(feed) != {"obs"} or feed["obs"].shape != (1, 547):
