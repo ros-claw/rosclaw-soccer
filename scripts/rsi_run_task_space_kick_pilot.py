@@ -1,0 +1,274 @@
+"""Frozen balanced16 B/C control-authority pilot; actual native physics only."""
+
+import argparse
+import json
+from pathlib import Path
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    for name in ("qualification", "output"):
+        p.add_argument("--" + name, type=Path, required=True)
+    p.add_argument("--qualification-hash", required=True)
+    p.add_argument("--expected-head", required=True)
+    p.add_argument("--shard-root", type=Path, nargs=4, required=True)
+    a = p.parse_args()
+    from scripts.rsi_atomic_artifacts import write_once
+    from scripts.rsi_native_context_recovery_common import check_pins, digest
+    from scripts.rsi_native_fresh_common import clean, source_pins
+
+    clean(a.expected_head)
+    if a.output.exists() or digest(a.qualification) != a.qualification_hash:
+        raise ValueError("unused pilot output and exact measured-G1 qualification required")
+    qualification = json.loads(a.qualification.read_text())
+    if qualification["status"] != "ACTUAL_G1_MATERIAL_POINT_HG29_DERIVATIVES_VERIFIED":
+        raise ValueError("actual body derivative prerequisite missing")
+    pins = dict(qualification["input_file_hashes"])
+    pins[str(a.qualification)] = a.qualification_hash
+    originals, original_paths = {}, {}
+    indices = [b * 10 + j for b in range(4) for j in (0, 1, 2, 3)]
+    for index in indices:
+        path = a.shard_root[index % 4] / f"course-{index:02d}" / "onnx.json"
+        if pins.get(str(path)) != digest(path):
+            raise ValueError("original closed baseline reference not bound")
+        original_paths[index] = path
+        originals[index] = json.loads(path.read_text())
+    source_pins(pins)
+    check_pins(pins)
+
+    def one(suffix):
+        paths = [Path(k) for k in pins if k.endswith(suffix)]
+        if len(paths) != 1:
+            raise ValueError("unique source asset required: " + suffix)
+        return paths[0]
+
+    import mujoco
+    import numpy as np
+    from rosclaw.simforge.backends.unitree_mujoco_backend import _load_robonaldo
+    from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
+
+    from rosclaw_soccer.rsi.experimental_velocity_evidence import admit_heading_evidence
+    from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+    from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
+    from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
+    from rosclaw_soccer.rsi.task_space_kick_player import TaskSpaceKickPlayer
+    from rosclaw_soccer.rsi.walk_kick_teacher_audit import relabel_arrays
+    from rosclaw_soccer.rsi.walk_kick_teacher_episode import evaluate_episode
+    from rosclaw_soccer.rsi.walk_kick_teacher_plan import search_course_bank
+    from rosclaw_soccer.sim.contracts import hash_json
+    from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
+
+    configs = []
+    for name in pins:
+        path = Path(name)
+        if (
+            path.suffix == ".json"
+            and path.stat().st_size < 2048
+            and json.loads(path.read_text()).get("schema")
+            == "soccer.native_single_finisher_experimental_approach.v1"
+        ):
+            configs.append(path)
+    if len(configs) != 1:
+        raise ValueError("one qualified experimental velocity codec required")
+    fast, _ = admit_heading_evidence(configs[0], pins[str(configs[0])])
+    vm, vc = one("/velocity/v0/exported/policy.onnx"), one("/velocity/v0/params/deploy.yaml")
+    assets = dict(
+        velocity_model=vm,
+        velocity_config=vc,
+        velocity_model_hash=pins[str(vm)],
+        velocity_config_hash=pins[str(vc)],
+        **fast,
+    )
+    model = mujoco.MjModel.from_xml_string(
+        shared_native_scene(
+            one("/cached-standard/declared-scene.xml").read_text(), prefixes=("a/",)
+        )
+    )
+    layout = NativeVelocityLayout(model, robot_prefix="a/", ball_body_name="soccer_ball")
+    types = _load_robonaldo(one("/policy/robonaldo/FreeKick.py").parents[2])
+    courses = search_course_bank(expanded_public=True)
+    preflight_receiving_courses(courses)
+    instances = []
+
+    class Controlled(TaskSpaceKickPlayer):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            instances.append(self)
+
+    a.output.mkdir(parents=True)
+    write_once(
+        a.output / "declaration.json",
+        dict(
+            protocol="soccer.g2.bounded_surface_contact_pilot.v1",
+            source_head=a.expected_head,
+            input_file_hashes=pins,
+            course_indices=indices,
+            arms=["B", "C"],
+            actual_world_ceiling=32,
+            actual_native_step_ceiling=115200,
+            forecast_native_step_ceiling=172800,
+            candidate_set=[
+                "original",
+                "foot_nominal_plus_shin_clearance",
+                "foot_contact_alignment_plus_shin_clearance",
+            ],
+            active_joints=list(range(12)),
+            max_nominal_delta_rad=0.12,
+            max_current_delta_rad=0.2,
+            max_command_step_rad=0.1,
+            foot_shin_cost=100.0,
+            posture_cost=0.1,
+            shin_margin_m=0.015,
+            maximum_retreat_m=0.04,
+            contact_alignment_correction_m=[0.02, 0.03, 0.015],
+            activation_foot_gap_m=0.18,
+            no_model_or_gain_changes=True,
+            privileged_per_course_approach=True,
+            original_exam_unchanged=True,
+            optimizer_updates=0,
+            promotion_authorized=False,
+            hardware_authorized=False,
+            success_criterion=(
+                "at least2 distinct rescues, no historical task/safety/body regressions; "
+                "then expand40+perturbations"
+            ),
+            falsifier=(
+                "no repeatable physical gain or only regressions; "
+                "no unbounded parameter/gain sweeps"
+            ),
+        ),
+    )
+    results, worlds, native, forecasts = [], 0, 0, 0
+    for index in indices:
+        folder = a.output / f"course-{index:02d}"
+        folder.mkdir()
+        pair = {}
+        for arm in ("B", "C"):
+            write_once(
+                folder / f"{arm}-attempt.json",
+                dict(
+                    course_index=index,
+                    arm=arm,
+                    source_head=a.expected_head,
+                    original_record_hash=pins[str(original_paths[index])],
+                ),
+            )
+            instances.clear()
+            original = originals[index]
+            row, arrays = evaluate_episode(
+                model=model,
+                assets=dict(assets, experimental_fast=original["experimental_fast_approach"]),
+                policy_types=types,
+                course=courses[index].course,
+                parameters=original["parameters"],
+                hard_limits=np.array(G1_HARD_TORQUE_LIMITS),
+                player_type=SharedRoboNaldoPlayer if arm == "B" else Controlled,
+            )
+            worlds += 1
+            native += row["native_steps"]
+            if hash_json(
+                relabel_arrays(
+                    arrays, controls=row["controls"], ball_address=layout.bq, root_address=layout.rq
+                )
+            ) != hash_json(row["outcome"]):
+                raise ValueError("independent actual native label differs")
+            if (
+                abs(arrays["torque"][:, layout.ai]) > 0.85 * np.array(G1_HARD_TORQUE_LIMITS) + 1e-12
+            ).any():
+                raise ValueError("hard torque bound changed")
+            if arm == "B":
+                with np.load(original_paths[index].parent / original["artifact"]["path"]) as old:
+                    if set(old.files) != set(arrays) or any(
+                        not np.array_equal(old[k], v) for k, v in arrays.items()
+                    ):
+                        raise ValueError("baseline differs from closed original raw physics")
+                row["exact_original_baseline"] = True
+            elif instances:
+                if len(instances) != 1:
+                    raise ValueError("one private local controller required")
+                controller = instances[0]
+                for frame, prediction in controller.selected_records:
+                    for key in ("qpos", "qvel", "torque", "ball_forces"):
+                        if not np.array_equal(
+                            prediction[key], arrays[key][frame * 10 : (frame + 1) * 10]
+                        ):
+                            raise ValueError("chosen prediction differs at native substeps: " + key)
+                row["controller_events"] = controller.events
+                row["changed_controls"] = controller.changed_controls
+                row["forecasts"] = controller.forecaster.counters()
+                forecasts += controller.forecaster.integrated_steps
+                if controller.changed_controls == 0:
+                    with np.load(
+                        original_paths[index].parent / original["artifact"]["path"]
+                    ) as old:
+                        if any(not np.array_equal(old[k], v) for k, v in arrays.items()):
+                            raise ValueError("zero/off branch altered the legacy trajectory")
+            if worlds > 32 or native > 115200 or forecasts > 172800:
+                raise ValueError("frozen physical budget exceeded")
+            artifact = folder / f"{arm}.npz"
+            np.savez_compressed(artifact, **arrays)
+            row.update(
+                arm=arm,
+                course_index=index,
+                artifact=dict(path=artifact.name, hash=digest(artifact)),
+            )
+            write_once(folder / f"{arm}.json", row)
+            pair[arm] = dict(
+                record=str((folder / f"{arm}.json").relative_to(a.output)),
+                hash=digest(folder / f"{arm}.json"),
+                task_pass=row["outcome"]["task_pass"],
+                safe=row["outcome"]["safe"],
+                healthy=row["healthy_full_horizon"],
+                first_foot=row["outcome"]["first_foot_contact_frame"],
+                changed_controls=row.get("changed_controls", 0),
+            )
+            write_once(
+                folder / f"{arm}-finished.json",
+                dict(
+                    actual_worlds=worlds,
+                    actual_native_steps=native,
+                    forecast_native_steps=forecasts,
+                ),
+            )
+            print(index, arm, pair[arm], flush=True)
+        results.append(dict(course_index=index, arms=pair))
+    rescues = [
+        r["course_index"]
+        for r in results
+        if not r["arms"]["B"]["task_pass"]
+        and r["arms"]["C"]["task_pass"]
+        and r["arms"]["C"]["healthy"]
+    ]
+    regressions = [
+        r["course_index"]
+        for r in results
+        if any(
+            r["arms"]["B"][k] and not r["arms"]["C"][k] for k in ("task_pass", "safe", "healthy")
+        )
+    ]
+    check_pins(pins)
+    clean(a.expected_head)
+    write_once(
+        a.output / "complete.json",
+        dict(
+            status="BOUNDED_SURFACE_CONTACT_PILOT_COMPLETE",
+            source_head=a.expected_head,
+            input_file_hashes=pins,
+            results=results,
+            actual_worlds=worlds,
+            actual_native_steps=native,
+            forecast_native_steps=forecasts,
+            rescues=rescues,
+            regressions=regressions,
+            qualified_for_expansion=len(rescues) >= 2 and not regressions,
+            optimizer_updates=0,
+            physical_teacher_qualified=False,
+            promotion_authorized=False,
+            hardware_authorized=False,
+            goal_complete=False,
+        ),
+    )
+
+
+if __name__ == "__main__":
+    main()

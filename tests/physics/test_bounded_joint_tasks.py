@@ -105,3 +105,47 @@ def test_untyped_task_objects_rejected_before_reading_their_fields():
 def test_invalid_task_arrays_rejected_without_attribute_errors():
     with pytest.raises(ValueError):
         proposal(tasks=(LinearJointTask("bad", None, np.zeros(3), 1.0),))
+
+
+def test_explicit_active_scope_preserves_frozen_parent_without_repairing_it():
+    q = np.zeros(29)
+    nominal = q.copy()
+    nominal[28] = 3.0  # Frozen pre-existing parent outside physical limit.
+    jac = np.zeros((3, 29))
+    jac[0, 0] = 1
+    args = dict(
+        observation_step_cap_rad=0.2,
+        command_step_cap_rad=0.1,
+        nominal_trust_rad=0.12,
+        posture_cost=0.1,
+    )
+    tasks = (LinearJointTask("foot", jac, np.array([0.03, 0, 0]), 100.0),)
+    p = solve_bounded_joint_tasks(
+        q, nominal, q, np.tile([-2.0, 2.0], (29, 1)), tasks, active_joint_indices=(0,), **args
+    )
+    assert p.target_rad[28] == 3.0
+    assert 0 < p.target_rad[0] < 0.031
+    unrestricted = solve_bounded_joint_tasks(
+        q, nominal, q, np.tile([-2.0, 2.0], (29, 1)), tasks, **args
+    )
+    assert unrestricted.target_rad is None
+
+
+def test_active_scope_still_abstains_if_active_bounds_conflict():
+    q = np.zeros(29)
+    nominal = q.copy()
+    nominal[0] = 1.0
+    jac = np.zeros((3, 29))
+    p = solve_bounded_joint_tasks(
+        q,
+        nominal,
+        q,
+        np.tile([-2.0, 2.0], (29, 1)),
+        (LinearJointTask("foot", jac, np.zeros(3), 1.0),),
+        observation_step_cap_rad=0.2,
+        command_step_cap_rad=0.1,
+        nominal_trust_rad=0.12,
+        posture_cost=0.1,
+        active_joint_indices=(0,),
+    )
+    assert p.status == "ABSTAIN_INFEASIBLE_BOUND_INTERSECTION"

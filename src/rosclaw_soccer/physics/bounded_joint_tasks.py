@@ -40,6 +40,7 @@ def solve_bounded_joint_tasks(
     command_step_cap_rad: float,
     nominal_trust_rad: float,
     posture_cost: float,
+    active_joint_indices: tuple[int, ...] | None = None,
 ) -> JointTaskProposal:
     """Solve a 29-joint bounded least-squares proposal against actual current q.
 
@@ -63,6 +64,13 @@ def solve_bounded_joint_tasks(
             raise ValueError("finite canonical actuated-only float64 joint arrays required")
     if np.any(limits_rad[:, 0] >= limits_rad[:, 1]):
         raise ValueError("ordered physical joint limits required")
+    if active_joint_indices is not None and (
+        type(active_joint_indices) is not tuple
+        or not active_joint_indices
+        or len(set(active_joint_indices)) != len(active_joint_indices)
+        or any(type(i) is not int or not 0 <= i < 29 for i in active_joint_indices)
+    ):
+        raise ValueError("explicit unique active canonical joint indices required")
     for value, maximum in (
         (observation_step_cap_rad, 0.2),
         (command_step_cap_rad, 0.1),
@@ -122,6 +130,14 @@ def solve_bounded_joint_tasks(
             nominal_rad + nominal_trust_rad,
         )
     )
+    if active_joint_indices is not None:
+        # Frozen parent targets are not controller authority. They may already
+        # exceed a physical limit; do not repair or pretend those targets are
+        # physically qualified. Only explicitly active joints get new targets.
+        inactive = np.ones(29, dtype=bool)
+        inactive[list(active_joint_indices)] = False
+        lower[inactive] = nominal_rad[inactive]
+        upper[inactive] = nominal_rad[inactive]
     if np.any(lower > upper):
         return JointTaskProposal("ABSTAIN_INFEASIBLE_BOUND_INTERSECTION", None, {}, None)
     lo, hi = lower - current_rad, upper - current_rad
