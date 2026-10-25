@@ -11,6 +11,7 @@ def main():
         p.add_argument("--" + key, type=Path, required=True)
     p.add_argument("--effect-review-hash", required=True)
     p.add_argument("--expected-head", required=True)
+    p.add_argument("--pre-proposal-96", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -79,6 +80,8 @@ def main():
     types = _load_robonaldo(one("/policy/robonaldo/FreeKick.py").parents[2])
     instances = []
     frames = (80, 100, 150, 220)
+    horizon = 96 if a.pre_proposal_96 else 64
+    forecast_budget = len(frames) * horizon * 10
 
     class Probe(SharedRoboNaldoPlayer):
         def __init__(self, *args, **kwargs):
@@ -87,15 +90,19 @@ def main():
                 self,
                 expected_policy_type=types[2],
                 expected_model_hash=model_hash,
-                native_step_budget=2560,
+                native_step_budget=forecast_budget,
             )
             self.predictions = []
             instances.append(self)
 
         def propose(self):
+            if a.pre_proposal_96 and self.world.control_steps in frames:
+                self.predictions.append(
+                    self.predictor.forecast(controls=horizon, before_proposal=True)
+                )
             target, receipt = super().propose()
-            if self.world.control_steps in frames:
-                self.predictions.append(self.predictor.forecast(controls=64))
+            if not a.pre_proposal_96 and self.world.control_steps in frames:
+                self.predictions.append(self.predictor.forecast(controls=horizon))
             return target, receipt
 
     a.output.mkdir(parents=True)
@@ -106,10 +113,12 @@ def main():
             input_file_hashes=pins,
             model_hash=model_hash,
             probes=frames,
-            controls_per_probe=64,
+            controls_per_probe=horizon,
+            before_proposal=a.pre_proposal_96,
+            reference_conditioning="OFF_original_arrays",
             actual_worlds=1,
             actual_native_step_ceiling=3600,
-            forecast_native_step_ceiling=2560,
+            forecast_native_step_ceiling=forecast_budget,
             every_future_target_and_native_array_must_match=True,
             no_changed_targets=True,
             copied_history_no_enter_or_reset=True,
@@ -135,13 +144,13 @@ def main():
         raise ValueError("all four preregistered NN forecast boundaries required")
     for predicted in probe.predictions:
         start = predicted["donor_control_frame"]
-        if predicted["controls"] != 64 or predicted["body_failed"]:
-            raise ValueError("original healthy 64-control future not reproduced")
+        if predicted["controls"] != horizon or predicted["body_failed"]:
+            raise ValueError("original healthy full forecast future not reproduced")
         for key in ("qpos", "qvel", "torque", "ball_forces"):
-            if not np.array_equal(predicted[key], arrays[key][start * 10 : (start + 64) * 10]):
+            if not np.array_equal(predicted[key], arrays[key][start * 10 : (start + horizon) * 10]):
                 raise ValueError("closed-loop NN forecast differs from actual future: " + key)
         if not np.array_equal(
-            predicted["joint_targets"], arrays["joint_targets"][start : start + 64]
+            predicted["joint_targets"], arrays["joint_targets"][start : start + horizon]
         ):
             raise ValueError("future NN calls do not reproduce actual future PD targets")
         artifact = a.output / f"forecast-{start:03d}.npz"
@@ -166,7 +175,9 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="G1_COPIED_NN_CLOSED_LOOP_64_CONTROL_FORECASTS_EXACT",
+            status=f"G1_COPIED_NN_CLOSED_LOOP_{horizon}_CONTROL_FORECASTS_EXACT",
+            before_proposal=a.pre_proposal_96,
+            reference_conditioning="OFF_original_arrays",
             source_head=a.expected_head,
             input_file_hashes=pins,
             actual_record=row,

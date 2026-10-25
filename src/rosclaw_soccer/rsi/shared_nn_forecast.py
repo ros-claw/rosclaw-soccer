@@ -14,6 +14,7 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.rsi.motion_reference_timing import MotionTimingPlan, condition_motion_reference
 from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
 from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
 from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
@@ -91,14 +92,18 @@ def copy_sim_policy(policy: Any) -> Any:
 
 
 def _fork_pending_player(
-    player: SharedRoboNaldoPlayer, world: SharedNativeMotorWorld, policy: Any
+    player: SharedRoboNaldoPlayer,
+    world: SharedNativeMotorWorld,
+    policy: Any,
+    *,
+    before_proposal: bool = False,
 ) -> SharedRoboNaldoPlayer:
     """Fork already-admitted software into a separate owned SIM world, NO enter()."""
     if (
         world.model is not player.world.model
         or world.data is player.world.data
         or world._private_policy_owners
-        or player.pending is None
+        or ((player.pending is None) != before_proposal)
         or type(policy) is not type(player.policy)
         or policy is player.policy
         or policy.state_cmd is player.policy.state_cmd
@@ -110,7 +115,7 @@ def _fork_pending_player(
     ghost.layout, ghost.torso = world.layouts[player.prefix], player.torso
     ghost.goal = player.goal.copy()
     ghost.boundary = world.control_steps
-    ghost.pending = player.pending.copy()
+    ghost.pending = None if player.pending is None else player.pending.copy()
     ghost.failed = False
     ghost.proposals, ghost.commits = player.proposals, player.commits
     ghost.measured_entry_receipt = player.measured_entry_receipt
@@ -175,6 +180,8 @@ class SharedNNForecaster:
         controls: int,
         first_target: np.ndarray | None = None,
         first_action_history: np.ndarray | None = None,
+        before_proposal: bool = False,
+        reference_plan: MotionTimingPlan | None = None,
     ) -> dict[str, Any]:
         import mujoco
 
@@ -182,15 +189,22 @@ class SharedNNForecaster:
         donor._require_current_boundary()
         if (
             source.failed
-            or source.pending is None
+            or type(before_proposal) is not bool
+            or ((source.pending is None) != before_proposal)
             or source.boundary != donor.control_steps
             or type(source.policy) is not self.policy_type
             or donor._torque_layer_owners
             or compiled_model_hash(donor.model) != self.model_hash
         ):
             raise ValueError("one admitted pending proposal at unchanged actual boundary required")
-        if type(controls) is not int or not 1 <= controls <= 64:
-            raise ValueError("explicit one-to-64-control closed-loop horizon required")
+        if type(controls) is not int or not 1 <= controls <= (96 if before_proposal else 64):
+            raise ValueError("bounded64 pending/96 pre-proposal closed-loop horizon required")
+        if (reference_plan is not None and not before_proposal) or (
+            before_proposal and (first_target is not None or first_action_history is not None)
+        ):
+            raise ValueError(
+                "reference conditioning is pre-proposal only, no first target override"
+            )
         charge = controls * 10
         if self.attempted_steps + charge > self.budget:
             raise RuntimeError("closed-loop forecast budget exhausted; no automatic extension")
@@ -200,14 +214,24 @@ class SharedNNForecaster:
         )
         before = policy_state_hash(source.policy)
         policy = copy_sim_policy(source.policy)
-        target = source.pending.copy() if first_target is None else np.asarray(first_target)
+        if reference_plan is not None:
+            condition_motion_reference(policy, reference_plan)
+        # A pre-proposal fork has no target/history to rewind. The first NN call
+        # will be made below on the owned world's measured body, exactly once.
+        parent_target = np.zeros(29, np.float64)
+        if not before_proposal:
+            assert source.pending is not None
+            parent_target = source.pending.copy()
+        target = parent_target.copy() if first_target is None else np.asarray(first_target)
         if target.shape != (29,) or target.dtype != np.float64 or not np.isfinite(target).all():
             raise ValueError("finite actual-encoding float64 first target required")
-        changed = np.flatnonzero(target != source.pending)
+        changed = (
+            np.array([], dtype=int) if before_proposal else np.flatnonzero(target != parent_target)
+        )
         if len(changed):
             if (
                 changed.max() >= 12
-                or np.max(abs(target - source.pending)) > 0.120001
+                or np.max(abs(target - parent_target)) > 0.120001
                 or first_action_history is None
                 or first_action_history.shape != (29,)
                 or first_action_history.dtype != np.float32
@@ -245,12 +269,13 @@ class SharedNNForecaster:
             players=donor.parameters,
             ball_body_name=donor.model.body(donor.ball).name,
         )
-        ghost = _fork_pending_player(source, owned, policy)
-        ghost.pending = target.copy()
+        ghost = _fork_pending_player(source, owned, policy, before_proposal=before_proposal)
+        if not before_proposal:
+            ghost.pending = target.copy()
         records, targets, ticks = [], [], []
         try:
             for step in range(controls):
-                if step:
+                if step or before_proposal:
                     target, _ = ghost.propose()
                     self.future_nn_calls += 1
                 result = owned.advance({source.prefix: target})
@@ -283,6 +308,9 @@ class SharedNNForecaster:
             native_steps=owned.native_steps,
             body_failed=owned.failed,
             donor_software_unchanged=True,
+            before_proposal=before_proposal,
+            reference_conditioned=reference_plan is not None
+            and reference_plan.peak_shift_frames != 0,
             prediction_is_not_actual_execution=True,
             promotion_authorized=False,
             hardware_authorized=False,

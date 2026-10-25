@@ -39,6 +39,8 @@ class ForecastPolicy:
         self.history.append(self.last_action_il.copy())
         obs = np.zeros((1, 547), np.float32)
         obs[0, :29] = self.state_cmd.q + 0.2 * self.history[-1]
+        if hasattr(self, "motion_joint_pos"):
+            obs[0, :29] += self.motion_joint_pos[self.time_step]
         out = self.ort_session.run(["actions"], {"obs": obs})[0][0]
         self.last_action_il = out.copy()
         self.policy_output.actions = out.copy()
@@ -173,3 +175,65 @@ def test_no_pending_boundary_rejected_without_allocating_a_forecast(tmp_path):
     with pytest.raises(ValueError, match="pending"):
         f.forecast(controls=1)
     assert f.counters()["attempted_native_steps"] == 0
+
+
+def test_preproposal_fork_calls_first_nn_without_reset_or_donor_mutation(tmp_path):
+    p, f = setup(tmp_path)
+    p.world.advance({p.prefix: p.pending})
+    p.commit()
+    before = policy_state_hash(p.policy)
+    predicted = f.forecast(controls=4, before_proposal=True)
+    assert before == policy_state_hash(p.policy)
+    assert p.pending is None
+    records, targets = [], []
+    for _ in range(4):
+        target, _ = p.propose()
+        targets.append(target)
+        records.append(p.world.advance({p.prefix: target}))
+        p.commit()
+    for k in ("qpos", "qvel", "torque", "ball_forces"):
+        np.testing.assert_array_equal(predicted[k], np.concatenate([r[k] for r in records]))
+    np.testing.assert_array_equal(predicted["joint_targets"], np.stack(targets))
+    assert f.counters()["future_nn_calls"] == 4
+    assert p.policy.enters == 1
+
+
+def test_preproposal_cannot_overwrite_first_action_or_use_pending_history(tmp_path):
+    p, f = setup(tmp_path)
+    with pytest.raises(ValueError, match="pending"):
+        f.forecast(controls=4, before_proposal=True)
+    p.world.advance({p.prefix: p.pending})
+    p.commit()
+    with pytest.raises(ValueError, match="pre-proposal only"):
+        f.forecast(controls=4, before_proposal=True, first_target=np.zeros(29))
+    assert f.counters()["attempted_native_steps"] == 0
+
+
+def test_conditioned_reference_forecast_equals_actual_selected_plan(tmp_path):
+    from rosclaw_soccer.rsi.motion_reference_timing import (
+        MotionTimingPlan,
+        condition_motion_reference,
+    )
+
+    p, f = setup(tmp_path)
+    p.world.advance({p.prefix: p.pending})
+    p.commit()
+    policy = p.policy
+    policy.control_dt, policy.motion_total_steps = 0.02, 100
+    t = np.arange(100)[:, None] * 0.02
+    policy.motion_joint_pos = np.repeat(t**2 * 0.001, 29, axis=1)
+    policy.motion_joint_vel = np.repeat(2 * t * 0.001, 29, axis=1)
+    policy.motion_body_pos = np.zeros((100, 2, 3))
+    policy.motion_body_quat = np.tile([1.0, 0.0, 0.0, 0.0], (100, 2, 1))
+    plan = MotionTimingPlan(2, 24, 3.0)
+    before = policy_state_hash(policy)
+    predicted = f.forecast(controls=4, before_proposal=True, reference_plan=plan)
+    assert before == policy_state_hash(policy)
+    condition_motion_reference(policy, plan)
+    records = []
+    for _ in range(4):
+        target, _ = p.propose()
+        records.append(p.world.advance({p.prefix: target}))
+        p.commit()
+    for k in ("qpos", "qvel", "torque", "ball_forces"):
+        np.testing.assert_array_equal(predicted[k], np.concatenate([r[k] for r in records]))
