@@ -9,6 +9,7 @@ from rosclaw_soccer.rsi.executed_target_synergy import (
     apply_executed_target_synergy,
 )
 from rosclaw_soccer.rsi.shared_nn_forecast import policy_state_hash
+from scripts.rsi_review_joint_response_pilot import verify_target_edits
 
 
 def plan(start=0, value=0.01):
@@ -136,3 +137,32 @@ def test_real_mode_and_invalid_encoder_rejected_without_mutation(tmp_path):
 def test_unbounded_or_nonfinite_plan_is_not_an_actuator_command(value):
     with pytest.raises(ValueError, match="finite normalized"):
         plan(value=value).offsets()
+
+
+def test_independent_target_codec_readback_and_tamper_rejection(tmp_path):
+    p, _ = setup(tmp_path)
+    target, edit = apply_executed_target_synergy(p, plan())
+    codec = (
+        p.policy.default_q_mj,
+        p.policy.action_scale_mj,
+        np.arange(29),
+        p.policy.action_clip_lo_il,
+        p.policy.action_clip_hi_il,
+    )
+    kwargs = dict(
+        start=p.world.control_steps,
+        plan=plan(),
+        codec=codec,
+        limits=p.world.model.jnt_range[p.layout.joints],
+    )
+    verify_target_edits([edit], target[None], **kwargs)
+    wrong = copy.deepcopy(edit)
+    wrong["executed_raw_action_il"][0] += 0.001
+    with pytest.raises(ValueError, match="codec"):
+        verify_target_edits([wrong], target[None], **kwargs)
+    wrong = copy.deepcopy(edit)
+    wrong["control_step"] = 0
+    with pytest.raises(ValueError, match="clock"):
+        verify_target_edits([wrong], target[None], **kwargs)
+    with pytest.raises(ValueError, match="every controlled"):
+        verify_target_edits([], target[None], **kwargs)

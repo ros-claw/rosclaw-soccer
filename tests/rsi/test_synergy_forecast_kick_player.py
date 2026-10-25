@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from test_predicted_touch_window import prediction
 
+import rosclaw_soccer.rsi.executed_synergy_kick_player as executed_controller
 import rosclaw_soccer.rsi.joint_task_response as joint_response
 import rosclaw_soccer.rsi.synergy_forecast_kick_player as synergy
 import rosclaw_soccer.rsi.synergy_response_model as response_model
@@ -32,13 +33,19 @@ from scripts.rsi_review_motion_timing_teacher import (
         ("sequential-retains", 37),
         ("aim", 57),
         ("aim-retains", 37),
+        ("executed", 73),
+        ("executed-retains", 37),
     ],
 )
 def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
     monkeypatch, mode, expected_calls
 ):
     p = object.__new__(
-        AimCommandKickPlayer if mode.startswith("aim") else synergy.SynergyForecastKickPlayer
+        executed_controller.ExecutedSynergyKickPlayer
+        if mode.startswith("executed")
+        else AimCommandKickPlayer
+        if mode.startswith("aim")
+        else synergy.SynergyForecastKickPlayer
     )
     p.world = SimpleNamespace(_require_current_boundary=lambda: None, control_steps=100)
     p.policy = SimpleNamespace(time_step=20, WARMUP_STEPS=0, motion_total_steps=100)
@@ -47,6 +54,7 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
     p.decided = p.plan_applied = False
     p.selected_prediction = None
     p.events, p.candidate_predictions = [], []
+    p.target_edits, p.executed_target_plan = [], None
     p.basis_isaac = tuple(tuple(float(i == j) for j in range(29)) for i in range(6))
     p.basis_hg = np.eye(6, 29, dtype=np.float64)
     p.synergy_response_enabled = mode == "response"
@@ -64,6 +72,8 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
             "sequential-retains",
             "aim",
             "aim-retains",
+            "executed",
+            "executed-retains",
         )
         else 96
     )
@@ -79,13 +89,29 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
         p.plastic_basis_isaac = tuple(tuple(float(i + 6 == j) for j in range(29)) for i in range(6))
     calls, installed = [], []
 
-    def forecast(*, controls, before_proposal, reference_plan=None, aim_goal=None):
+    def forecast(
+        *, controls, before_proposal, reference_plan=None, aim_goal=None, target_plan=None
+    ):
         assert controls == p.forecast_controls and before_proposal
-        calls.append(reference_plan if aim_goal is None else aim_goal)
+        calls.append(
+            target_plan
+            if target_plan is not None
+            else reference_plan
+            if aim_goal is None
+            else aim_goal
+        )
         r = prediction(n=controls)
         r["donor_control_frame"] = 100
         passes = mode in ("parent", "long", "stable-parent") or (
-            mode in ("rescue", "stable", "joint-retains", "sequential-retains", "aim-retains")
+            mode
+            in (
+                "rescue",
+                "stable",
+                "joint-retains",
+                "sequential-retains",
+                "aim-retains",
+                "executed-retains",
+            )
             and reference_plan is not None
             and reference_plan.coefficients[0][0] > 0
         )
@@ -93,6 +119,7 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
         passes = passes or (mode == "plastic" and len(calls) > 37)
         passes = passes or (mode in ("joint", "sequential") and len(calls) > 37)
         passes = passes or (mode == "aim" and len(calls) > 37)
+        passes = passes or (mode == "executed" and len(calls) > 37)
         if not passes:
             r["qpos"][:, 0] *= 0.1
         return r
@@ -117,14 +144,37 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
         "propose_synergy_response",
         lambda basis, samples: (np.full((2, 6), 0.001), {"physics_verified": False}),
     )
-    monkeypatch.setattr(synergy.SharedRoboNaldoPlayer, "propose", lambda self: (np.zeros(29), {}))
+    monkeypatch.setattr(
+        synergy.SharedRoboNaldoPlayer,
+        "propose",
+        lambda self: (np.zeros(29), {"proposed_target": np.zeros(29)}),
+    )
+    monkeypatch.setattr(
+        executed_controller,
+        "apply_executed_target_synergy",
+        lambda self, plan: (np.zeros(29), {"applied": True}),
+    )
     p.propose()
     assert len(calls) == expected_calls
     event = p.events[0]
     audit_choice = verify_synergy_search(
         event["candidate_windows"][:37], [0.0] * min(37, expected_calls), event["generations"]
     )
-    if mode == "response":
+    if mode == "executed":
+        assert audit_choice == 0 and event["selected"].startswith("target-")
+        assert event["selected_basis"] == "executed-target"
+        assert not event["original_actual_target_authority_unchanged"]
+        assert p.target_edits == [{"applied": True}]
+        additional = event["additional_candidate_search"]
+        synthetic = [event["candidate_windows"][0]] + [
+            dict(w, name=w["name"][7:]) for w in event["candidate_windows"][37:]
+        ]
+        assert verify_synergy_search(synthetic, [0.0] * 37, additional["generations"]) > 0
+    elif mode == "executed-retains":
+        assert audit_choice > 0 and not p.target_edits
+        assert event["additional_candidate_search"] is None
+        assert event["original_actual_target_authority_unchanged"]
+    elif mode == "response":
         assert audit_choice == 0 and event["selected"] == "native-synergy-response"
     elif mode == "plastic":
         assert audit_choice == 0 and event["selected"].startswith("plastic-")
@@ -152,6 +202,7 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
             "sequential-retains",
             "aim",
             "aim-retains",
+            "executed-retains",
         )
     )
     if mode in ("stable", "plastic", "stable-parent"):

@@ -5,6 +5,64 @@ import json
 from pathlib import Path
 
 
+def verify_target_edits(edits, targets, *, start, plan, codec, limits):
+    """Read raw codec commitments; this is not a second implementation of the NN."""
+    import numpy as np
+
+    default, scale, mapping, action_lo, action_hi = codec
+    offsets = plan.offsets()
+    if len(edits) != len(targets):
+        raise ValueError("one target/history commitment for every controlled NN tick required")
+    for j, (edit, target) in enumerate(zip(edits, targets, strict=True)):
+        control = start + j
+        local = control - plan.start_control
+        requested = offsets[local] if 0 <= local < len(offsets) else np.zeros(29)
+        original = np.array(edit["original_nn_target_hg_rad"], np.float64)
+        raw = np.array(edit["original_raw_action_il"], np.float32)
+        executed = np.array(edit.get("executed_raw_action_il", raw), np.float32)
+        if (
+            edit["control_step"] != control
+            or type(edit["applied"]) is not bool
+            or type(edit["fallback"]) is not bool
+            or (edit["applied"] and edit["fallback"])
+            or any(
+                edit[k]
+                for k in (
+                    "physical_state_modified",
+                    "reference_modified",
+                    "neural_weights_modified",
+                    "hardware_authorized",
+                )
+            )
+            or not np.array_equal(np.array(edit["requested_offset_hg_rad"]), requested)
+            or any(
+                a.shape != (29,) or not np.isfinite(a).all()
+                for a in (original, raw, executed, target)
+            )
+            or not np.array_equal((default + scale * raw[mapping]).astype(np.float64), original)
+            or not np.array_equal((default + scale * executed[mapping]).astype(np.float64), target)
+            or (executed < action_lo).any()
+            or (executed > action_hi).any()
+        ):
+            raise ValueError("actual target/action history codec or absolute plan clock differs")
+        difference = target - original
+        changed = difference != 0
+        if (
+            (abs(difference) > 0.060001).any()
+            or (target[changed] < limits[changed, 0]).any()
+            or (target[changed] > limits[changed, 1]).any()
+            or (changed & (requested == 0)).any()
+            or bool(changed.any()) != edit["applied"]
+        ):
+            raise ValueError("encoded actual target exceeds original declared authority")
+        if edit["applied"] and (
+            not edit["next_action_history_matches_executed_codec"]
+            or not np.array_equal(np.array(edit["applied_offset_hg_rad"]), difference)
+            or edit["maximum_target_offset_rad"] != float(abs(difference).max())
+        ):
+            raise ValueError("recorded applied target/history commitment differs")
+
+
 def verify_sequential_response(windows, forecasts, recorded):
     """Replay the finite optimizer from raw-derived observations, without physics."""
     import numpy as np
@@ -53,14 +111,20 @@ def main():
     dec = json.loads(dp.read_text())
     sequential = dec.get("sequential_restoration", False)
     aim = dec.get("aim_command_search", False)
-    if type(sequential) is not bool or type(aim) is not bool or (aim and sequential):
+    executed = dec.get("executed_target_search", False)
+    if (
+        any(type(v) is not bool for v in (sequential, aim, executed))
+        or sum((sequential, aim, executed)) > 1
+    ):
         raise ValueError("explicit boolean response protocol required")
-    candidate_cap = 57 if aim else 273 if sequential else 96
+    candidate_cap = 73 if executed else 57 if aim else 273 if sequential else 96
     forecast_cap = 6 * (37 + candidate_cap) * 1280
     if (
         report["status"]
         != (
-            "FULL_NN_AIM_COMMAND_PILOT_COMPLETE"
+            "FULL_NN_EXECUTED_TARGET_PILOT_COMPLETE"
+            if executed
+            else "FULL_NN_AIM_COMMAND_PILOT_COMPLETE"
             if aim
             else "FULL_NN_JOINT_TASK_RESPONSE_PILOT_COMPLETE"
         )
@@ -95,6 +159,7 @@ def main():
     import numpy as np
 
     from rosclaw_soccer.rsi.aim_command_kick_player import declared_aim_commands
+    from rosclaw_soccer.rsi.executed_target_synergy import ExecutedTargetSynergy
     from rosclaw_soccer.rsi.joint_task_response import (
         propose_joint_task_response,
         response_features,
@@ -104,6 +169,36 @@ def main():
     from rosclaw_soccer.sim.contracts import hash_json
 
     lo = context["layout"]
+    codec = None
+    if executed:
+        from importlib import import_module
+
+        import yaml
+
+        cfgs = [Path(k) for k in pins if k.endswith("/policy/robonaldo/config/freekick.yaml")]
+        if len(cfgs) != 1:
+            raise ValueError("one pinned original float32 action encoder configuration required")
+        cfg = yaml.safe_load(cfgs[0].read_text())
+        module = import_module(context["types"][2].__module__)
+        action_lo, action_hi = module._compile_action_clip_bounds(cfg, cfg.get("clip_actions", 3.0))
+        codec = (
+            np.array(cfg["default_joint_pos"], np.float32),
+            np.array(cfg["action_scale"], np.float32),
+            np.array(context["types"][3]),
+            action_lo,
+            action_hi,
+        )
+        if any(
+            dec.get(k) != v
+            for k, v in dict(
+                new_candidate_ceiling=73,
+                new_probe_axes=6,
+                temporal_lobe="two24interval_lobes",
+                second_lobe_coefficients_zero=False,
+                proposal_axis_trust_rad=0.06,
+            ).items()
+        ):
+            raise ValueError("frozen bounded actual-target protocol differs")
     aim_grid = declared_aim_commands()
     if aim and (
         dec["aim_command_world_points"] != [list(c.world_point) for c in aim_grid]
@@ -240,6 +335,25 @@ def main():
                 )
                 peaks.append(float(pred["ball_forces"][:, 0, 2].max()))
                 forecasts.append(pred)
+                if executed:
+                    if arm == "C" and j >= 37:
+                        plan = ExecutedTargetSynergy(
+                            frame,
+                            tuple(tuple(float(x) for x in r) for r in context["basis"]),
+                            tuple(tuple(float(x) for x in r) for r in windows[-1]["coefficients"]),
+                        )
+                        verify_target_edits(
+                            f["target_edits"],
+                            pred["joint_targets"],
+                            start=frame,
+                            plan=plan,
+                            codec=codec,
+                            limits=context["model"].jnt_range[lo.joints],
+                        )
+                    elif f["target_edits"]:
+                        raise ValueError(
+                            "old reference branch must not silently use target authority"
+                        )
                 charged_arm += requested * 10
                 integrated_arm += n * 10
             if hash_json(windows) != hash_json(event["candidate_windows"]):
@@ -250,6 +364,32 @@ def main():
                 expected = 1 if windows[0]["outcome"]["window_pass"] else 37
                 if len(windows) != expected or event["joint_task_response"] is not None:
                     raise ValueError("old qualified branch must prohibit new search")
+            elif executed:
+                if len(windows) != 73 or event["joint_task_response"] is not None:
+                    raise ValueError(
+                        "36 bounded executed-target plans required after old abstention"
+                    )
+                additional = event["additional_candidate_search"]
+                synthetic = [windows[0]]
+                for w in windows[37:]:
+                    if not w["name"].startswith("target-"):
+                        raise ValueError("explicit target candidate namespace required")
+                    synthetic.append(dict(w, name=w["name"][7:]))
+                verify_synergy_search(synthetic, [peaks[0], *peaks[37:]], additional["generations"])
+                expected_report = dict(
+                    schema="soccer.executed_target_synergy_search.v1",
+                    candidate_count=36,
+                    generations=additional["generations"],
+                    seed=7001,
+                    reference_modified_by_new_plans=False,
+                    actual_target_authority="original_float32_codec_plus_bounded_HG29_synergy",
+                    subsequent_nn_history="actual_composite_action",
+                    task_exam_modified=False,
+                    neural_optimizer_updates=0,
+                    hardware_authorized=False,
+                )
+                if hash_json(additional) != hash_json(expected_report):
+                    raise ValueError("target authority or next-history search declaration differs")
             elif aim:
                 if len(windows) != 57 or event["joint_task_response"] is not None:
                     raise ValueError("exact20 additional desired command forecasts required")
@@ -333,6 +473,8 @@ def main():
             expected_basis = (
                 "parent"
                 if not chosen
+                else "executed-target"
+                if executed and chosen >= 37
                 else "aim-command"
                 if aim and chosen >= 37
                 else "joint-reference"
@@ -377,7 +519,37 @@ def main():
                     )
                 ):
                     raise ValueError("installed aim command modified measurements/history/task")
-            if chosen >= 37 and not aim:
+            if executed:
+                if event["original_actual_target_authority_unchanged"] != (chosen < 37):
+                    raise ValueError("actual target authority was mislabeled as unchanged NN")
+                if chosen >= 37:
+                    installation = event["installation"]
+                    if installation["start_control"] != row["entry_control"] or any(
+                        installation[k]
+                        for k in (
+                            "reference_modified",
+                            "neural_weights_modified",
+                            "hardware_authorized",
+                        )
+                    ):
+                        raise ValueError("selected target plan changed reference or clock")
+                    coeff = windows[chosen]["coefficients"]
+                    plan = ExecutedTargetSynergy(
+                        row["entry_control"],
+                        tuple(tuple(float(x) for x in r) for r in context["basis"]),
+                        (tuple(coeff[0]), tuple(coeff[1])),
+                    )
+                    verify_target_edits(
+                        row["actual_target_edits"],
+                        arrays["joint_targets"][row["entry_control"] :],
+                        start=row["entry_control"],
+                        plan=plan,
+                        codec=codec,
+                        limits=context["model"].jnt_range[lo.joints],
+                    )
+                elif row["actual_target_edits"]:
+                    raise ValueError("passing old branch must preserve complete old control path")
+            if chosen >= 37 and not aim and not executed:
                 installation = event["installation"]
                 if installation["hg_to_isaac"] != [int(j) for j in context["types"][3]] or any(
                     b["start_frame"] != row["admitted_reference_phase"]
@@ -436,10 +608,13 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="FULL_NN_AIM_COMMAND_RAW_AND_PHYSICAL_EXAM_VERIFIED"
+            status="FULL_NN_EXECUTED_TARGET_RAW_AND_PHYSICAL_EXAM_VERIFIED"
+            if executed
+            else "FULL_NN_AIM_COMMAND_RAW_AND_PHYSICAL_EXAM_VERIFIED"
             if aim
             else "FULL_NN_JOINT_TASK_RESPONSE_RAW_AND_PHYSICAL_EXAM_VERIFIED",
             aim_command_search=aim,
+            executed_target_search=executed,
             sequential_restoration=sequential,
             source_head=a.expected_head,
             input_file_hashes=pins,

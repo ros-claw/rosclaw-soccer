@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 
 from rosclaw_soccer.rsi.aim_goal_command import AimGoalCommand, condition_aim_goal
+from rosclaw_soccer.rsi.executed_target_synergy import ExecutedTargetSynergy
 from rosclaw_soccer.rsi.motion_synergy_reference import (
     MotionSynergyPlan,
     condition_synergy_reference,
@@ -25,7 +26,7 @@ from rosclaw_soccer.rsi.whole_joint_reference import (
 
 Candidate = tuple[
     str,
-    MotionSynergyPlan | WholeJointReferencePlan | AimGoalCommand | None,
+    MotionSynergyPlan | WholeJointReferencePlan | AimGoalCommand | ExecutedTargetSynergy | None,
     dict[str, Any],
     dict[str, Any],
 ]
@@ -68,6 +69,7 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
         if type(self.extra_candidate_ceiling) is not int or self.extra_candidate_ceiling not in (
             0,
             20,
+            36,
         ):
             raise ValueError("explicit bounded additional command-candidate protocol required")
         if self.extra_candidate_ceiling and (
@@ -130,6 +132,7 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
         self.events: list[dict[str, Any]] = []
         self.candidate_predictions: list[tuple[str, dict[str, Any]]] = []
         self.selected_prediction: dict[str, Any] | None = None
+        self.executed_target_plan: ExecutedTargetSynergy | None = None
 
     @property
     def changed_controls(self) -> int:
@@ -312,7 +315,17 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
         name, plan, prediction, outcome = candidates[chosen]
         install = None
         if plan is not None:
-            if isinstance(plan, AimGoalCommand):
+            if isinstance(plan, ExecutedTargetSynergy):
+                self.executed_target_plan = plan
+                install = dict(
+                    schema="soccer.executed_target_synergy_installation.v1",
+                    start_control=plan.start_control,
+                    coefficients=plan.coefficients,
+                    reference_modified=False,
+                    neural_weights_modified=False,
+                    hardware_authorized=False,
+                )
+            elif isinstance(plan, AimGoalCommand):
                 install = condition_aim_goal(self.policy, plan)
                 self.goal = self.policy.target_pos_w.copy()
             elif isinstance(plan, WholeJointReferencePlan):
@@ -344,7 +357,7 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
                                 if isinstance(c[1], AimGoalCommand)
                                 else None
                             )
-                            if self.extra_candidate_ceiling
+                            if self.extra_candidate_ceiling == 20
                             else {}
                         ),
                     )
@@ -355,6 +368,8 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
                 selected_basis=(
                     "parent"
                     if plan is None
+                    else "executed-target"
+                    if isinstance(plan, ExecutedTargetSynergy)
                     else "aim-command"
                     if isinstance(plan, AimGoalCommand)
                     else "joint-reference"
@@ -366,7 +381,9 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
                 response_model=response_report,
                 joint_task_response=joint_response,
                 additional_candidate_search=additional_report,
-                original_actual_target_authority_unchanged=True,
+                original_actual_target_authority_unchanged=not isinstance(
+                    plan, ExecutedTargetSynergy
+                ),
             )
         )
         return super().propose()

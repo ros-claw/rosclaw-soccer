@@ -64,6 +64,8 @@ def apply_executed_target_synergy(
         owned_control_step=world.control_steps,
         plan_start_control=plan.start_control,
         requested_offset_hg_rad=delta.tolist(),
+        original_nn_target_hg_rad=nominal.tolist(),
+        original_raw_action_il=policy.last_action_il.tolist(),
         applied=False,
         fallback=False,
         physical_state_modified=False,
@@ -147,6 +149,7 @@ def apply_executed_target_synergy(
         receipt,
         applied=True,
         applied_offset_hg_rad=(target - nominal).tolist(),
+        executed_raw_action_il=new_raw.tolist(),
         maximum_target_offset_rad=float(abs(target - nominal).max()),
         next_action_history_matches_executed_codec=True,
     )

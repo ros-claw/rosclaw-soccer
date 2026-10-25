@@ -19,8 +19,11 @@ def main():
     p.add_argument("--aim-command-search", action="store_true")
     p.add_argument("--aim-qualification", type=Path)
     p.add_argument("--aim-qualification-hash")
+    p.add_argument("--executed-target-search", action="store_true")
+    p.add_argument("--target-qualification", type=Path)
+    p.add_argument("--target-qualification-hash")
     a = p.parse_args()
-    if a.aim_command_search and a.sequential_restoration:
+    if sum((a.aim_command_search, a.sequential_restoration, a.executed_target_search)) > 1:
         raise ValueError("one explicit teacher mechanism per pilot required")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -78,6 +81,21 @@ def main():
             raise ValueError("same unchanged task and verified entry goal-command branch required")
         merge_pins(pins, qualified["input_file_hashes"])
         pins[str(path)] = a.aim_qualification_hash
+    if a.executed_target_search:
+        path = a.target_qualification
+        if path is None or path.is_symlink() or digest(path) != a.target_qualification_hash:
+            raise ValueError("explicit nonzero executed-target NN physics qualification required")
+        qualified = json.loads(path.read_text())
+        if (
+            qualified["status"] != "G1_EXECUTED_TARGET_SYNERGY_NN_FUTURES_EXACT"
+            or not qualified["all_future_nn_targets_and_native_arrays_exact"]
+            or not qualified["reference_arrays_unchanged_by_target_plan"]
+            or qualified["reference_conditioning"] != "OFF_original_arrays"
+            or qualified["task_scoring_goal_world_point"] != [8.0, 0.0, 0.11]
+        ):
+            raise ValueError("unchanged reference and exact actual composite futures required")
+        merge_pins(pins, qualified["input_file_hashes"])
+        pins[str(path)] = a.target_qualification_hash
     audit = json.loads(a.champion_audit.read_text())
     if not audit["perturbed_public_validation"] or audit["actual_worlds"] != 80:
         raise ValueError("fixed consumed perturbed40 source required")
@@ -96,17 +114,28 @@ def main():
         AimCommandKickPlayer,
         declared_aim_commands,
     )
+    from rosclaw_soccer.rsi.executed_synergy_kick_player import ExecutedSynergyKickPlayer
     from rosclaw_soccer.rsi.synergy_forecast_kick_player import SynergyForecastKickPlayer
     from rosclaw_soccer.rsi.walk_kick_teacher_episode import evaluate_episode
 
     a.output.mkdir(parents=True)
-    candidate_cap = 57 if a.aim_command_search else 273 if a.sequential_restoration else 96
+    candidate_cap = (
+        73
+        if a.executed_target_search
+        else 57
+        if a.aim_command_search
+        else 273
+        if a.sequential_restoration
+        else 96
+    )
     forecast_cap = 6 * (37 + candidate_cap) * 1280
     write_once(
         a.output / "declaration.json",
         dict(
             protocol="soccer.full_nn_joint_task_response_six_state_pilot.v1",
             aim_command_search=a.aim_command_search,
+            executed_target_search=a.executed_target_search,
+            target_qualification_hash=a.target_qualification_hash,
             aim_command_world_points=[list(c.world_point) for c in declared_aim_commands()]
             if a.aim_command_search
             else None,
@@ -126,15 +155,19 @@ def main():
             failure_indices=[2, 8, 22, 27],
             old_candidate_ceiling=37,
             new_candidate_ceiling=candidate_cap,
-            new_probe_axes=29,
-            new_probe_signs=[-1, 1],
-            probe_reference_rad=0.03,
-            proposal_l1_trust_rad=0.06,
-            proposal_axis_trust_rad=0.03,
-            temporal_lobe="first24intervals_only",
-            second_lobe_coefficients_zero=True,
+            new_probe_axes=6 if a.executed_target_search else 29,
+            new_probe_signs=None if a.executed_target_search else [-1, 1],
+            probe_reference_rad=None if a.executed_target_search else 0.03,
+            proposal_l1_trust_rad=None if a.executed_target_search else 0.06,
+            proposal_axis_trust_rad=0.06 if a.executed_target_search else 0.03,
+            temporal_lobe="two24interval_lobes"
+            if a.executed_target_search
+            else "first24intervals_only",
+            second_lobe_coefficients_zero=not a.executed_target_search,
             old_success_branch_must_not_search_new_actions=True,
-            new_research_direction="task_conditioned_full_NN_physics_response_not_success_PCA",
+            new_research_direction="actual_HG29_target_authority_not_reference_input"
+            if a.executed_target_search
+            else "task_conditioned_full_NN_physics_response_not_success_PCA",
             parent_nn_weights_and_PD_unchanged=True,
             hardware_authorized=False,
             promotion_authorized=False,
@@ -154,13 +187,17 @@ def main():
             instances = []
 
             class Controlled(
-                AimCommandKickPlayer
+                ExecutedSynergyKickPlayer
+                if a.executed_target_search and arm == "C"
+                else AimCommandKickPlayer
                 if a.aim_command_search and arm == "C"
                 else SynergyForecastKickPlayer
             ):
                 basis_hg = context["basis"]
                 forecast_controls = 128
-                joint_task_response_enabled = arm == "C" and not a.aim_command_search
+                joint_task_response_enabled = (
+                    arm == "C" and not a.aim_command_search and not a.executed_target_search
+                )
                 joint_response_iterations = 4 if a.sequential_restoration and arm == "C" else 1
                 observed_instances = instances
 
@@ -228,6 +265,11 @@ def main():
                         donor_control_frame=forecast["donor_control_frame"],
                         controls=forecast["controls"],
                         requested_controls=forecast["requested_controls"],
+                        **(
+                            dict(target_edits=forecast["executed_target_edits"])
+                            if a.executed_target_search
+                            else {}
+                        ),
                     )
                 )
             ap = folder / f"{arm}.npz"
@@ -242,6 +284,11 @@ def main():
                 arm=arm,
                 task_scoring_goal_world_point=[8.0, 0.0, 0.11],
                 desired_command_world_point=ctrl.goal.tolist(),
+                **(
+                    dict(actual_target_edits=getattr(ctrl, "target_edits", []))
+                    if a.executed_target_search
+                    else {}
+                ),
             )
             write_once(folder / f"{arm}.json", row)
             pair[arm] = dict(
@@ -278,7 +325,9 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="FULL_NN_AIM_COMMAND_PILOT_COMPLETE"
+            status="FULL_NN_EXECUTED_TARGET_PILOT_COMPLETE"
+            if a.executed_target_search
+            else "FULL_NN_AIM_COMMAND_PILOT_COMPLETE"
             if a.aim_command_search
             else "FULL_NN_JOINT_TASK_RESPONSE_PILOT_COMPLETE",
             source_head=a.expected_head,
