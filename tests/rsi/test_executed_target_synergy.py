@@ -166,3 +166,40 @@ def test_independent_target_codec_readback_and_tamper_rejection(tmp_path):
         verify_target_edits([wrong], target[None], **kwargs)
     with pytest.raises(ValueError, match="every controlled"):
         verify_target_edits([], target[None], **kwargs)
+
+
+@pytest.mark.parametrize("mode", ["whole_tick", "per_axis"])
+def test_infeasible_prior_ankle_does_not_grant_permission_to_change_it(tmp_path, mode):
+    p, _ = setup(tmp_path)
+    p.policy.last_action_il[0] = np.float32(2.2)  # Prior target outside compiled joint range.
+    p.pending[0] = float(p.policy.last_action_il[0])
+    p.policy.policy_output.actions[0] = p.policy.last_action_il[0]
+    nominal = p.pending.copy()
+    mixed = ExecutedTargetSynergy(
+        0, ((1.0, 1.0) + (0.0,) * 27,), ((0.06,), (-0.06,)), projection_mode=mode
+    )
+    target, edit = apply_executed_target_synergy(p, mixed)
+    assert target[0] == nominal[0]  # No relaxation of CHANGED target joint limits.
+    if mode == "whole_tick":
+        assert edit["fallback"] and not edit["applied"]
+        np.testing.assert_array_equal(target, nominal)
+    else:
+        assert edit["blocked_hg_axes"] == [0]
+        assert edit["applied"] and not edit["fallback"]
+        assert target[1] > nominal[1]
+        assert abs(target[1] - nominal[1]) <= 0.060001
+        np.testing.assert_array_equal(target, p.policy.last_action_il.astype(np.float64))
+
+
+def test_per_axis_projection_stays_within_intersected_target_trust_and_joint_bounds(tmp_path):
+    p, _ = setup(tmp_path)
+    maximum = float(p.world.model.jnt_range[p.layout.joints[0], 1])
+    p.policy.last_action_il[0] = np.float32(maximum - 0.0001)
+    p.pending[0] = float(p.policy.last_action_il[0])
+    p.policy.policy_output.actions[0] = p.policy.last_action_il[0]
+    projected = ExecutedTargetSynergy(0, plan().basis_hg, ((0.06,), (0.06,)), "per_axis")
+    before = p.pending.copy()
+    target, edit = apply_executed_target_synergy(p, projected)
+    assert edit["applied"]
+    assert before[0] < target[0] <= maximum
+    assert abs(target[0] - before[0]) <= 0.060001

@@ -20,8 +20,14 @@ class ExecutedTargetSynergy:
     start_control: int
     basis_hg: tuple[tuple[float, ...], ...]
     coefficients: tuple[tuple[float, ...], tuple[float, ...]]
+    projection_mode: str = "whole_tick"
 
     def offsets(self) -> np.ndarray:
+        if type(self.projection_mode) is not str or self.projection_mode not in (
+            "whole_tick",
+            "per_axis",
+        ):
+            raise ValueError("explicit whole-tick or per-axis feasibility contract required")
         # Reuse the qualified C1 temporal basis, in HG order this time. This
         # mathematical helper does NOT install/change the policy reference.
         return MotionSynergyPlan(self.start_control, self.basis_hg, self.coefficients).offsets()[0]
@@ -34,7 +40,8 @@ def apply_executed_target_synergy(
 
     Physical joint limits are checked only for changed targets; zero is the
     exact original floating path, never a re-encoding of the frozen prior.
-    An empty feasible intersection falls back for this entire control tick.
+    The default whole-tick mode falls back on an empty feasible intersection;
+    explicit per-axis mode holds infeasible axes at their unchanged NN target.
     This bounds target offsets, NOT actual torque or torque slew.
     """
     world, policy = player.world, player.policy
@@ -64,6 +71,7 @@ def apply_executed_target_synergy(
         owned_control_step=world.control_steps,
         plan_start_control=plan.start_control,
         requested_offset_hg_rad=delta.tolist(),
+        projection_mode=plan.projection_mode,
         original_nn_target_hg_rad=nominal.tolist(),
         original_raw_action_il=policy.last_action_il.tolist(),
         applied=False,
@@ -111,13 +119,26 @@ def apply_executed_target_synergy(
     changed = delta != 0
     lo = np.maximum(action_lo[mapping], (limits[:, 0] - default) / scale)
     hi = np.minimum(action_hi[mapping], (limits[:, 1] - default) / scale)
-    if (lo[changed] > hi[changed]).any():
+    if plan.projection_mode == "per_axis":
+        # Intersect *before* projecting. Some original NN targets are outside
+        # joint limits farther than the residual trust budget. Those axes have
+        # no legal changed target: keep the original target EXACTLY, rather
+        # than letting them suppress every other feasible joint correction.
+        lo = np.maximum(lo, (nominal - 0.06 - default) / scale)
+        hi = np.minimum(hi, (nominal + 0.06 - default) / scale)
+    elif (lo[changed] > hi[changed]).any():
         return nominal, dict(receipt, fallback=True, reason="EMPTY_ENCODER_JOINT_INTERSECTION")
     # Round bounds inwards in the actual codec dtype, never round outside them.
     low, high = lo.astype(np.float32), hi.astype(np.float32)
     low = np.where(low < lo, np.nextafter(low, np.float32(np.inf)), low)
     high = np.where(high > hi, np.nextafter(high, np.float32(-np.inf)), high)
-    if (low[changed] > high[changed]).any():
+    if plan.projection_mode == "per_axis":
+        blocked = changed & (low > high)
+        changed = changed & ~blocked
+        receipt["blocked_hg_axes"] = np.flatnonzero(blocked).tolist()
+        if not changed.any():
+            return nominal, dict(receipt, fallback=True, reason="NO_FEASIBLE_REQUESTED_AXES")
+    elif (low[changed] > high[changed]).any():
         return nominal, dict(receipt, fallback=True, reason="NO_FLOAT32_FEASIBLE_ACTION")
     desired = raw[mapping].copy()
     desired[changed] = np.clip(
@@ -128,6 +149,19 @@ def apply_executed_target_synergy(
         high[changed],
     )
     target = (default + scale * desired).astype(np.float64)
+    if plan.projection_mode == "per_axis":
+        numerical_bad = changed & (
+            (abs(target - nominal) > 0.060001) | (target < limits[:, 0]) | (target > limits[:, 1])
+        )
+        if numerical_bad.any():
+            desired[numerical_bad] = raw[mapping][numerical_bad]
+            changed &= ~numerical_bad
+            receipt["blocked_hg_axes"] = sorted(
+                receipt["blocked_hg_axes"] + np.flatnonzero(numerical_bad).tolist()
+            )
+            target = (default + scale * desired).astype(np.float64)
+        if not changed.any():
+            return nominal, dict(receipt, fallback=True, reason="NO_NUMERICALLY_FEASIBLE_AXES")
     # Codec rounding is measured explicitly; original trust radius is 0.06rad,
     # with at most 1e-6rad declared numerical tolerance, not a larger search.
     if (

@@ -18,11 +18,14 @@ def main():
     p.add_argument("--whole-joint-reference", action="store_true")
     p.add_argument("--aim-goal-y", type=float)
     p.add_argument("--executed-synergy", action="store_true")
+    p.add_argument("--target-feasible-axes", action="store_true")
     a = p.parse_args()
     if a.pre_proposal_96 and a.pre_proposal_128:
         raise ValueError("one explicit forecast qualification protocol required")
     pre_proposal = a.pre_proposal_96 or a.pre_proposal_128
     aim_command = a.aim_goal_y is not None
+    if a.target_feasible_axes and not a.executed_synergy:
+        raise ValueError("per-axis target feasibility is an explicit executed-target study")
     if a.executed_synergy and (
         not a.pre_proposal_128 or a.synergy_model is None or a.whole_joint_reference or aim_command
     ):
@@ -212,6 +215,7 @@ def main():
                     self.world.control_steps,
                     tuple(tuple(float(x) for x in r) for r in basis_hg),
                     ((0.01, 0.0, 0.0, 0.0, 0.0, 0.0), (-0.01, 0.0, 0.0, 0.0, 0.0, 0.0)),
+                    projection_mode="per_axis" if a.target_feasible_axes else "whole_tick",
                 )
                 self.predictions.append(
                     self.predictor.forecast(
@@ -279,6 +283,7 @@ def main():
             and not aim_command,
             command_goal_conditioning="entry_nonzero_world_aim" if aim_command else "OFF",
             executed_target_conditioning=a.executed_synergy,
+            executed_target_projection_mode="per_axis" if a.target_feasible_axes else "whole_tick",
             task_scoring_goal_world_point=[8.0, 0.0, 0.11],
             desired_command_world_point=[8.0, a.aim_goal_y, 0.11]
             if aim_command
@@ -380,6 +385,7 @@ def main():
             source_head=a.expected_head,
             command_goal_conditioning="entry_nonzero_world_aim" if aim_command else "OFF",
             executed_target_conditioning=a.executed_synergy,
+            executed_target_projection_mode="per_axis" if a.target_feasible_axes else "whole_tick",
             executed_target_edits=probe.target_edits,
             reference_arrays_unchanged_by_target_plan=bool(a.executed_synergy),
             future_target_semantics="original_NN_plus_executed_target_plan"
