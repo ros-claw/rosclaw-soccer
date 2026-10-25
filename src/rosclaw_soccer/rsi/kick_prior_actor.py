@@ -1,0 +1,117 @@
+"""Differentiable copy of the exact research kick prior, not a trained successor.
+
+Raw outputs are 29 ISAAC-ordered action coordinates, NOT joint torques or a
+hardware interface. The existing PD mapping, clips and execution gates remain
+outside this model. Import only in optional Torch research workflows.
+"""
+
+from pathlib import Path
+from typing import cast
+
+import numpy as np
+import torch
+from torch import nn
+
+from rosclaw_soccer.providers.g1.velocity_policy import file_hash
+
+KICK_PRIOR_HASH = "sha256:b952af481c47402c40a883ea214635368b44ee36de356780258d04601eaa3774"
+
+
+class KickPriorActor(nn.Module):
+    simulation_only = True
+    hardware_authorized = False
+
+    def __init__(self, tensors: dict[str, np.ndarray]) -> None:
+        super().__init__()
+        dimensions = (547, 512, 256, 128, 29)
+        shapes: dict[str, tuple[int, ...]] = {}
+        for layer, (before, after) in enumerate(zip(dimensions[:-1], dimensions[1:], strict=True)):
+            shapes[f"actor.{layer * 2}.weight"] = (after, before)
+            shapes[f"actor.{layer * 2}.bias"] = (after,)
+        if set(tensors) != set(shapes) or any(
+            x.shape != shapes[k] or x.dtype != np.float32 or not np.isfinite(x).all()
+            for k, x in tensors.items()
+        ):
+            raise ValueError("exact finite547-512-256-128-29 ELU tensors required")
+        self.actor = nn.Sequential(
+            nn.Linear(547, 512),
+            nn.ELU(),
+            nn.Linear(512, 256),
+            nn.ELU(),
+            nn.Linear(256, 128),
+            nn.ELU(),
+            nn.Linear(128, 29),
+        )
+        with torch.no_grad():
+            for index in (0, 2, 4, 6):
+                linear = self.actor[index]
+                assert isinstance(linear, nn.Linear)
+                linear.weight.copy_(torch.from_numpy(tensors[f"actor.{index}.weight"].copy()))
+                linear.bias.copy_(torch.from_numpy(tensors[f"actor.{index}.bias"].copy()))
+
+    @classmethod
+    def from_onnx(cls, path: Path, *, expected_hash: str) -> "KickPriorActor":
+        import onnx
+
+        if (
+            path.is_symlink()
+            or expected_hash != KICK_PRIOR_HASH
+            or file_hash(path) != expected_hash
+        ):
+            raise ValueError("exact frozen research kick ONNX required")
+        model = onnx.load(str(path), load_external_data=False)
+        onnx.checker.check_model(model)
+        nodes = list(model.graph.node)
+        if (
+            model.functions
+            or len(model.graph.input) != 1
+            or len(model.graph.output) != 1
+            or [n.op_type for n in nodes] != ["Gemm", "Elu", "Gemm", "Elu", "Gemm", "Elu", "Gemm"]
+            or model.graph.input[0].name != "obs"
+            or model.graph.output[0].name != "actions"
+            or any(n.domain for n in nodes)
+            or any(t.data_location == onnx.TensorProto.EXTERNAL for t in model.graph.initializer)
+        ):
+            raise ValueError(
+                "exact feedforward graph without normalization or external data required"
+            )
+        for value, width in ((model.graph.input[0], 547), (model.graph.output[0], 29)):
+            tensor = value.type.tensor_type
+            if tensor.elem_type != onnx.TensorProto.FLOAT or (
+                [d.dim_value for d in tensor.shape.dim] != [1, width]
+            ):
+                raise ValueError("exact float32 ONNX input/output contract required")
+        previous = "obs"
+        for index, node in enumerate(nodes):
+            attrs = {a.name: onnx.helper.get_attribute_value(a) for a in node.attribute}
+            expected = (
+                {"alpha": 1.0, "beta": 1.0, "transB": 1} if index % 2 == 0 else {"alpha": 1.0}
+            )
+            inputs = [previous]
+            if index % 2 == 0:
+                inputs += [f"actor.{index}.weight", f"actor.{index}.bias"]
+            if list(node.input) != inputs or len(node.output) != 1 or attrs != expected:
+                raise ValueError("exact graph connectivity and arithmetic required")
+            previous = node.output[0]
+        if previous != "actions":
+            raise ValueError("exact action output required")
+        tensors = {t.name: onnx.numpy_helper.to_array(t) for t in model.graph.initializer}
+        if len(tensors) != len(model.graph.initializer):
+            raise ValueError("unique weight names required")
+        return cls(tensors)
+
+    def forward(self, observation: torch.Tensor) -> torch.Tensor:
+        if (
+            observation.ndim != 2
+            or observation.shape[1] != 547
+            or not 1 <= len(observation) <= 8192
+        ):
+            raise ValueError("nonempty bounded batch of actual547 observations required")
+        parameter = self.actor[0].weight
+        if (
+            observation.dtype != torch.float32
+            or observation.device != parameter.device
+            or (not torch.isfinite(observation).all())
+        ):
+            raise ValueError("finite float32 observation on the actor device required")
+        return cast(torch.Tensor, self.actor(observation))
