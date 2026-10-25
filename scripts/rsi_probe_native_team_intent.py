@@ -1,7 +1,8 @@
 """Native8-body coached role reaction baseline, not learned autonomous4v4 football.
 
-All8 private98->29 streams share one real500Hz MuJoCo clock. No kicks, goals,
-root forces, body resets or ball rewrites are provided by this diagnostic.
+All8 private98->29 streams share one real500Hz MuJoCo clock. An explicit
+optional one-leg contact probe changes joint targets, never root/ball forces.
+No goals, body resets or ball rewrites are provided by this diagnostic.
 Fresh NN re-execution is not an independent controller implementation.
 """
 
@@ -27,6 +28,8 @@ def main():
     p.add_argument("--command-residual", type=Path)
     p.add_argument("--command-residual-hash")
     p.add_argument("--residual-exploration-seed", type=int)
+    p.add_argument("--foot-contact-config", type=Path)
+    p.add_argument("--foot-contact-config-hash")
     p.add_argument(
         "--residual-agent",
         choices=tuple(
@@ -49,6 +52,13 @@ def main():
         default="outbound-north",
     )
     a = p.parse_args()
+    if (a.foot_contact_config is None) != (a.foot_contact_config_hash is None) or (
+        a.foot_contact_config is not None
+        and (not a.clearance_course or a.command_training is not None)
+    ):
+        p.error(
+            "foot-contact teacher requires exact config, clearance, and no learned command model"
+        )
     if a.residual_agent is not None and a.command_residual is None:
         p.error("single-player residual scope requires an explicit residual head")
     if (a.command_residual is None) != (a.command_residual_hash is None) or (
@@ -216,6 +226,50 @@ def main():
             ):
                 raise ValueError("exact confined predecessor raw arrays required")
             pins[str(path)] = row["artifact"]["hash"]
+    teacher_config = None
+    teacher_parent_root = None
+    teacher_parent_report = None
+    if a.foot_contact_config is not None:
+        if (
+            a.foot_contact_config.is_symlink()
+            or digest(a.foot_contact_config) != a.foot_contact_config_hash
+        ):
+            raise ValueError("exact ordinary foot-contact teacher declaration required")
+        pins[str(a.foot_contact_config)] = a.foot_contact_config_hash
+        teacher_config = json.loads(a.foot_contact_config.read_text())
+        if (
+            set(teacher_config) != {"schema", "agent", "parameters", "parent_root", "parent_hash"}
+            or teacher_config["schema"] != "soccer.native_foot_contact_teacher.v1"
+            or teacher_config["agent"] != "red_finisher"
+        ):
+            raise ValueError("explicit isolated red-finisher teacher contract required")
+        teacher_parent_root = Path(teacher_config["parent_root"])
+        path = teacher_parent_root / "complete.json"
+        if path.is_symlink() or digest(path) != teacher_config["parent_hash"]:
+            raise ValueError("exact physical parent comparison required")
+        teacher_parent_report = json.loads(path.read_text())
+        parent_declaration = json.loads((teacher_parent_root / "declaration.json").read_text())
+        if (
+            parent_declaration["ball_course"] != a.ball_course
+            or not teacher_parent_report["fresh_reexecution_exact"]
+            or len(teacher_parent_report["records"]) != 4
+            or not all(r["healthy_full_horizon"] for r in teacher_parent_report["records"])
+        ):
+            raise ValueError("all healthy paired same-course parent records required")
+        pins[str(path)] = teacher_config["parent_hash"]
+        for key, value in teacher_parent_report["input_file_hashes"].items():
+            if key in pins and pins[key] != value:
+                raise ValueError("conflicting teacher-parent ancestry")
+            pins[key] = value
+        for row in teacher_parent_report["records"]:
+            path = teacher_parent_root / row["artifact"]["path"]
+            if (
+                path.parent.resolve() != teacher_parent_root.resolve()
+                or path.is_symlink()
+                or digest(path) != row["artifact"]["hash"]
+            ):
+                raise ValueError("exact confined physical teacher-parent arrays required")
+            pins[str(path)] = row["artifact"]["hash"]
     source_pins(pins)
     check_pins(pins)
     from rosclaw_soccer.training.native_team_courses import native_team_course_bank
@@ -229,6 +283,10 @@ def main():
     from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
 
     from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
+    from rosclaw_soccer.rsi.native_foot_contact_teacher import (
+        FootContactTeacherConfig,
+        NativeFootContactTeacher,
+    )
     from rosclaw_soccer.rsi.native_team_intent import (
         ROLES,
         clearance_command,
@@ -244,6 +302,10 @@ def main():
     )
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
     from rosclaw_soccer.sim.contracts import hash_json
+
+    teacher_parameters = (
+        None if teacher_config is None else FootContactTeacherConfig(**teacher_config["parameters"])
+    )
 
     scenes = [Path(k) for k in pins if k.endswith("/cached-standard/declared-scene.xml")]
     models = [Path(k) for k in pins if k.endswith("/velocity/v0/exported/policy.onnx")]
@@ -272,11 +334,15 @@ def main():
         arms = ("role-foot-clearance", "role-command-learned")
     if a.command_residual is not None:
         arms = ("role-foot-clearance", "role-command-residual")
+    if teacher_config is not None:
+        arms = ("role-foot-clearance", "role-foot-contact-teacher")
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="native8_single_player_role_residual_contrast.v8"
+            protocol="native8_single_player_foot_contact_teacher.v9"
+            if teacher_config is not None
+            else "native8_single_player_role_residual_contrast.v8"
             if a.residual_agent is not None
             else "native8_parent_role_residual_contrast.v7"
             if a.command_residual is not None
@@ -291,6 +357,9 @@ def main():
             else "native8_coached_ball_intent_baseline.v1",
             source_head=a.expected_head,
             residual_active_agent=a.residual_agent,
+            foot_contact_teacher=teacher_config,
+            foot_contact_config_hash=a.foot_contact_config_hash,
+            gait_previous_action_is_previous_base_network_output=teacher_config is not None,
             unselected_players_receive_no_learned_residual=a.residual_agent is not None,
             input_file_hashes=pins,
             agents=agents,
@@ -431,6 +500,11 @@ def main():
                 command_policy = None
                 residual_policy = None
                 residual_calls = 0
+                contact_teacher = (
+                    None
+                    if teacher_parameters is None
+                    else NativeFootContactTeacher(teacher_parameters)
+                )
                 exploration_rng = np.random.default_rng(a.residual_exploration_seed)
                 exploration_state = np.zeros((8, 3))
                 if trained is not None:
@@ -511,10 +585,38 @@ def main():
                 )
                 if residual_policy is not None:
                     controls.update({key: [] for key in residual_keys})
+                if contact_teacher is not None:
+                    controls.update(
+                        {
+                            "teacher_" + key: []
+                            for key in (
+                                "nominal_targets29",
+                                "requested_delta",
+                                "applied_delta",
+                                "active",
+                                "fallback",
+                                "foot_index",
+                                "surface_gap",
+                                "gap_censored_at_one_meter",
+                                "point",
+                                "point_local",
+                                "foot_velocity",
+                                "ball_velocity",
+                                "jacobian_hg",
+                                "estimated_local_foot_shift",
+                                "point_after",
+                                "relative_velocity_after",
+                                "ball_position_after",
+                            )
+                        }
+                    )
                 for frame in range(horizon):
                     if a.foot_track_course:
                         metric.qpos[:] = d.qpos
                         mujoco.mj_kinematics(m, metric)
+                        if contact_teacher is not None:
+                            metric.qvel[:] = d.qvel
+                            mujoco.mj_comPos(m, metric)
                     ball_xy = d.qpos[layout.bq : layout.bq + 2].copy()
                     commands, targets, goals, observations = [], {}, [], []
                     horizons, reachable_flags = [], []
@@ -547,6 +649,7 @@ def main():
                                 "role-foot-track",
                                 "role-foot-clearance",
                                 "role-command-residual",
+                                "role-foot-contact-teacher",
                             )
                             and role == "finisher"
                         ):
@@ -570,13 +673,19 @@ def main():
                                     "role-foot-track",
                                     "role-foot-clearance",
                                     "role-command-residual",
+                                    "role-foot-contact-teacher",
                                 )
                                 else 0.8,
                             )
                         )
                         if (
                             arm
-                            in ("role-foot-track", "role-foot-clearance", "role-command-residual")
+                            in (
+                                "role-foot-track",
+                                "role-foot-clearance",
+                                "role-command-residual",
+                                "role-foot-contact-teacher",
+                            )
                             and role == "finisher"
                             and frame >= 50
                             and np.linalg.norm(ball_xy - q[:2]) < 1.0
@@ -609,6 +718,7 @@ def main():
                                 "role-foot-clearance",
                                 "role-command-learned",
                                 "role-command-residual",
+                                "role-foot-contact-teacher",
                             )
                             and frame >= 50
                         ):
@@ -703,6 +813,24 @@ def main():
                         observations.append(stream.last_observation.copy())
                         horizons.append(ih)
                         reachable_flags.append(ir)
+                    if contact_teacher is not None:
+                        selected = "red_finisher/"
+                        nominal_targets = np.stack([targets[p].copy() for p in prefixes])
+                        effect = contact_teacher.propose(
+                            model=m,
+                            snapshot=metric,
+                            layout=layouts[selected],
+                            nominal=targets[selected],
+                            ball_geom=int(gids[0]),
+                            foot_bodies=feet[selected],
+                            enabled=arm == "role-foot-contact-teacher" and frame >= 50,
+                            frame=frame,
+                        )
+                        targets[selected] = effect["target"]
+                        controls["teacher_nominal_targets29"].append(nominal_targets)
+                        for key, value in effect.items():
+                            if "teacher_" + key in controls:
+                                controls["teacher_" + key].append(np.asarray(value).copy())
                     for key, value in (
                         ("commands", commands),
                         ("role_targets", goals),
@@ -749,6 +877,21 @@ def main():
                                 )
                             )
                         controls["nearest_foot_relative_speed_mps"].append(relative_speeds)
+                    if contact_teacher is not None:
+                        body = feet["red_finisher/"][max(0, effect["foot_index"])]
+                        point_after = (
+                            metric.xpos[body]
+                            + metric.xmat[body].reshape(3, 3) @ effect["point_local"]
+                        )
+                        jac = np.zeros((3, m.nv))
+                        mujoco.mj_jac(m, metric, jac, None, point_after, body)
+                        controls["teacher_point_after"].append(point_after.copy())
+                        controls["teacher_relative_velocity_after"].append(
+                            jac @ metric.qvel - d.qvel[layout.bv : layout.bv + 3]
+                        )
+                        controls["teacher_ball_position_after"].append(
+                            d.qpos[layout.bq : layout.bq + 3].copy()
+                        )
                     foot_gaps = np.array(
                         [
                             min(
@@ -771,6 +914,62 @@ def main():
                         break
                 arrays = {k: np.concatenate(v) for k, v in raw.items()}
                 arrays.update({k: np.asarray(v) for k, v in controls.items()})
+                teacher_identity = None
+                teacher_parent_identity = None
+                if contact_teacher is not None:
+                    selected_index = prefixes.index("red_finisher/")
+                    other_indices = [i for i in range(8) if i != selected_index]
+                    teacher_identity = dict(
+                        unselected_seven_targets_exact_base=bool(
+                            np.array_equal(
+                                arrays["targets29"][:, other_indices].view(np.uint64),
+                                arrays["teacher_nominal_targets29"][:, other_indices].view(
+                                    np.uint64
+                                ),
+                            )
+                        ),
+                        selected_applied_delta_exact=bool(
+                            np.array_equal(
+                                arrays["targets29"][:, selected_index]
+                                - arrays["teacher_nominal_targets29"][:, selected_index],
+                                arrays["teacher_applied_delta"],
+                            )
+                        ),
+                        nonleg_targets_unchanged=bool(
+                            not np.any(arrays["teacher_applied_delta"][:, 12:])
+                        ),
+                        delta_bound_pass=bool(
+                            np.max(abs(arrays["teacher_applied_delta"]))
+                            <= teacher_parameters.maximum_delta_rad + 1e-12
+                        ),
+                    )
+                    if not all(teacher_identity.values()):
+                        raise ValueError("single-player foot-contact target authority violated")
+                    if arm == "role-foot-clearance":
+                        old = next(
+                            r
+                            for r in teacher_parent_report["records"]
+                            if r["arm"] == arm and r["repeat"] == repeat
+                        )
+                        with np.load(teacher_parent_root / old["artifact"]["path"]) as original:
+                            teacher_parent_identity = {
+                                k: bool(np.array_equal(v, original[k]))
+                                for k, v in arrays.items()
+                                if not k.startswith("teacher_")
+                            }
+                    elif teacher_parameters.strength == 0:
+                        with np.load(a.output / f"role-foot-clearance-{repeat}.npz") as original:
+                            teacher_parent_identity = {
+                                k: bool(np.array_equal(v, original[k]))
+                                for k, v in arrays.items()
+                                if not k.startswith("teacher_")
+                            }
+                    if teacher_parent_identity is not None and not all(
+                        teacher_parent_identity.values()
+                    ):
+                        raise ValueError(
+                            "teacher measurement or zero strength changed parent physics"
+                        )
                 isolated_identity = None
                 if a.residual_agent is not None and residual_policy is not None:
                     selected = np.array(
@@ -931,6 +1130,14 @@ def main():
                     actual_residual_model_calls=residual_calls,
                     residual_active_agent=a.residual_agent,
                     isolated_player_identity=isolated_identity,
+                    teacher_target_authority=teacher_identity,
+                    teacher_parent_identity=teacher_parent_identity,
+                    teacher_active_controls=int(arrays["teacher_active"].sum())
+                    if contact_teacher is not None
+                    else 0,
+                    teacher_fallback_controls=int(arrays["teacher_fallback"].sum())
+                    if contact_teacher is not None
+                    else 0,
                     residual_update_index=residual_policy.metadata["update_index"]
                     if residual_policy is not None
                     else None,
@@ -946,7 +1153,9 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="NATIVE8_LEARNED_ROLE_COMMANDS_MEASURED_NOT_A_MATCH"
+                status="NATIVE8_CONTACT_TEACHER_AUTHORITY_MEASURED_NOT_LEARNED"
+                if teacher_config is not None
+                else "NATIVE8_LEARNED_ROLE_COMMANDS_MEASURED_NOT_A_MATCH"
                 if trained is not None
                 else "NATIVE8_COACHED_ROLE_BASELINE_MEASURED_NOT_A_MATCH",
                 source_head=a.expected_head,

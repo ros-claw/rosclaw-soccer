@@ -17,6 +17,7 @@ import pytest
         "rsi_fit_native_role_residual_td3.py",
         "rsi_run_native_residual_learning.py",
         "rsi_review_native_role_learning.py",
+        "rsi_probe_native_team_intent.py",
     ],
 )
 def test_command_family_bootstrap_does_not_train_or_allocate_physics(script, tmp_path, monkeypatch):
