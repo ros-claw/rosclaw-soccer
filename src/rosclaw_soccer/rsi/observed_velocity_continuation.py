@@ -11,6 +11,16 @@ from rosclaw_soccer.providers.g1.experimental_velocity_envelope import (
 from rosclaw_soccer.providers.g1.velocity_policy import target29
 
 
+def exit_after_entry_abstention(events: list[dict[str, Any]]) -> bool:
+    """Protect the current body's passing planner branch, without source IDs."""
+    if type(events) is not list or len(events) != 1 or type(events[0]) is not dict:
+        raise ValueError("one observed current-entry planner decision required")
+    window = events[0].get("selected_window")
+    if type(window) is not dict or type(window.get("window_pass")) is not bool:
+        raise ValueError("explicit full-NN entry prediction required; no default eligibility")
+    return not window["window_pass"]
+
+
 class ObservedVelocityContinuation:
     """One shadow inference and one completed actual-target observation per tick.
 

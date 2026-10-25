@@ -26,6 +26,7 @@ def evaluate_episode(
     hard_limits: np.ndarray,
     player_type: Any = SharedRoboNaldoPlayer,
     post_contact_exit: bool = False,
+    protect_passing_entry_prediction: bool = False,
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     """No copied rollout state or action playback; every call creates fresh NN state.
 
@@ -37,7 +38,11 @@ def evaluate_episode(
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 
     state_type, output_type, policy_type, mapping = policy_types
-    if type(post_contact_exit) is not bool:
+    if (
+        type(post_contact_exit) is not bool
+        or type(protect_passing_entry_prediction) is not bool
+        or (protect_passing_entry_prediction and not post_contact_exit)
+    ):
         raise ValueError("explicit post-contact exit research switch required")
     fast = assets.get("experimental_fast", False)
     feedback = parameters.get("approach_feedback", False)
@@ -141,7 +146,25 @@ def evaluate_episode(
                 raise ValueError("gain switch modified physical state")
             kick = player_type(w, "a/", policy, goal=np.array([8.0, 0.0, 0.11]))
             history_receipt = kick.install_measured_entry(tuple(history), reference_frame=phase)
-        if post_contact_exit and kick is not None and exit_frame is None and observed_foot:
+        exit_allowed = True
+        if (
+            protect_passing_entry_prediction
+            and kick is not None
+            and exit_frame is None
+            and observed_foot
+        ):
+            from rosclaw_soccer.rsi.observed_velocity_continuation import (
+                exit_after_entry_abstention,
+            )
+
+            exit_allowed = exit_after_entry_abstention(kick.events)
+        if (
+            post_contact_exit
+            and kick is not None
+            and exit_frame is None
+            and observed_foot
+            and exit_allowed
+        ):
             exit_frame = frame
             switch = w.switch_pd_profile("a/", vp)
             if not switch["physics_unchanged"]:
@@ -280,6 +303,8 @@ def evaluate_episode(
     if continuation is not None:
         row.update(
             post_contact_exit=True,
+            protect_passing_entry_prediction=protect_passing_entry_prediction,
+            exit_gate_uses_source_course_or_outcome=False,
             exit_control=exit_frame,
             exit_trigger="completed_previous_control_foot_force_gt1N",
             exit_command_intent="zero_velocity_existing_rate_limit",

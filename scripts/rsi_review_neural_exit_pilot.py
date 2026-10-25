@@ -103,6 +103,11 @@ def verify_velocity_history(row, arrays, *, layout, model, params, session):
     foot = np.flatnonzero((forces[:, :2] > 1).any(axis=1))
     trigger = None if not len(foot) else int(foot[0] // 10 + 1)
     expected_exit = trigger if trigger is not None and trigger < n else None
+    if row.get("protect_passing_entry_prediction", False):
+        from rosclaw_soccer.rsi.observed_velocity_continuation import exit_after_entry_abstention
+
+        if not exit_after_entry_abstention(row["controller_events"]):
+            expected_exit = None
     if exit_frame != expected_exit:
         raise ValueError("exit must follow first completed physical foot-contact control")
     data = mujoco.MjData(model)

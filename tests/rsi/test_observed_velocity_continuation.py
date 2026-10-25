@@ -4,7 +4,10 @@ from test_continuous_velocity_stream import stream
 from test_g1_velocity_policy import state
 
 from rosclaw_soccer.providers.g1.velocity_policy import target29
-from rosclaw_soccer.rsi.observed_velocity_continuation import ObservedVelocityContinuation
+from rosclaw_soccer.rsi.observed_velocity_continuation import (
+    ObservedVelocityContinuation,
+    exit_after_entry_abstention,
+)
 
 
 def test_velocity_identity_branch_preserves_original_action_and_phase(monkeypatch):
@@ -89,3 +92,27 @@ def test_invalid_actual_observation_latches_without_clipping_or_retry(monkeypatc
     np.testing.assert_array_equal(owned.last_action, action)
     with pytest.raises(ValueError):
         continuation.observe_executed(proposed, completed_control=1)
+
+
+@pytest.mark.parametrize("passed", [False, True])
+def test_exit_gate_uses_current_prediction_not_source_labels(passed):
+    event = dict(selected_window=dict(window_pass=passed))
+    assert exit_after_entry_abstention([event]) is (not passed)
+    event.update(course_index=1, source_outcome="arbitrary ignored label")
+    assert exit_after_entry_abstention([event]) is (not passed)
+
+
+@pytest.mark.parametrize(
+    "events",
+    [
+        [],
+        [None],
+        [{}, {}],
+        [{}],
+        [dict(selected_window={})],
+        [dict(selected_window=dict(window_pass=1))],
+    ],
+)
+def test_exit_gate_fails_closed_without_typed_current_prediction(events):
+    with pytest.raises(ValueError):
+        exit_after_entry_abstention(events)

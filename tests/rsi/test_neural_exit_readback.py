@@ -14,7 +14,7 @@ from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
 from scripts.rsi_review_neural_exit_pilot import closed_producer, verify_velocity_history
 
 
-def fixture(monkeypatch):
+def fixture(monkeypatch, protect=False):
     import mujoco
 
     monkeypatch.setattr(mujoco, "mj_step", lambda *args: pytest.fail("reader must not integrate"))
@@ -34,7 +34,7 @@ def fixture(monkeypatch):
     for frame in range(4):
         target = continuation.propose(q, v, v[3:6], np.zeros(3, np.float32), frame=frame)
         observations.append(owned.last_observation.copy())
-        if frame == 1:
+        if frame == 1 or (protect and frame >= 1):
             target = np.full(29, 0.1)
         targets.append(target.copy())
         receipts.append(continuation.observe_executed(target, completed_control=frame + 1))
@@ -46,16 +46,18 @@ def fixture(monkeypatch):
         joint_targets=np.stack(targets),
         commands=np.zeros((4, 3), np.float32),
         ball_forces=forces,
-        velocity_control_active=np.array([True, False, True, True]),
+        velocity_control_active=np.array([True, False, not protect, not protect]),
         velocity_shadow_observations=np.stack(observations),
     )
     row = dict(
         controls=4,
         entry_control=1,
-        exit_control=2,
+        exit_control=None if protect else 2,
         course=[2.3, 0, -0.4],
         experimental_fast_approach=False,
         observed_velocity_continuation=receipts,
+        protect_passing_entry_prediction=protect,
+        controller_events=[dict(selected_window=dict(window_pass=True))],
     )
     kwargs = dict(layout=layout, model=model, params=owned.params, session=owned.session)
     return row, arrays, kwargs
@@ -64,6 +66,14 @@ def fixture(monkeypatch):
 def test_readback_reconstructs_actual_history_and_cpu_nn_without_step(monkeypatch):
     row, arrays, kwargs = fixture(monkeypatch)
     assert verify_velocity_history(row, arrays, **kwargs) == 4
+
+
+def test_passing_current_prediction_keeps_original_skill_despite_foot_contact(monkeypatch):
+    row, arrays, kwargs = fixture(monkeypatch, protect=True)
+    assert verify_velocity_history(row, arrays, **kwargs) == 4
+    row["controller_events"][0]["selected_window"]["window_pass"] = False
+    with pytest.raises(ValueError):
+        verify_velocity_history(row, arrays, **kwargs)
 
 
 @pytest.mark.parametrize(

@@ -14,6 +14,9 @@ def main():
     for key in ("champion-audit-hash", "contact-readback-hash", "expected-head"):
         parser.add_argument("--" + key, required=True)
     parser.add_argument("--mode", choices=("pilot", "baseline-diagnostic"), default="pilot")
+    parser.add_argument("--protect-passing-entry", action="store_true")
+    parser.add_argument("--exit-audit", type=Path)
+    parser.add_argument("--exit-audit-hash")
     a = parser.parse_args()
     indices = (0,) if a.mode == "baseline-diagnostic" else INDICES
     arms = ("B",) if a.mode == "baseline-diagnostic" else ("B", "C")
@@ -29,6 +32,25 @@ def main():
     if a.output.exists():
         raise ValueError("new bounded pilot root required")
     pins = {}
+    if a.protect_passing_entry:
+        if a.mode != "pilot" or a.exit_audit is None or not a.exit_audit_hash:
+            raise ValueError("protected variant requires exact completed unconditional exit audit")
+        if digest(a.exit_audit) != a.exit_audit_hash:
+            raise ValueError("exit audit identity differs")
+        exit_audit = json.loads(a.exit_audit.read_text())
+        if (
+            exit_audit["status"] != "NEURAL_EXIT_RAW_HISTORY_AND_CPU_NN_VERIFIED_NOT_TEACHER"
+            or exit_audit["rescues"] != [1]
+            or exit_audit["regressions"] != [0]
+            or exit_audit["qualified_for_expansion"] is not False
+        ):
+            raise ValueError(
+                "same independently verified partial gain and retention defect required"
+            )
+        merge_pins(pins, exit_audit["input_file_hashes"])
+        pins[str(a.exit_audit)] = a.exit_audit_hash
+    elif a.exit_audit is not None or a.exit_audit_hash:
+        raise ValueError("exit audit is only for the explicit protected variant")
     for path, expected, status in (
         (
             a.champion_audit,
@@ -104,6 +126,7 @@ def main():
             input_file_hashes=pins,
             course_indices=list(indices),
             mode=a.mode,
+            protect_passing_entry_prediction=a.protect_passing_entry,
             old_success_controls=[0, 30],
             late_recontact_state=1,
             same_control_nonfoot_negative_control=2,
@@ -148,6 +171,7 @@ def main():
                 hard_limits=context["hard_limits"],
                 player_type=Controlled,
                 post_contact_exit=arm == "C",
+                protect_passing_entry_prediction=a.protect_passing_entry and arm == "C",
             )
             worlds += 1
             native += row["native_steps"]
