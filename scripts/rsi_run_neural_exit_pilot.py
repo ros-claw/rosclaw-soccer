@@ -7,18 +7,68 @@ from pathlib import Path
 INDICES = (0, 1, 2, 30)
 
 
+def admit_protected_exit_source(path, expected, pins):
+    from rosclaw_soccer.rsi.neural_exit_transfer import (
+        EXIT_SOURCE_INDICES,
+        require_protected_exit_source,
+    )
+    from scripts.rsi_native_context_recovery_common import digest
+    from scripts.rsi_stable_plastic_sources import merge_pins
+
+    if path.is_symlink() or digest(path) != expected:
+        raise ValueError("exact protected source audit required")
+    audit = json.loads(path.read_text())
+    root = Path(audit["producer_terminal"]["output_root"])
+    if not root.is_absolute():
+        raise ValueError("absolute completed protected producer root required")
+    bound = audit["input_file_hashes"]
+    cp = root / "complete.json"
+    if bound.get(str(cp)) != digest(cp):
+        raise ValueError("protected source audit must bind its actual producer")
+    producer = json.loads(cp.read_text())
+    if [r["course_index"] for r in producer["results"]] != list(EXIT_SOURCE_INDICES):
+        raise ValueError("exact four-state source producer required")
+    rows = []
+    for index, result in zip(EXIT_SOURCE_INDICES, producer["results"], strict=True):
+        ref = result["arms"]["C"]
+        if ref["path"] != f"course-{index:02d}/C.json":
+            raise ValueError("ordinary same-source C record required")
+        rp = root / ref["path"]
+        if bound.get(str(rp)) != ref["hash"] or digest(rp) != ref["hash"]:
+            raise ValueError("actual protected C record must be audit-bound")
+        rows.append(json.loads(rp.read_text()))
+    require_protected_exit_source(audit, producer, rows)
+    merge_pins(pins, bound)
+    pins[str(path)] = expected
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for key in ("champion-root", "champion-audit", "contact-readback", "backbone-model", "output"):
         parser.add_argument("--" + key, type=Path, required=True)
     for key in ("champion-audit-hash", "contact-readback-hash", "expected-head"):
         parser.add_argument("--" + key, required=True)
-    parser.add_argument("--mode", choices=("pilot", "baseline-diagnostic"), default="pilot")
+    parser.add_argument(
+        "--mode", choices=("pilot", "baseline-diagnostic", "transfer18"), default="pilot"
+    )
     parser.add_argument("--protect-passing-entry", action="store_true")
     parser.add_argument("--exit-audit", type=Path)
     parser.add_argument("--exit-audit-hash")
+    parser.add_argument("--protected-audit", type=Path)
+    parser.add_argument("--protected-audit-hash")
     a = parser.parse_args()
-    indices = (0,) if a.mode == "baseline-diagnostic" else INDICES
+    from rosclaw_soccer.rsi.neural_exit_transfer import (
+        EXIT_RETENTION_INDICES,
+        EXIT_TRANSFER_INDICES,
+        EXIT_TRANSFER_WITH_CONTROLS,
+    )
+
+    transfer = a.mode == "transfer18"
+    indices = (
+        EXIT_TRANSFER_WITH_CONTROLS
+        if transfer
+        else ((0,) if a.mode == "baseline-diagnostic" else INDICES)
+    )
     arms = ("B",) if a.mode == "baseline-diagnostic" else ("B", "C")
     world_ceiling = len(indices) * len(arms)
     native_ceiling = world_ceiling * 3600
@@ -32,8 +82,14 @@ def main():
     if a.output.exists():
         raise ValueError("new bounded pilot root required")
     pins = {}
+    if transfer:
+        if not a.protect_passing_entry or a.protected_audit is None or not a.protected_audit_hash:
+            raise ValueError("explicit protected transfer requires independently audited source")
+        admit_protected_exit_source(a.protected_audit, a.protected_audit_hash, pins)
+    elif a.protected_audit is not None or a.protected_audit_hash:
+        raise ValueError("protected source gate belongs only to source-disjoint transfer18")
     if a.protect_passing_entry:
-        if a.mode != "pilot" or a.exit_audit is None or not a.exit_audit_hash:
+        if a.mode not in ("pilot", "transfer18") or a.exit_audit is None or not a.exit_audit_hash:
             raise ValueError("protected variant requires exact completed unconditional exit audit")
         if digest(a.exit_audit) != a.exit_audit_hash:
             raise ValueError("exit audit identity differs")
@@ -117,19 +173,35 @@ def main():
             raise ValueError("baseline target history not representable; no physics allocation")
         records[index] = (old, raw_path)
         codec_errors[index] = max(errors)
+    course_bank_hash = None
+    if transfer:
+        from rosclaw_soccer.rsi.walk_kick_teacher_plan import search_course_bank
+        from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
+
+        original_bank = search_course_bank(expanded_public=True)
+        declared = tuple(original_bank[i] for i in indices)
+        course_bank_hash = preflight_receiving_courses(declared)
+        if any(tuple(records[i][0]["course"]) != original_bank[i].course for i in indices):
+            raise ValueError("all declared nominal courses must match the bound source exactly")
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
         dict(
-            schema="soccer.observed_neural_exit_pilot.v1",
+            schema="soccer.observed_neural_exit_transfer18.v1"
+            if transfer
+            else "soccer.observed_neural_exit_pilot.v1",
             source_head=a.expected_head,
             input_file_hashes=pins,
             course_indices=list(indices),
             mode=a.mode,
             protect_passing_entry_prediction=a.protect_passing_entry,
             old_success_controls=[0, 30],
-            late_recontact_state=1,
-            same_control_nonfoot_negative_control=2,
+            transfer_indices=list(EXIT_TRANSFER_INDICES) if transfer else [],
+            retention_indices=list(EXIT_RETENTION_INDICES) if transfer else [],
+            transfer_excluded_source_indices=list(INDICES) if transfer else [],
+            course_bank_preflight_hash=course_bank_hash,
+            late_recontact_state=None if transfer else 1,
+            same_control_nonfoot_negative_control=None if transfer else 2,
             actual_world_ceiling=world_ceiling,
             actual_native_step_ceiling=native_ceiling,
             forecast_requested_native_step_ceiling=forecast_ceiling,
@@ -231,6 +303,9 @@ def main():
         dict(
             status="OBSERVED_NEURAL_EXIT_PILOT_COMPLETE_NOT_TEACHER_QUALIFIED",
             source_head=a.expected_head,
+            transfer18=transfer,
+            course_bank_preflight_hash=course_bank_hash,
+            protect_passing_entry_prediction=a.protect_passing_entry,
             input_file_hashes=pins,
             results=results,
             actual_worlds=worlds,

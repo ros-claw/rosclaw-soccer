@@ -89,6 +89,31 @@ def closed_producer(unit, head, root):
     )
 
 
+def verify_forecast_accounting(row):
+    """These counters belong to old entry forecasts, not the new exit future."""
+    counters = row["forecast_counters"]
+    keys = (
+        "forecast_calls",
+        "attempted_native_steps",
+        "integrated_native_steps",
+        "future_nn_calls",
+        "maximum_native_steps",
+    )
+    if any(type(counters.get(k)) is not int or counters[k] < 0 for k in keys):
+        raise ValueError("complete integer entry-forecast accounting required")
+    entry = row["entry_control"]
+    horizon = 0 if entry is None else min(128, 360 - entry)
+    if (
+        counters["forecast_calls"] > 37
+        or counters["attempted_native_steps"] != counters["forecast_calls"] * horizon * 10
+        or counters["integrated_native_steps"] > counters["attempted_native_steps"]
+        or counters["integrated_native_steps"] != 10 * counters["future_nn_calls"]
+        or counters["maximum_native_steps"] != 37 * 1280
+    ):
+        raise ValueError("bounded forecast requests/integrations/NN calls disagree")
+    return counters["attempted_native_steps"], counters["integrated_native_steps"]
+
+
 def verify_velocity_history(row, arrays, *, layout, model, params, session):
     import mujoco
     import numpy as np
@@ -183,7 +208,17 @@ def main():
         parser.add_argument("--" + key, type=Path, required=True)
     for key in ("pilot-hash", "pilot-unit", "producer-head", "expected-head"):
         parser.add_argument("--" + key, required=True)
+    parser.add_argument("--transfer18", action="store_true")
+    parser.add_argument("--protected-audit", type=Path)
+    parser.add_argument("--protected-audit-hash")
     a = parser.parse_args()
+    from rosclaw_soccer.rsi.neural_exit_transfer import (
+        EXIT_TRANSFER_INDICES,
+        EXIT_TRANSFER_WITH_CONTROLS,
+    )
+
+    indices = EXIT_TRANSFER_WITH_CONTROLS if a.transfer18 else (0, 1, 2, 30)
+    world_ceiling = 2 * len(indices)
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
@@ -197,12 +232,26 @@ def main():
     if (
         pilot["status"] != "OBSERVED_NEURAL_EXIT_PILOT_COMPLETE_NOT_TEACHER_QUALIFIED"
         or pilot["source_head"] != a.producer_head
-        or [r["course_index"] for r in pilot["results"]] != [0, 1, 2, 30]
-        or pilot["actual_worlds"] != 8
+        or [r["course_index"] for r in pilot["results"]] != list(indices)
+        or pilot["actual_worlds"] != world_ceiling
         or pilot["neural_optimizer_updates"] != 0
+        or pilot.get("transfer18", False) != a.transfer18
+        or (a.transfer18 and pilot.get("protect_passing_entry_prediction") is not True)
     ):
-        raise ValueError("same complete four-state pilot, not baseline-only diagnostic")
+        raise ValueError("complete explicitly declared pilot/transfer scope required")
     pins = dict(pilot["input_file_hashes"])
+    if a.transfer18:
+        if (
+            a.protected_audit is None
+            or not a.protected_audit_hash
+            or pins.get(str(a.protected_audit)) != a.protected_audit_hash
+        ):
+            raise ValueError("same producer-bound protected source audit required")
+        from scripts.rsi_run_neural_exit_pilot import admit_protected_exit_source
+
+        admit_protected_exit_source(a.protected_audit, a.protected_audit_hash, pins)
+    elif a.protected_audit is not None or a.protected_audit_hash:
+        raise ValueError("protected source binding is only for explicit transfer18")
     pins[str(cp)] = a.pilot_hash
     source_pins(pins)
     check_pins(pins)
@@ -228,8 +277,17 @@ def main():
         a.champion_root / "complete.json"
     ):
         raise ValueError("bound old champion identity differs")
+    original_bank = None
+    if a.transfer18:
+        from rosclaw_soccer.rsi.walk_kick_teacher_plan import search_course_bank
+        from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
+
+        original_bank = search_course_bank(expanded_public=True)
+        bank_hash = preflight_receiving_courses(tuple(original_bank[i] for i in indices))
+        if pilot.get("course_bank_preflight_hash") != bank_hash:
+            raise ValueError("complete fixed nominal transfer bank commitment differs")
     results, rescues, regressions = [], [], []
-    steps = calls = 0
+    steps = calls = forecast_requested = forecast_integrated = 0
     for item in pilot["results"]:
         index = item["course_index"]
         arms, outcomes, health = {}, {}, {}
@@ -241,6 +299,21 @@ def main():
                 raise ValueError("bound actual arm record required")
             pins[str(path)] = ref["hash"]
             row = json.loads(path.read_text())
+            requested, integrated = verify_forecast_accounting(row)
+            forecast_requested += requested
+            forecast_integrated += integrated
+            if original_bank is not None and tuple(row["course"]) != original_bank[index].course:
+                raise ValueError("actual transfer course differs from the preregistered bank")
+            if (
+                row["course_index"] != index
+                or row["arm"] != arm
+                or (
+                    a.transfer18
+                    and arm == "C"
+                    and row.get("protect_passing_entry_prediction") is not True
+                )
+            ):
+                raise ValueError("raw row scope or protected transfer mechanism differs")
             raw_path = path.parent / row["artifact"]["path"]
             if raw_path.parent != path.parent or digest(raw_path) != row["artifact"]["hash"]:
                 raise ValueError("exact raw trajectory required")
@@ -309,8 +382,13 @@ def main():
         results.append(
             dict(course_index=index, B=outcomes["B"], C=outcomes["C"], C_healthy=health["C"])
         )
-    if steps != pilot["actual_native_steps"] or steps > 28800:
+    if steps != pilot["actual_native_steps"] or steps > 3600 * world_ceiling:
         raise ValueError("actual physical accounting differs")
+    if (
+        forecast_requested != pilot["forecast_requested_native_steps"]
+        or forecast_requested > world_ceiling * 37 * 1280
+    ):
+        raise ValueError("total entry-forecast budget differs")
     check_pins(pins)
     a.output.mkdir()
     write_once(
@@ -319,11 +397,23 @@ def main():
             status="NEURAL_EXIT_RAW_HISTORY_AND_CPU_NN_VERIFIED_NOT_TEACHER",
             source_head=a.expected_head,
             producer_terminal=terminal,
+            transfer18=a.transfer18,
+            transfer_rescues=[i for i in rescues if i in EXIT_TRANSFER_INDICES]
+            if a.transfer18
+            else [],
+            transfer_research_gate_met=bool(
+                a.transfer18
+                and not regressions
+                and all(r["C_healthy"] for r in results)
+                and any(i in EXIT_TRANSFER_INDICES for i in rescues)
+            ),
             input_file_hashes=pins,
             results=results,
             rescues=rescues,
             regressions=regressions,
             actual_native_steps=steps,
+            forecast_requested_native_steps=forecast_requested,
+            forecast_integrated_native_steps=forecast_integrated,
             cpu_velocity_nn_readback_calls=calls,
             new_physical_steps=0,
             neural_optimizer_updates=0,
