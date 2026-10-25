@@ -14,6 +14,10 @@ def main():
     p.add_argument("--shard-root", type=Path, nargs=4, required=True)
     p.add_argument("--synergy-model", type=Path)
     p.add_argument("--synergy-model-hash")
+    for name in ("plastic-model", "plastic-qualification", "retention-proof", "champion-root"):
+        p.add_argument("--" + name, type=Path)
+    for name in ("plastic-model-hash", "plastic-qualification-hash", "retention-proof-hash"):
+        p.add_argument("--" + name)
     p.add_argument("--window-qualification", type=Path)
     p.add_argument("--window-qualification-hash")
     p.add_argument("--expand-40", action="store_true")
@@ -33,22 +37,27 @@ def main():
             "motion-synergy",
             "motion-synergy-response",
             "motion-synergy-full-window",
+            "motion-synergy-stable-plastic",
         ),
         default="measured-pose",
     )
     a = p.parse_args()
     synergy_response = a.interface == "motion-synergy-response"
-    full_window = a.interface == "motion-synergy-full-window"
+    plastic = a.interface == "motion-synergy-stable-plastic"
+    full_window = plastic or a.interface == "motion-synergy-full-window"
     synergy = a.interface in (
         "motion-synergy",
         "motion-synergy-response",
         "motion-synergy-full-window",
+        "motion-synergy-stable-plastic",
     )
     forecast_controls = 128 if full_window else 96
     if a.expand_40 and not full_window:
         raise ValueError("expanded validation requires the full-window teacher protocol")
     if a.perturb_40 and not a.expand_40:
         raise ValueError("local robustness requires explicit expanded40 protocol and its gate")
+    if plastic and not a.expand_40:
+        raise ValueError("stable/plastic development requires all40 original context clusters")
     course_count = 40 if a.expand_40 else 16
     world_cap, native_cap = 2 * course_count, 2 * course_count * 3600
     motion_timing = synergy or a.interface == "motion-timing"
@@ -66,7 +75,7 @@ def main():
     forecast_cap = (1 + 2 * len(axes) + int(response)) * 640 * 16 if nn_outcome else 172800
     if motion_timing:
         forecast_cap = (
-            (38 if synergy_response else 37 if synergy else 3)
+            (73 if plastic else 38 if synergy_response else 37 if synergy else 3)
             * forecast_controls
             * 10
             * course_count
@@ -110,7 +119,7 @@ def main():
             or not gate["qualified_for_expansion"]
             or gate["regressions"]
             or len(set(gate["rescues"])) < 2
-            or gate["actual_worlds"] != (80 if a.perturb_40 else 32)
+            or gate["actual_worlds"] != (80 if a.perturb_40 or plastic else 32)
             or gate["new_physical_steps"] != 0
             or (a.perturb_40 and not gate.get("qualified_on_expanded_public", False))
             or gate.get("perturbed_public_validation", False)
@@ -121,6 +130,10 @@ def main():
                 raise ValueError("conflicting expansion gate provenance")
             pins[key] = value
         pins[str(a.expansion_gate)] = a.expansion_gate_hash
+    if plastic:
+        from scripts.rsi_stable_plastic_sources import admit_stable_plastic_sources
+
+        admit_stable_plastic_sources(a, pins)
     if full_window:
         if (
             a.window_qualification is None
@@ -229,7 +242,7 @@ def main():
         if nn_outcome
         else TaskSpaceKickPlayer
     )
-    fitted_basis = None
+    fitted_basis = plastic_basis = None
     if synergy:
         fitted = json.loads(a.synergy_model.read_text())
         artifact = a.synergy_model.parent / fitted["artifact"]["path"]
@@ -237,9 +250,15 @@ def main():
             raise ValueError("qualified synergy artifact binding differs")
         with np.load(artifact, allow_pickle=False) as raw:
             fitted_basis = raw["basis_hg"].copy()
+        if plastic:
+            fitted_plastic = json.loads(a.plastic_model.read_text())
+            artifact = a.plastic_model.parent / fitted_plastic["artifact"]["path"]
+            with np.load(artifact, allow_pickle=False) as raw:
+                plastic_basis = raw["basis_hg"].copy()
 
     class Controlled(parent_type):
         basis_hg = fitted_basis
+        plastic_basis_hg = plastic_basis
         synergy_response_enabled = synergy_response
         forecast_controls = 128 if full_window else 96
         candidate_axes = axes
@@ -259,6 +278,11 @@ def main():
             interface=a.interface,
             expanded_public_validation=a.expand_40,
             perturbed_public_validation=a.perturb_40,
+            stable_plastic_development=plastic,
+            consumed_perturbation_development=plastic and a.perturb_40,
+            champion_root=str(a.champion_root) if plastic else None,
+            plastic_model_hash=a.plastic_model_hash if plastic else None,
+            plastic_search_requires_backbone_abstention=plastic,
             perturbation_declaration=perturbation_declaration,
             expansion_gate_hash=a.expansion_gate_hash if a.expand_40 else None,
             freeze_inadmissible_parent_joints=a.interface == "precontact-sparse",
@@ -296,6 +320,7 @@ def main():
             reference_installations_not_changed_pd_controls=motion_timing,
             candidate_set=(
                 ["parent", "3generations_x12_data_synergy_plans"]
+                + (["3generations_x12_feedback_complement_on_abstention"] if plastic else [])
                 if synergy
                 else ["parent", "timing--3", "timing-+3"]
                 if motion_timing
@@ -489,6 +514,11 @@ def main():
             )
             print(index, arm, pair[arm], flush=True)
         results.append(dict(course_index=index, arms=pair))
+    champion_regressions, champion_rescues = [], []
+    if plastic:
+        from scripts.rsi_stable_plastic_sources import compare_champion
+
+        champion_regressions, champion_rescues = compare_champion(a.output, a.champion_root, pins)
     rescues = [
         r["course_index"]
         for r in results
@@ -520,18 +550,26 @@ def main():
             forecast_attempted_native_steps=forecast_attempted,
             rescues=rescues,
             regressions=regressions,
-            qualified_for_expansion=len(rescues) >= 2 and not regressions,
+            qualified_for_expansion=len(rescues) >= 2
+            and not regressions
+            and not champion_regressions,
             expanded_public_validation=a.expand_40,
             perturbed_public_validation=a.perturb_40,
+            stable_plastic_development=plastic,
+            consumed_perturbation_development=plastic and a.perturb_40,
+            champion_regressions=champion_regressions,
+            champion_rescues=champion_rescues,
             qualified_on_expanded_public=(
                 a.expand_40
                 and not a.perturb_40
                 and len(rescues) >= 2
                 and not regressions
+                and not champion_regressions
                 and sum(r["arms"]["C"]["task_pass"] for r in results) >= 32
             ),
             qualified_on_local_perturbations=(
                 a.perturb_40
+                and not plastic
                 and not regressions
                 and sum(r["arms"]["C"]["task_pass"] for r in results) >= 32
                 and all(r["arms"]["C"]["healthy"] for r in results)

@@ -81,6 +81,7 @@ def main():
     p.add_argument("--expected-head", required=True)
     p.add_argument("--shard-root", type=Path, nargs=4, required=True)
     p.add_argument("--synergy-model", type=Path)
+    p.add_argument("--plastic-model", type=Path)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -96,10 +97,12 @@ def main():
         "motion-synergy",
         "motion-synergy-response",
         "motion-synergy-full-window",
+        "motion-synergy-stable-plastic",
     ):
         raise ValueError("explicit motion reference protocol required")
     response = report["interface"] == "motion-synergy-response"
-    full_window = report["interface"] == "motion-synergy-full-window"
+    plastic = report["interface"] == "motion-synergy-stable-plastic"
+    full_window = plastic or report["interface"] == "motion-synergy-full-window"
     synergy = full_window or report["interface"] in ("motion-synergy", "motion-synergy-response")
     pins = dict(report["input_file_hashes"])
     fitted = None
@@ -110,6 +113,14 @@ def main():
     pins[str(cp)] = a.pilot_hash
     pins[str(a.pilot / "declaration.json")] = report["declaration_hash"]
     declaration = json.loads((a.pilot / "declaration.json").read_text())
+    if plastic and (
+        declaration.get("stable_plastic_development") is not True
+        or declaration.get("plastic_search_requires_backbone_abstention") is not True
+        or a.plastic_model is None
+        or pins.get(str(a.plastic_model)) != declaration.get("plastic_model_hash")
+        or digest(a.plastic_model) != declaration.get("plastic_model_hash")
+    ):
+        raise ValueError("explicit bound feedback complement development protocol required")
     expanded = report.get("expanded_public_validation", False)
     perturbed = report.get("perturbed_public_validation", False)
     if type(expanded) is not bool or (expanded and not full_window):
@@ -130,7 +141,9 @@ def main():
         )
         or declaration["forecast_native_step_ceiling"]
         != (
-            1894400
+            3737600
+            if plastic
+            else 1894400
             if expanded
             else 757760
             if full_window
@@ -341,6 +354,8 @@ def main():
                 if synergy
                 else ["parent", "timing--3", "timing-+3"]
             )
+            if plastic and not any(w["outcome"]["window_pass"] for w in windows[:37]):
+                expected_names += [f"plastic-g{g}-p{i:02d}" for g in range(3) for i in range(12)]
             if response:
                 from rosclaw_soccer.rsi.synergy_response_model import propose_synergy_response
 
@@ -368,7 +383,17 @@ def main():
             eligible = [i for i, w in enumerate(windows) if i and w["outcome"]["window_pass"]]
             chosen = max(eligible, key=lambda i: windows[i]["outcome"]["reward"]) if eligible else 0
             if synergy:
-                chosen = verify_synergy_search(windows[:37], peaks[:37], events[0]["generations"])
+                chosen = (
+                    verify_stable_plastic_search(
+                        windows, peaks, events[0]["generations"], events[0]["plastic_generations"]
+                    )
+                    if plastic
+                    else verify_synergy_search(windows[:37], peaks[:37], events[0]["generations"])
+                )
+                if plastic and events[0]["selected_basis"] != (
+                    "parent" if chosen == 0 else "plastic" if chosen >= 37 else "backbone"
+                ):
+                    raise ValueError("installed motion basis does not match physical selection")
                 if response and len(windows) == 38 and windows[37]["outcome"]["window_pass"]:
                     chosen = 37
                 if (
@@ -395,7 +420,9 @@ def main():
                 attempted_native_steps=charged,
                 integrated_native_steps=advanced,
                 future_nn_calls=advanced // 10,
-                maximum_native_steps=47360
+                maximum_native_steps=93440
+                if plastic
+                else 47360
                 if full_window
                 else 36480
                 if response
@@ -463,6 +490,20 @@ def main():
             != fit["explained_variance_fraction"]
         ):
             raise ValueError("data model provenance/variance differs")
+    complement_fit, champion_regressions, champion_rescues = None, [], []
+    if plastic:
+        from scripts.rsi_stable_plastic_sources import compare_champion, verify_complement_fit
+
+        with np.load(artifact, allow_pickle=False) as raw:
+            complement_fit = verify_complement_fit(a.plastic_model, pins, raw["basis_hg"].copy())
+        champion_regressions, champion_rescues = compare_champion(
+            a.pilot, Path(declaration["champion_root"]), pins
+        )
+        if (
+            champion_regressions != report["champion_regressions"]
+            or champion_rescues != report["champion_rescues"]
+        ):
+            raise ValueError("old champion skill retention differs from actual readback")
     check_pins(pins)
     clean(a.expected_head)
     a.output.mkdir(parents=True)
@@ -478,15 +519,22 @@ def main():
             data_synergy_fit_independently_recomputed=synergy,
             expanded_public_validation=expanded,
             perturbed_public_validation=perturbed,
+            stable_plastic_development=plastic,
+            consumed_perturbation_development=plastic and perturbed,
+            complement_fit_reconstructed=complement_fit,
+            champion_regressions=champion_regressions,
+            champion_rescues=champion_rescues,
             qualified_on_expanded_public=(
                 expanded
                 and not perturbed
                 and len(rescues) >= 2
                 and not regressions
+                and not champion_regressions
                 and sum(r["C"]["task_pass"] for r in results) >= 32
             ),
             qualified_on_local_perturbations=(
                 perturbed
+                and not plastic
                 and not regressions
                 and sum(r["C"]["task_pass"] for r in results) >= 32
                 and all(r["C_healthy"] for r in results)
@@ -499,7 +547,9 @@ def main():
             actual_worlds=worlds,
             forecast_attempted_native_steps=attempted,
             forecast_integrated_native_steps=integrated,
-            qualified_for_expansion=len(rescues) >= 2 and not regressions,
+            qualified_for_expansion=len(rescues) >= 2
+            and not regressions
+            and not champion_regressions,
             new_physical_steps=0,
             optimizer_updates=0,
             promotion_authorized=False,
