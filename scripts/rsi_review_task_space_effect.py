@@ -53,8 +53,8 @@ def main():
     import mujoco
     import numpy as np
 
-    from rosclaw_soccer.rsi.ball_surface_tasks import measure_ball_surfaces
     from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+    from rosclaw_soccer.rsi.ball_surface_tasks import measure_ball_surfaces
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
     from rosclaw_soccer.rsi.walk_kick_teacher_audit import relabel_arrays
