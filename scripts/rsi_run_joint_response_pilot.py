@@ -22,7 +22,10 @@ def main():
     p.add_argument("--executed-target-search", action="store_true")
     p.add_argument("--target-qualification", type=Path)
     p.add_argument("--target-qualification-hash")
+    p.add_argument("--target-feasible-axes", action="store_true")
     a = p.parse_args()
+    if a.target_feasible_axes and not a.executed_target_search:
+        raise ValueError("explicit executed-target study required for per-axis feasibility")
     if sum((a.aim_command_search, a.sequential_restoration, a.executed_target_search)) > 1:
         raise ValueError("one explicit teacher mechanism per pilot required")
     from scripts.rsi_atomic_artifacts import write_once
@@ -90,6 +93,8 @@ def main():
             qualified["status"] != "G1_EXECUTED_TARGET_SYNERGY_NN_FUTURES_EXACT"
             or not qualified["all_future_nn_targets_and_native_arrays_exact"]
             or not qualified["reference_arrays_unchanged_by_target_plan"]
+            or qualified.get("executed_target_projection_mode", "whole_tick")
+            != ("per_axis" if a.target_feasible_axes else "whole_tick")
             or qualified["reference_conditioning"] != "OFF_original_arrays"
             or qualified["task_scoring_goal_world_point"] != [8.0, 0.0, 0.11]
         ):
@@ -135,6 +140,7 @@ def main():
             protocol="soccer.full_nn_joint_task_response_six_state_pilot.v1",
             aim_command_search=a.aim_command_search,
             executed_target_search=a.executed_target_search,
+            executed_target_projection_mode="per_axis" if a.target_feasible_axes else "whole_tick",
             target_qualification_hash=a.target_qualification_hash,
             aim_command_world_points=[list(c.world_point) for c in declared_aim_commands()]
             if a.aim_command_search
@@ -199,6 +205,7 @@ def main():
                     arm == "C" and not a.aim_command_search and not a.executed_target_search
                 )
                 joint_response_iterations = 4 if a.sequential_restoration and arm == "C" else 1
+                target_projection_mode = "per_axis" if a.target_feasible_axes else "whole_tick"
                 observed_instances = instances
 
                 def __init__(self, *args, **kwargs):

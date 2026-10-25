@@ -16,6 +16,7 @@ from scripts.rsi_review_motion_timing_teacher import (
 )
 
 
+@pytest.mark.parametrize("projection", ["whole_tick", "per_axis"])
 @pytest.mark.parametrize(
     "mode,expected_calls",
     [
@@ -38,7 +39,7 @@ from scripts.rsi_review_motion_timing_teacher import (
     ],
 )
 def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
-    monkeypatch, mode, expected_calls
+    monkeypatch, mode, expected_calls, projection
 ):
     p = object.__new__(
         executed_controller.ExecutedSynergyKickPlayer
@@ -55,6 +56,7 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
     p.selected_prediction = None
     p.events, p.candidate_predictions = [], []
     p.target_edits, p.executed_target_plan = [], None
+    p.target_projection_mode = projection
     p.basis_isaac = tuple(tuple(float(i == j) for j in range(29)) for i in range(6))
     p.basis_hg = np.eye(6, 29, dtype=np.float64)
     p.synergy_response_enabled = mode == "response"
@@ -164,6 +166,8 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
         assert audit_choice == 0 and event["selected"].startswith("target-")
         assert event["selected_basis"] == "executed-target"
         assert not event["original_actual_target_authority_unchanged"]
+        assert event["installation"]["projection_mode"] == projection
+        assert all(c.projection_mode == projection for c in calls[37:])
         assert p.target_edits == [{"applied": True}]
         additional = event["additional_candidate_search"]
         synthetic = [event["candidate_windows"][0]] + [

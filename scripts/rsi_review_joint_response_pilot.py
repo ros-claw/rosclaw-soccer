@@ -22,6 +22,7 @@ def verify_target_edits(edits, targets, *, start, plan, codec, limits):
         executed = np.array(edit.get("executed_raw_action_il", raw), np.float32)
         if (
             edit["control_step"] != control
+            or edit.get("projection_mode", "whole_tick") != plan.projection_mode
             or type(edit["applied"]) is not bool
             or type(edit["fallback"]) is not bool
             or (edit["applied"] and edit["fallback"])
@@ -47,6 +48,48 @@ def verify_target_edits(edits, targets, *, start, plan, codec, limits):
             raise ValueError("actual target/action history codec or absolute plan clock differs")
         difference = target - original
         changed = difference != 0
+        if plan.projection_mode == "per_axis":
+            low = np.maximum.reduce(
+                (
+                    action_lo[mapping],
+                    (limits[:, 0] - default) / scale,
+                    (original - 0.06 - default) / scale,
+                )
+            )
+            high = np.minimum.reduce(
+                (
+                    action_hi[mapping],
+                    (limits[:, 1] - default) / scale,
+                    (original + 0.06 - default) / scale,
+                )
+            )
+            low32, high32 = low.astype(np.float32), high.astype(np.float32)
+            low32 = np.where(low32 < low, np.nextafter(low32, np.float32(np.inf)), low32)
+            high32 = np.where(high32 > high, np.nextafter(high32, np.float32(-np.inf)), high32)
+            feasible = (requested != 0) & (low32 <= high32)
+            desired = raw[mapping].copy()
+            desired[feasible] = np.clip(
+                (
+                    raw[mapping][feasible].astype(np.float64)
+                    + requested[feasible] / scale[feasible]
+                ).astype(np.float32),
+                low32[feasible],
+                high32[feasible],
+            )
+            expected = (default + scale * desired).astype(np.float64)
+            numeric_bad = feasible & (
+                (abs(expected - original) > 0.060001)
+                | (expected < limits[:, 0])
+                | (expected > limits[:, 1])
+            )
+            desired[numeric_bad] = raw[mapping][numeric_bad]
+            blocked = ((requested != 0) & ~feasible) | numeric_bad
+            if edit.get("blocked_hg_axes", []) != np.flatnonzero(
+                blocked
+            ).tolist() or not np.array_equal(
+                (default + scale * desired).astype(np.float64), target
+            ):
+                raise ValueError("per-axis feasible intersection, frozen axes or target differs")
         if (
             (abs(difference) > 0.060001).any()
             or (target[changed] < limits[changed, 0]).any()
@@ -112,6 +155,9 @@ def main():
     sequential = dec.get("sequential_restoration", False)
     aim = dec.get("aim_command_search", False)
     executed = dec.get("executed_target_search", False)
+    projection = dec.get("executed_target_projection_mode", "whole_tick")
+    if executed and projection not in ("whole_tick", "per_axis"):
+        raise ValueError("explicit executed-target projection contract required")
     if (
         any(type(v) is not bool for v in (sequential, aim, executed))
         or sum((sequential, aim, executed)) > 1
@@ -341,6 +387,7 @@ def main():
                             frame,
                             tuple(tuple(float(x) for x in r) for r in context["basis"]),
                             tuple(tuple(float(x) for x in r) for r in windows[-1]["coefficients"]),
+                            projection_mode=projection,
                         )
                         verify_target_edits(
                             f["target_edits"],
@@ -388,6 +435,8 @@ def main():
                     neural_optimizer_updates=0,
                     hardware_authorized=False,
                 )
+                if "executed_target_projection_mode" in dec:
+                    expected_report["projection_mode"] = projection
                 if hash_json(additional) != hash_json(expected_report):
                     raise ValueError("target authority or next-history search declaration differs")
             elif aim:
@@ -533,11 +582,14 @@ def main():
                         )
                     ):
                         raise ValueError("selected target plan changed reference or clock")
+                    if installation.get("projection_mode", "whole_tick") != projection:
+                        raise ValueError("installed target projection mode differs")
                     coeff = windows[chosen]["coefficients"]
                     plan = ExecutedTargetSynergy(
                         row["entry_control"],
                         tuple(tuple(float(x) for x in r) for r in context["basis"]),
                         (tuple(coeff[0]), tuple(coeff[1])),
+                        projection_mode=projection,
                     )
                     verify_target_edits(
                         row["actual_target_edits"],
@@ -615,6 +667,7 @@ def main():
             else "FULL_NN_JOINT_TASK_RESPONSE_RAW_AND_PHYSICAL_EXAM_VERIFIED",
             aim_command_search=aim,
             executed_target_search=executed,
+            executed_target_projection_mode=projection if executed else None,
             sequential_restoration=sequential,
             source_head=a.expected_head,
             input_file_hashes=pins,

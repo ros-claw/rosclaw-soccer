@@ -321,6 +321,7 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
                     schema="soccer.executed_target_synergy_installation.v1",
                     start_control=plan.start_control,
                     coefficients=plan.coefficients,
+                    projection_mode=plan.projection_mode,
                     reference_modified=False,
                     neural_weights_modified=False,
                     hardware_authorized=False,

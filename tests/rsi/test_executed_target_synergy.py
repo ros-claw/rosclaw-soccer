@@ -12,8 +12,8 @@ from rosclaw_soccer.rsi.shared_nn_forecast import policy_state_hash
 from scripts.rsi_review_joint_response_pilot import verify_target_edits
 
 
-def plan(start=0, value=0.01):
-    return ExecutedTargetSynergy(start, ((1.0,) + (0.0,) * 28,), ((value,), (-value,)))
+def plan(start=0, value=0.01, projection="whole_tick"):
+    return ExecutedTargetSynergy(start, ((1.0,) + (0.0,) * 28,), ((value,), (-value,)), projection)
 
 
 def test_smooth_actual_target_plan_has_finite_bounded_entry_midpoint_exit():
@@ -56,19 +56,20 @@ def test_composite_target_and_future_nn_history_agree_without_changing_past(tmp_
     np.testing.assert_array_equal(p.policy.history[-1], last)
 
 
-def test_nonzero_plan_forecast_matches_actual_multiframe_nn_and_physics(tmp_path):
+@pytest.mark.parametrize("mode", ["whole_tick", "per_axis"])
+def test_nonzero_plan_forecast_matches_actual_multiframe_nn_and_physics(tmp_path, mode):
     p, f = setup(tmp_path, budget=160)
     p.world.advance({p.prefix: p.pending})
     p.commit()
     before = policy_state_hash(p.policy)
     original = f.forecast(controls=8, before_proposal=True)
-    predicted = f.forecast(controls=8, before_proposal=True, target_plan=plan())
+    predicted = f.forecast(controls=8, before_proposal=True, target_plan=plan(projection=mode))
     assert policy_state_hash(p.policy) == before
     assert not np.array_equal(original["qpos"], predicted["qpos"])
     records, targets = [], []
     for _ in range(8):
         p.propose()
-        target, _ = apply_executed_target_synergy(p, plan())
+        target, _ = apply_executed_target_synergy(p, plan(projection=mode))
         targets.append(target)
         records.append(p.world.advance({p.prefix: target}))
         p.commit()
@@ -189,6 +190,23 @@ def test_infeasible_prior_ankle_does_not_grant_permission_to_change_it(tmp_path,
         assert target[1] > nominal[1]
         assert abs(target[1] - nominal[1]) <= 0.060001
         np.testing.assert_array_equal(target, p.policy.last_action_il.astype(np.float64))
+        kwargs = dict(
+            start=p.world.control_steps,
+            plan=mixed,
+            codec=(
+                p.policy.default_q_mj,
+                p.policy.action_scale_mj,
+                np.arange(29),
+                p.policy.action_clip_lo_il,
+                p.policy.action_clip_hi_il,
+            ),
+            limits=p.world.model.jnt_range[p.layout.joints],
+        )
+        verify_target_edits([edit], target[None], **kwargs)
+        wrong = copy.deepcopy(edit)
+        wrong["blocked_hg_axes"] = []
+        with pytest.raises(ValueError, match="frozen axes"):
+            verify_target_edits([wrong], target[None], **kwargs)
 
 
 def test_per_axis_projection_stays_within_intersected_target_trust_and_joint_bounds(tmp_path):

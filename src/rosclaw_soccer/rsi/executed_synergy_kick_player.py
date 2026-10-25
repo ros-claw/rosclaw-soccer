@@ -19,10 +19,14 @@ from rosclaw_soccer.rsi.synergy_forecast_kick_player import (
 class ExecutedSynergyKickPlayer(SynergyForecastKickPlayer):
     extra_candidate_ceiling = 36
     forecast_controls = 128
+    target_projection_mode = "whole_tick"
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        if self.forecast_controls != 128:
+        if self.forecast_controls != 128 or self.target_projection_mode not in (
+            "whole_tick",
+            "per_axis",
+        ):
             raise ValueError("explicit qualified128 executed-target teacher required")
         self.target_edits: list[dict[str, Any]] = []
 
@@ -46,6 +50,7 @@ class ExecutedSynergyKickPlayer(SynergyForecastKickPlayer):
                         tuple(float(x) for x in coeff[0]),
                         tuple(float(x) for x in coeff[1]),
                     ),
+                    projection_mode=self.target_projection_mode,
                 )
                 predicted = self.forecaster.forecast(
                     controls=horizon, before_proposal=True, target_plan=plan
@@ -75,6 +80,7 @@ class ExecutedSynergyKickPlayer(SynergyForecastKickPlayer):
             schema="soccer.executed_target_synergy_search.v1",
             candidate_count=36,
             generations=generations,
+            projection_mode=self.target_projection_mode,
             seed=7001,
             reference_modified_by_new_plans=False,
             actual_target_authority="original_float32_codec_plus_bounded_HG29_synergy",
