@@ -14,6 +14,7 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.rsi.aim_goal_command import AimGoalCommand, condition_aim_goal
 from rosclaw_soccer.rsi.motion_reference_timing import MotionTimingPlan, condition_motion_reference
 from rosclaw_soccer.rsi.motion_synergy_reference import (
     MotionSynergyPlan,
@@ -193,6 +194,7 @@ class SharedNNForecaster:
         | MotionSynergyPlan
         | WholeJointReferencePlan
         | None = None,
+        aim_goal: AimGoalCommand | None = None,
     ) -> dict[str, Any]:
         import mujoco
 
@@ -216,6 +218,14 @@ class SharedNNForecaster:
             raise ValueError(
                 "reference conditioning is pre-proposal only, no first target override"
             )
+        if aim_goal is not None and (
+            not before_proposal
+            or reference_plan is not None
+            or type(aim_goal) is not AimGoalCommand
+        ):
+            raise ValueError(
+                "separate explicit pre-proposal SIM aim command without reference mixing required"
+            )
         charge = controls * 10
         if self.attempted_steps + charge > self.budget:
             raise RuntimeError("closed-loop forecast budget exhausted; no automatic extension")
@@ -237,6 +247,9 @@ class SharedNNForecaster:
                 reference_applied = condition_motion_reference(policy, reference_plan)["applied"]
             else:
                 raise ValueError("explicit supported data-only reference plan required")
+        goal_applied = False
+        if aim_goal is not None:
+            goal_applied = condition_aim_goal(policy, aim_goal)["applied"]
         # A pre-proposal fork has no target/history to rewind. The first NN call
         # will be made below on the owned world's measured body, exactly once.
         parent_target = np.zeros(29, np.float64)
@@ -291,6 +304,8 @@ class SharedNNForecaster:
             ball_body_name=donor.model.body(donor.ball).name,
         )
         ghost = _fork_pending_player(source, owned, policy, before_proposal=before_proposal)
+        if aim_goal is not None:
+            ghost.goal = policy.target_pos_w.copy()
         if not before_proposal:
             ghost.pending = target.copy()
         records, targets, ticks = [], [], []
@@ -331,6 +346,7 @@ class SharedNNForecaster:
             donor_software_unchanged=True,
             before_proposal=before_proposal,
             reference_conditioned=reference_applied,
+            aim_command_conditioned=goal_applied,
             prediction_is_not_actual_execution=True,
             promotion_authorized=False,
             hardware_authorized=False,

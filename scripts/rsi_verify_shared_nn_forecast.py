@@ -16,10 +16,20 @@ def main():
     p.add_argument("--synergy-model", type=Path)
     p.add_argument("--synergy-model-hash")
     p.add_argument("--whole-joint-reference", action="store_true")
+    p.add_argument("--aim-goal-y", type=float)
     a = p.parse_args()
     if a.pre_proposal_96 and a.pre_proposal_128:
         raise ValueError("one explicit forecast qualification protocol required")
     pre_proposal = a.pre_proposal_96 or a.pre_proposal_128
+    aim_command = a.aim_goal_y is not None
+    if aim_command and (
+        not a.pre_proposal_128
+        or a.synergy_model is not None
+        or a.whole_joint_reference
+        or not -2.0 <= a.aim_goal_y <= 2.0
+        or a.aim_goal_y == 0.0
+    ):
+        raise ValueError("separate bounded nonzero aim-command128 qualification required")
     if a.whole_joint_reference and (not a.pre_proposal_128 or a.synergy_model is not None):
         raise ValueError(
             "whole-joint reference requires separate128 protocol without fitted PCA mixing"
@@ -86,6 +96,7 @@ def main():
     from rosclaw.simforge.backends.unitree_mujoco_backend import _load_robonaldo
     from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
 
+    from rosclaw_soccer.rsi.aim_goal_command import AimGoalCommand, condition_aim_goal
     from rosclaw_soccer.rsi.experimental_velocity_evidence import admit_heading_evidence
     from rosclaw_soccer.rsi.motion_synergy_reference import (
         MotionSynergyPlan,
@@ -129,7 +140,10 @@ def main():
     model_hash = compiled_model_hash(model)
     types = _load_robonaldo(one("/policy/robonaldo/FreeKick.py").parents[2])
     instances = []
-    frames = (80, 100, 150, 220)
+    scheduled_frames = (80, 100, 150, 220)
+    frames = (reference["entry_control"], *scheduled_frames) if aim_command else scheduled_frames
+    if len(set(frames)) != len(frames):
+        raise ValueError("distinct declared measured-entry and scheduled probes required")
     horizon = 128 if a.pre_proposal_128 else 96 if a.pre_proposal_96 else 64
     forecast_budget = len(frames) * horizon * 10
     basis_isaac = None
@@ -157,6 +171,15 @@ def main():
 
         def install_measured_entry(self, samples, *, reference_frame):
             receipt = super().install_measured_entry(samples, reference_frame=reference_frame)
+            if aim_command:
+                command = AimGoalCommand((8.0, float(a.aim_goal_y), 0.11))
+                self.predictions.append(
+                    self.predictor.forecast(
+                        controls=horizon, before_proposal=True, aim_goal=command
+                    )
+                )
+                condition_aim_goal(self.policy, command)
+                self.goal = self.policy.target_pos_w.copy()
             if basis_isaac is not None:
                 plan = MotionSynergyPlan(
                     reference_frame,
@@ -176,7 +199,7 @@ def main():
             return receipt
 
         def propose(self):
-            if pre_proposal and self.world.control_steps in frames:
+            if pre_proposal and self.world.control_steps in scheduled_frames:
                 self.predictions.append(
                     self.predictor.forecast(controls=horizon, before_proposal=True)
                 )
@@ -206,7 +229,14 @@ def main():
             actual_native_step_ceiling=3600,
             forecast_native_step_ceiling=forecast_budget,
             every_future_target_and_native_array_must_match=True,
-            no_changed_targets=synergy_model is None and not a.whole_joint_reference,
+            no_changed_targets=synergy_model is None
+            and not a.whole_joint_reference
+            and not aim_command,
+            command_goal_conditioning="entry_nonzero_world_aim" if aim_command else "OFF",
+            task_scoring_goal_world_point=[8.0, 0.0, 0.11],
+            desired_command_world_point=[8.0, a.aim_goal_y, 0.11]
+            if aim_command
+            else [8.0, 0.0, 0.11],
             copied_history_no_enter_or_reset=True,
             optimizer_updates=0,
             teacher_effectiveness_proven=False,
@@ -227,7 +257,9 @@ def main():
         raise ValueError("actual admitted neural skill required")
     probe = instances[0]
     if tuple(r["donor_control_frame"] for r in probe.predictions) != frames:
-        raise ValueError("all four preregistered NN forecast boundaries required")
+        raise ValueError("all preregistered NN forecast boundaries required")
+    if aim_command and not probe.predictions[0]["aim_command_conditioned"]:
+        raise ValueError("entry forecast must apply the nonzero command on an unchanged donor")
     for predicted in probe.predictions:
         start = predicted["donor_control_frame"]
         if predicted["controls"] != horizon or predicted["body_failed"]:
@@ -252,9 +284,9 @@ def main():
         same = set(old.files) == set(arrays) and all(
             np.array_equal(old[k], v) for k, v in arrays.items()
         )
-        if synergy_model is None and not a.whole_joint_reference and not same:
+        if synergy_model is None and not a.whole_joint_reference and not aim_command and not same:
             raise ValueError("owned forecasts changed original actual whole trajectory")
-        if (synergy_model is not None or a.whole_joint_reference) and same:
+        if (synergy_model is not None or a.whole_joint_reference or aim_command) and same:
             raise ValueError(
                 "nonzero reference qualification did not change actual whole trajectory"
             )
@@ -267,7 +299,9 @@ def main():
         a.output / "complete.json",
         dict(
             status=(
-                "G1_WHOLE_JOINT_REFERENCE_NN_FUTURES_EXACT"
+                "G1_AIM_GOAL_COMMAND_NN_FUTURES_EXACT"
+                if aim_command
+                else "G1_WHOLE_JOINT_REFERENCE_NN_FUTURES_EXACT"
                 if a.whole_joint_reference
                 else f"G1_COPIED_NN_CLOSED_LOOP_{horizon}_CONTROL_FORECASTS_EXACT"
                 if synergy_model is None
@@ -284,13 +318,23 @@ def main():
             if synergy_model is not None
             else "OFF_original_arrays",
             source_head=a.expected_head,
+            command_goal_conditioning="entry_nonzero_world_aim" if aim_command else "OFF",
+            task_scoring_goal_world_point=[8.0, 0.0, 0.11],
+            desired_command_world_point=[8.0, a.aim_goal_y, 0.11]
+            if aim_command
+            else [8.0, 0.0, 0.11],
+            entry_command_forecast_conditioned=bool(
+                aim_command and probe.predictions[0].get("aim_command_conditioned")
+            ),
             input_file_hashes=pins,
             actual_record=row,
             actual_worlds=1,
             actual_native_steps=row["native_steps"],
             forecasts=probe.predictor.counters(),
             all_future_nn_targets_and_native_arrays_exact=True,
-            actual_whole_trajectory_unchanged=synergy_model is None and not a.whole_joint_reference,
+            actual_whole_trajectory_unchanged=synergy_model is None
+            and not a.whole_joint_reference
+            and not aim_command,
             teacher_effectiveness_proven=False,
             optimizer_updates=0,
             promotion_authorized=False,
