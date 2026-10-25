@@ -40,6 +40,24 @@ def admit_memory(path, expected, pins, context, backbone_model):
     return options, report
 
 
+def admit_source_retrieval(path, expected, pins, memory_path, memory_hash, memory_report):
+    from rosclaw_soccer.rsi.partial_motor_memory import require_source_retrieval_report
+    from scripts.rsi_native_context_recovery_common import digest
+    from scripts.rsi_stable_plastic_sources import merge_pins
+
+    if path is None or path.is_symlink() or digest(path) != expected:
+        raise ValueError(
+            "exact completed independent source-retrieval audit before transfer required"
+        )
+    report = json.loads(path.read_text())
+    require_source_retrieval_report(report, memory_report)
+    if report["input_file_hashes"].get(str(memory_path)) != memory_hash:
+        raise ValueError("transfer must use the SAME frozen motor memory, not another option bank")
+    merge_pins(pins, report["input_file_hashes"])
+    pins[str(path)] = expected
+    return report
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for kind in ("aim", "target"):

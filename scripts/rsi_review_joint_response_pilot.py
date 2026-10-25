@@ -141,6 +141,7 @@ def main():
     p.add_argument("--pilot-hash", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--motor-memory", type=Path)
+    p.add_argument("--source-retrieval-audit", type=Path)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -157,6 +158,14 @@ def main():
     aim = dec.get("aim_command_search", False)
     executed = dec.get("executed_target_search", False)
     memory = dec.get("partial_motor_memory", False)
+    nominal = dec.get("memory_nominal_transfer", False)
+    if type(nominal) is not bool or (nominal and not memory):
+        raise ValueError("explicit nominal transfer scope only for fixed memory required")
+    from rosclaw_soccer.rsi.partial_motor_memory import NOMINAL_MEMORY_TRANSFER_INDICES
+
+    indices = list(NOMINAL_MEMORY_TRANSFER_INDICES) if nominal else [0, 2, 8, 22, 27, 30]
+    world_ceiling = 2 * len(indices)
+    native_ceiling = 3600 * world_ceiling
     projection = dec.get("executed_target_projection_mode", "whole_tick")
     if memory and projection != "per_axis":
         raise ValueError("memory target requires its qualified per-axis interface")
@@ -168,9 +177,14 @@ def main():
     ):
         raise ValueError("explicit boolean response protocol required")
     candidate_cap = 39 if memory else 73 if executed else 57 if aim else 273 if sequential else 96
-    forecast_cap = 6 * (37 + candidate_cap) * 1280
+    forecast_cap = len(indices) * (37 + candidate_cap) * 1280
     if memory and (
-        dec["protocol"] != "soccer.partial_motor_memory_source_retrieval.v1"
+        dec["protocol"]
+        != (
+            "soccer.partial_motor_memory_nominal16_transfer.v1"
+            if nominal
+            else "soccer.partial_motor_memory_source_retrieval.v1"
+        )
         or dec["new_candidate_ceiling"] != 39
         or dec["new_probe_axes"] is not None
         or dec["task_scoring_goal_world_point"] != [8.0, 0.0, 0.11]
@@ -188,10 +202,10 @@ def main():
             else "FULL_NN_JOINT_TASK_RESPONSE_PILOT_COMPLETE"
         )
         or digest(dp) != report["declaration_hash"]
-        or dec["course_indices"] != [0, 2, 8, 22, 27, 30]
+        or dec["course_indices"] != indices
         or dec["requested_forecast_native_step_ceiling"] != forecast_cap
-        or dec["actual_world_ceiling"] != 12
-        or dec["actual_native_step_ceiling"] != 43200
+        or dec["actual_world_ceiling"] != world_ceiling
+        or dec["actual_native_step_ceiling"] != native_ceiling
         or [r["course_index"] for r in report["results"]] != dec["course_indices"]
     ):
         raise ValueError("fixed whole six-state paired physics pilot required")
@@ -227,8 +241,20 @@ def main():
         if (
             dec["memory_runtime_options"] != mr["runtime_options"]
             or dec["memory_source_states_are_consumed"] is not True
+            or dec.get("replays_memory_source_states", not nominal) != (not nominal)
         ):
             raise ValueError("same two options and consumed source retrieval scope required")
+        if nominal:
+            from scripts.rsi_build_partial_motor_memory import admit_source_retrieval
+
+            admit_source_retrieval(
+                a.source_retrieval_audit,
+                dec["source_retrieval_audit_hash"],
+                pins,
+                a.motor_memory,
+                dec["motor_memory_hash"],
+                mr,
+            )
         check_pins(pins)
     import numpy as np
 
@@ -285,6 +311,8 @@ def main():
     if pins.get(str(original_cp)) != digest(original_cp):
         raise ValueError("bound original full teacher bank required")
     champion = json.loads(original_cp.read_text())
+    if memory and champion.get("perturbed_public_validation", False) != (not nominal):
+        raise ValueError("nominal transfer may not be relabeled from the perturbed source bank")
 
     def record(path, expected, root):
         if not path.resolve().is_relative_to(root.resolve()) or digest(path) != expected:
@@ -731,9 +759,9 @@ def main():
             dict(course_index=i, B=outcomes["B"], C=outcomes["C"], C_healthy=health["C"])
         )
     if (
-        native > 43200
+        native > native_ceiling
         or native != report["actual_native_steps"]
-        or worlds != 12
+        or worlds != world_ceiling
         or charged != report["forecast_requested_native_steps"]
         or integrated != report["forecast_integrated_native_steps"]
         or charged > forecast_cap
@@ -757,6 +785,7 @@ def main():
             aim_command_search=aim,
             executed_target_search=executed,
             partial_motor_memory=memory,
+            memory_nominal_transfer=nominal,
             executed_target_projection_mode=projection if executed else None,
             sequential_restoration=sequential,
             source_head=a.expected_head,
@@ -773,6 +802,8 @@ def main():
             and not regressions
             and all(r["C_healthy"] for r in results),
             source_memory_retrieval_reproduced=memory
+            and not nominal
+            and {s["source_course_index"] for s in mr["sources"]}.issubset(rescues)
             and len(rescues) >= 2
             and not regressions
             and all(r["C_healthy"] for r in results),

@@ -4,9 +4,11 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.rsi.partial_motor_memory import (
+    NOMINAL_MEMORY_TRANSFER_INDICES,
     decode_motor_options,
     encode_motor_option,
     partial_option_from_success,
+    require_source_retrieval_report,
 )
 
 
@@ -118,3 +120,48 @@ def test_only_declared_actually_installed_success_is_curated(kind):
         source["controller_events"][0]["installation"]["projection_mode"] = "whole_tick"
     with pytest.raises(ValueError):
         partial_option_from_success(kind, source)
+
+
+def source_retrieval():
+    return dict(
+        status="FULL_NN_PARTIAL_MEMORY_RAW_AND_RETRIEVAL_VERIFIED",
+        actual_worlds=12,
+        new_physical_steps=0,
+        qualified_for_expansion=False,
+        source_memory_retrieval_reproduced=True,
+        memory_retrieval_is_not_independent_generalization=True,
+        regressions=[],
+        rescues=[22, 27],
+        results=[dict(course_index=i, C_healthy=True) for i in (0, 2, 8, 22, 27, 30)],
+    )
+
+
+def test_nominal_transfer_is_fixed_balanced_and_source_replay_does_not_qualify_teacher():
+    assert len(NOMINAL_MEMORY_TRANSFER_INDICES) == 16
+    assert [sum(i // 10 == k for i in NOMINAL_MEMORY_TRANSFER_INDICES) for k in range(4)] == [4] * 4
+    report = source_retrieval()
+    require_source_retrieval_report(
+        report, dict(sources=[dict(source_course_index=22), dict(source_course_index=27)])
+    )
+    assert report["qualified_for_expansion"] is False
+
+
+@pytest.mark.parametrize(
+    "defect", ["other_rescues", "promoted", "regression", "partial", "unhealthy"]
+)
+def test_transfer_needs_actual_reproduction_of_both_known_options_not_just_any_two_wins(defect):
+    report = source_retrieval()
+    if defect == "other_rescues":
+        report["rescues"] = [2, 8]
+    elif defect == "promoted":
+        report["qualified_for_expansion"] = True
+    elif defect == "regression":
+        report["regressions"] = [0]
+    elif defect == "partial":
+        report["results"].pop()
+    else:
+        report["results"][0]["C_healthy"] = False
+    with pytest.raises(ValueError, match="BOTH"):
+        require_source_retrieval_report(
+            report, dict(sources=[dict(source_course_index=22), dict(source_course_index=27)])
+        )

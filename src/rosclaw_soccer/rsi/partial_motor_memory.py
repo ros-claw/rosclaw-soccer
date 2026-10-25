@@ -13,6 +13,28 @@ from rosclaw_soccer.rsi.aim_goal_command import AimGoalCommand
 from rosclaw_soccer.rsi.executed_target_synergy import ExecutedTargetSynergy
 
 MotorOption = AimGoalCommand | ExecutedTargetSynergy
+NOMINAL_MEMORY_TRANSFER_INDICES = (0, 1, 2, 3, 10, 11, 12, 13, 20, 21, 22, 23, 30, 31, 32, 33)
+
+
+def require_source_retrieval_report(report: dict[str, Any], memory_report: dict[str, Any]) -> None:
+    """Admit a new SIM transfer study, never qualify a teacher from source replay."""
+    expected = {s["source_course_index"] for s in memory_report["sources"]}
+    if (
+        len(expected) != 2
+        or report["status"] != "FULL_NN_PARTIAL_MEMORY_RAW_AND_RETRIEVAL_VERIFIED"
+        or report["actual_worlds"] != 12
+        or report["new_physical_steps"] != 0
+        or report["qualified_for_expansion"] is not False
+        or report["source_memory_retrieval_reproduced"] is not True
+        or report["memory_retrieval_is_not_independent_generalization"] is not True
+        or report["regressions"]
+        or not expected.issubset(report["rescues"])
+        or [r["course_index"] for r in report["results"]] != [0, 2, 8, 22, 27, 30]
+        or not all(r["C_healthy"] is True for r in report["results"])
+    ):
+        raise ValueError(
+            "independent exact reproduction of BOTH source options with zero loss required"
+        )
 
 
 def encode_motor_option(option: MotorOption) -> dict[str, Any]:

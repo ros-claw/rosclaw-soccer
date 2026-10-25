@@ -25,8 +25,13 @@ def main():
     p.add_argument("--target-feasible-axes", action="store_true")
     p.add_argument("--motor-memory", type=Path)
     p.add_argument("--motor-memory-hash")
+    p.add_argument("--memory-nominal-16", action="store_true")
+    p.add_argument("--source-retrieval-audit", type=Path)
+    p.add_argument("--source-retrieval-audit-hash")
     a = p.parse_args()
     memory = a.motor_memory is not None
+    if a.memory_nominal_16 and not memory:
+        raise ValueError("nominal transfer is an explicit fixed-memory study")
     if memory != (a.motor_memory_hash is not None):
         raise ValueError("explicit memory artifact and exact hash required together")
     if a.target_feasible_axes and not a.executed_target_search:
@@ -39,6 +44,11 @@ def main():
     from scripts.rsi_stable_plastic_sources import merge_pins
 
     clean(a.expected_head)
+    from rosclaw_soccer.rsi.partial_motor_memory import NOMINAL_MEMORY_TRANSFER_INDICES
+
+    indices = NOMINAL_MEMORY_TRANSFER_INDICES if a.memory_nominal_16 else INDICES
+    world_ceiling = 2 * len(indices)
+    native_ceiling = 3600 * world_ceiling
     if a.output.exists():
         raise ValueError("unused declared six-state pilot output required")
     pins = {}
@@ -107,8 +117,11 @@ def main():
         merge_pins(pins, qualified["input_file_hashes"])
         pins[str(path)] = a.target_qualification_hash
     audit = json.loads(a.champion_audit.read_text())
-    if not audit["perturbed_public_validation"] or audit["actual_worlds"] != 80:
-        raise ValueError("fixed consumed perturbed40 source required")
+    if (
+        audit.get("perturbed_public_validation", False) != (not a.memory_nominal_16)
+        or audit["actual_worlds"] != 80
+    ):
+        raise ValueError("exact declared nominal/perturbed consumed40 champion source required")
     cp = a.champion_root / "complete.json"
     if pins.get(str(cp)) != digest(cp):
         raise ValueError("bound same-state actual champion required")
@@ -126,6 +139,17 @@ def main():
         memory_options, memory_report = admit_memory(
             a.motor_memory, a.motor_memory_hash, pins, context, a.backbone_model
         )
+        if a.memory_nominal_16:
+            from scripts.rsi_build_partial_motor_memory import admit_source_retrieval
+
+            admit_source_retrieval(
+                a.source_retrieval_audit,
+                a.source_retrieval_audit_hash,
+                pins,
+                a.motor_memory,
+                a.motor_memory_hash,
+                memory_report,
+            )
         check_pins(pins)
     import numpy as np
 
@@ -150,17 +174,23 @@ def main():
         if a.sequential_restoration
         else 96
     )
-    forecast_cap = 6 * (37 + candidate_cap) * 1280
+    forecast_cap = len(indices) * (37 + candidate_cap) * 1280
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="soccer.partial_motor_memory_source_retrieval.v1"
+            protocol="soccer.partial_motor_memory_nominal16_transfer.v1"
+            if a.memory_nominal_16
+            else "soccer.partial_motor_memory_source_retrieval.v1"
             if memory
             else "soccer.full_nn_joint_task_response_six_state_pilot.v1",
             partial_motor_memory=memory,
+            memory_nominal_transfer=a.memory_nominal_16,
+            source_retrieval_audit_hash=a.source_retrieval_audit_hash,
             motor_memory_hash=a.motor_memory_hash,
             memory_runtime_options=memory_report["runtime_options"] if memory else None,
             memory_source_states_are_consumed=memory,
+            replays_memory_source_states=memory and not a.memory_nominal_16,
+            development_bank_is_consumed=True,
             aim_command_search=a.aim_command_search,
             executed_target_search=a.executed_target_search,
             executed_target_projection_mode="per_axis"
@@ -173,9 +203,9 @@ def main():
             task_scoring_goal_world_point=[8.0, 0.0, 0.11],
             source_head=a.expected_head,
             input_file_hashes=pins,
-            course_indices=INDICES,
-            actual_world_ceiling=12,
-            actual_native_step_ceiling=43200,
+            course_indices=indices,
+            actual_world_ceiling=world_ceiling,
+            actual_native_step_ceiling=native_ceiling,
             requested_forecast_native_step_ceiling=forecast_cap,
             sequential_restoration=a.sequential_restoration,
             maximum_response_rounds=4 if a.sequential_restoration else 1,
@@ -209,7 +239,7 @@ def main():
         ),
     )
     results, worlds, native, charged, integrated = [], 0, 0, 0, 0
-    for i in INDICES:
+    for i in indices:
         ref = champion["results"][i]["arms"]["C"]
         rp = a.champion_root / ref["record"]
         if pins.get(str(rp)) != ref["hash"] or digest(rp) != ref["hash"]:
@@ -347,7 +377,7 @@ def main():
             native += row["native_steps"]
             charged += ctrl.forecaster.attempted_steps
             integrated += ctrl.forecaster.integrated_steps
-            if worlds > 12 or native > 43200 or charged > forecast_cap:
+            if worlds > world_ceiling or native > native_ceiling or charged > forecast_cap:
                 raise ValueError("frozen full-NN pilot budget exceeded")
             print(i, arm, pair[arm], flush=True)
         results.append(dict(course_index=i, arms=pair))
@@ -390,6 +420,7 @@ def main():
             independently_audited=False,
             neural_optimizer_updates=0,
             physical_teacher_qualified=False,
+            memory_nominal_transfer=a.memory_nominal_16,
             memory_retrieval_is_not_independent_generalization=memory,
             hardware_authorized=False,
             promotion_authorized=False,
