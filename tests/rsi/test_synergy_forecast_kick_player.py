@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from test_predicted_touch_window import prediction
 
+import rosclaw_soccer.rsi.joint_task_response as joint_response
 import rosclaw_soccer.rsi.synergy_forecast_kick_player as synergy
 import rosclaw_soccer.rsi.synergy_response_model as response_model
 from scripts.rsi_review_motion_timing_teacher import (
@@ -23,6 +24,8 @@ from scripts.rsi_review_motion_timing_teacher import (
         ("stable", 37),
         ("plastic", 73),
         ("stable-parent", 1),
+        ("joint", 96),
+        ("joint-retains", 37),
     ],
 )
 def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
@@ -39,7 +42,13 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
     p.basis_isaac = tuple(tuple(float(i == j) for j in range(29)) for i in range(6))
     p.basis_hg = np.eye(6, 29, dtype=np.float64)
     p.synergy_response_enabled = mode == "response"
-    p.forecast_controls = 128 if mode in ("long", "stable", "plastic", "stable-parent") else 96
+    p.forecast_controls = (
+        128
+        if mode in ("long", "stable", "plastic", "stable-parent", "joint", "joint-retains")
+        else 96
+    )
+    p.joint_task_response_enabled = mode in ("joint", "joint-retains")
+    p.hg_to_isaac = tuple(range(29))
     if mode in ("stable", "plastic", "stable-parent"):
         p.plastic_basis_isaac = tuple(tuple(float(i + 6 == j) for j in range(29)) for i in range(6))
     calls, installed = [], []
@@ -50,12 +59,13 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
         r = prediction(n=controls)
         r["donor_control_frame"] = 100
         passes = mode in ("parent", "long", "stable-parent") or (
-            mode in ("rescue", "stable")
+            mode in ("rescue", "stable", "joint-retains")
             and reference_plan is not None
             and reference_plan.coefficients[0][0] > 0
         )
         passes = passes or (mode == "response" and len(calls) == 38)
         passes = passes or (mode == "plastic" and len(calls) > 37)
+        passes = passes or (mode == "joint" and len(calls) > 37)
         if not passes:
             r["qpos"][:, 0] *= 0.1
         return r
@@ -66,6 +76,12 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
 
     p.forecaster = SimpleNamespace(forecast=forecast)
     monkeypatch.setattr(synergy, "condition_synergy_reference", install)
+    monkeypatch.setattr(synergy, "condition_whole_joint_reference", install)
+    monkeypatch.setattr(
+        joint_response,
+        "propose_joint_task_response",
+        lambda baseline, probes: (np.full((2, 29), 0.001), {"verified": False}),
+    )
     monkeypatch.setattr(
         response_model,
         "propose_synergy_response",
@@ -83,9 +99,15 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
     elif mode == "plastic":
         assert audit_choice == 0 and event["selected"].startswith("plastic-")
         assert installed[0].basis_isaac == p.plastic_basis_isaac
+    elif mode == "joint":
+        assert audit_choice == 0 and event["selected"].startswith("joint-")
+        assert event["selected_basis"] == "joint-reference"
+        assert len(installed[0].coefficients[0]) == 29
     else:
         assert event["candidate_windows"][audit_choice]["name"] == event["selected"]
-    assert bool(installed) == (mode in ("rescue", "response", "stable", "plastic"))
+    assert bool(installed) == (
+        mode in ("rescue", "response", "stable", "plastic", "joint", "joint-retains")
+    )
     if mode in ("stable", "plastic", "stable-parent"):
         rebuilt = verify_stable_plastic_search(
             event["candidate_windows"],

@@ -1,0 +1,241 @@
+"""Fixed six-state actual old/new teacher pilot, full NN physics for every probe."""
+
+import argparse
+import json
+from pathlib import Path
+
+INDICES = (0, 2, 8, 22, 27, 30)
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    for k in ("champion-audit", "champion-root", "qualification", "backbone-model", "output"):
+        p.add_argument("--" + k, type=Path, required=True)
+    for k in ("champion-audit-hash", "qualification-hash", "expected-head"):
+        p.add_argument("--" + k, required=True)
+    a = p.parse_args()
+    from scripts.rsi_atomic_artifacts import write_once
+    from scripts.rsi_native_context_recovery_common import check_pins, digest
+    from scripts.rsi_native_fresh_common import clean, source_pins
+    from scripts.rsi_stable_plastic_sources import merge_pins
+
+    clean(a.expected_head)
+    if a.output.exists():
+        raise ValueError("unused declared six-state pilot output required")
+    pins = {}
+    for path, h, status in (
+        (
+            a.champion_audit,
+            a.champion_audit_hash,
+            "MOTION_SYNERGY_TEACHER_RAW_CEM_FUTURES_AND_FULL_EXAM_VERIFIED",
+        ),
+        (a.qualification, a.qualification_hash, "G1_WHOLE_JOINT_REFERENCE_NN_FUTURES_EXACT"),
+    ):
+        if digest(path) != h or path.is_symlink():
+            raise ValueError("exact independent inputs required")
+        report = json.loads(path.read_text())
+        if report["status"] != status:
+            raise ValueError("closed old teacher and new full-reference qualification required")
+        merge_pins(pins, report["input_file_hashes"])
+        pins[str(path)] = h
+    audit = json.loads(a.champion_audit.read_text())
+    if not audit["perturbed_public_validation"] or audit["actual_worlds"] != 80:
+        raise ValueError("fixed consumed perturbed40 source required")
+    cp = a.champion_root / "complete.json"
+    if pins.get(str(cp)) != digest(cp):
+        raise ValueError("bound same-state actual champion required")
+    champion = json.loads(cp.read_text())
+    source_pins(pins)
+    check_pins(pins)
+    from scripts.rsi_teacher_physics_context import load_teacher_context
+
+    context = load_teacher_context(pins, a.backbone_model)
+    import numpy as np
+
+    from rosclaw_soccer.rsi.synergy_forecast_kick_player import SynergyForecastKickPlayer
+    from rosclaw_soccer.rsi.walk_kick_teacher_episode import evaluate_episode
+
+    a.output.mkdir(parents=True)
+    write_once(
+        a.output / "declaration.json",
+        dict(
+            protocol="soccer.full_nn_joint_task_response_six_state_pilot.v1",
+            source_head=a.expected_head,
+            input_file_hashes=pins,
+            course_indices=INDICES,
+            actual_world_ceiling=12,
+            actual_native_step_ceiling=43200,
+            requested_forecast_native_step_ceiling=1021440,
+            forecast_controls=128,
+            controls_retention_indices=[0, 30],
+            failure_indices=[2, 8, 22, 27],
+            old_candidate_ceiling=37,
+            new_candidate_ceiling=96,
+            new_probe_axes=29,
+            new_probe_signs=[-1, 1],
+            probe_reference_rad=0.03,
+            proposal_l1_trust_rad=0.06,
+            proposal_axis_trust_rad=0.03,
+            temporal_lobe="first24intervals_only",
+            second_lobe_coefficients_zero=True,
+            old_success_branch_must_not_search_new_actions=True,
+            new_research_direction="task_conditioned_full_NN_physics_response_not_success_PCA",
+            parent_nn_weights_and_PD_unchanged=True,
+            hardware_authorized=False,
+            promotion_authorized=False,
+        ),
+    )
+    results, worlds, native, charged, integrated = [], 0, 0, 0, 0
+    for i in INDICES:
+        ref = champion["results"][i]["arms"]["C"]
+        rp = a.champion_root / ref["record"]
+        if pins.get(str(rp)) != ref["hash"] or digest(rp) != ref["hash"]:
+            raise ValueError("exact old actual teacher record required")
+        old = json.loads(rp.read_text())
+        folder = a.output / f"course-{i:02d}"
+        folder.mkdir()
+        pair = {}
+        for arm in ("B", "C"):
+            instances = []
+
+            class Controlled(SynergyForecastKickPlayer):
+                basis_hg = context["basis"]
+                forecast_controls = 128
+                joint_task_response_enabled = arm == "C"
+                observed_instances = instances
+
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+                    self.observed_instances.append(self)
+
+            row, arrays = evaluate_episode(
+                model=context["model"],
+                assets=dict(context["assets"], experimental_fast=old["experimental_fast_approach"]),
+                policy_types=context["types"],
+                course=tuple(old["course"]),
+                parameters=old["parameters"],
+                hard_limits=context["hard_limits"],
+                player_type=Controlled,
+            )
+            if len(instances) != 1:
+                raise ValueError("one privately owned actual teacher required")
+            ctrl = instances[0]
+            if arm == "B":
+                ap = rp.parent / old["artifact"]["path"]
+                if pins.get(str(ap)) != digest(ap):
+                    raise ValueError("exact old full native baseline required")
+                with np.load(ap, allow_pickle=False) as before:
+                    if set(before.files) != set(arrays) or any(
+                        not np.array_equal(before[k], v) for k, v in arrays.items()
+                    ):
+                        raise ValueError("actual B differs from original champion whole trajectory")
+            for frame, forecast in ctrl.selected_records:
+                n = forecast["controls"]
+                for key in ("qpos", "qvel", "torque", "ball_forces"):
+                    if not np.array_equal(
+                        forecast[key], arrays[key][frame * 10 : (frame + n) * 10]
+                    ):
+                        raise ValueError("selected full NN physical prediction differs from actual")
+                if not np.array_equal(
+                    forecast["joint_targets"], arrays["joint_targets"][frame : frame + n]
+                ):
+                    raise ValueError("selected future NN target differs from actual")
+            if arm == "C" and i in (0, 30):
+                with np.load(folder / "B.npz", allow_pickle=False) as before:
+                    if any(not np.array_equal(before[k], v) for k, v in arrays.items()):
+                        raise ValueError("old retained skill altered by new search interface")
+            saved = []
+            for j, (name, forecast) in enumerate(ctrl.candidate_predictions):
+                fp = folder / f"{arm}-forecast-{j:02d}.npz"
+                np.savez_compressed(
+                    fp,
+                    **{
+                        k: forecast[k]
+                        for k in (
+                            "qpos",
+                            "qvel",
+                            "torque",
+                            "ball_forces",
+                            "joint_targets",
+                            "policy_ticks",
+                        )
+                    },
+                )
+                saved.append(
+                    dict(
+                        name=name,
+                        artifact=dict(path=fp.name, hash=digest(fp)),
+                        donor_control_frame=forecast["donor_control_frame"],
+                        controls=forecast["controls"],
+                        requested_controls=forecast["requested_controls"],
+                    )
+                )
+            ap = folder / f"{arm}.npz"
+            np.savez_compressed(ap, **arrays)
+            row.update(
+                controller_events=ctrl.events,
+                candidate_forecasts=saved,
+                forecasts=ctrl.forecaster.counters(),
+                changed_controls=ctrl.changed_controls,
+                artifact=dict(path=ap.name, hash=digest(ap)),
+                course_index=i,
+                arm=arm,
+            )
+            write_once(folder / f"{arm}.json", row)
+            pair[arm] = dict(
+                record=f"course-{i:02d}/{arm}.json",
+                hash=digest(folder / f"{arm}.json"),
+                task_pass=row["outcome"]["task_pass"],
+                safe=row["outcome"]["safe"],
+                healthy=row["healthy_full_horizon"],
+            )
+            worlds += 1
+            native += row["native_steps"]
+            charged += ctrl.forecaster.attempted_steps
+            integrated += ctrl.forecaster.integrated_steps
+            if worlds > 12 or native > 43200 or charged > 1021440:
+                raise ValueError("frozen full-NN pilot budget exceeded")
+            print(i, arm, pair[arm], flush=True)
+        results.append(dict(course_index=i, arms=pair))
+    rescues = [
+        r["course_index"]
+        for r in results
+        if not r["arms"]["B"]["task_pass"]
+        and r["arms"]["C"]["task_pass"]
+        and r["arms"]["C"]["healthy"]
+    ]
+    regressions = [
+        r["course_index"]
+        for r in results
+        if any(
+            r["arms"]["B"][k] and not r["arms"]["C"][k] for k in ("task_pass", "safe", "healthy")
+        )
+    ]
+    check_pins(pins)
+    clean(a.expected_head)
+    write_once(
+        a.output / "complete.json",
+        dict(
+            status="FULL_NN_JOINT_TASK_RESPONSE_PILOT_COMPLETE",
+            source_head=a.expected_head,
+            input_file_hashes=pins,
+            declaration_hash=digest(a.output / "declaration.json"),
+            results=results,
+            rescues=rescues,
+            regressions=regressions,
+            actual_worlds=worlds,
+            actual_native_steps=native,
+            forecast_requested_native_steps=charged,
+            forecast_integrated_native_steps=integrated,
+            independently_audited=False,
+            neural_optimizer_updates=0,
+            physical_teacher_qualified=False,
+            hardware_authorized=False,
+            promotion_authorized=False,
+            goal_complete=False,
+        ),
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -17,6 +17,10 @@ from rosclaw_soccer.rsi.predicted_touch_window import predicted_touch_window
 from rosclaw_soccer.rsi.shared_nn_forecast import SharedNNForecaster
 from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
 from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
+from rosclaw_soccer.rsi.whole_joint_reference import (
+    WholeJointReferencePlan,
+    condition_whole_joint_reference,
+)
 
 
 def synergy_search_rank(
@@ -39,6 +43,7 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
     forecast_controls = 96
     plastic_basis_hg: np.ndarray | None = None
     plastic_basis_isaac: tuple[tuple[float, ...], ...] | None = None
+    joint_task_response_enabled = False
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -49,6 +54,15 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
         mapping = np.array(import_module(type(self.policy).__module__).MUJOCO_TO_ISAAC)
         if sorted(mapping.tolist()) != list(range(29)):
             raise ValueError("qualified HG-to-Isaac bijection required")
+        self.hg_to_isaac = tuple(int(i) for i in mapping)
+        if self.joint_task_response_enabled and (
+            self.forecast_controls != 128
+            or self.synergy_response_enabled
+            or self.plastic_basis_hg is not None
+        ):
+            raise ValueError(
+                "separate qualified128 joint-response protocol without family mixing required"
+            )
         basis_il = np.zeros_like(self.basis_hg)
         basis_il[:, mapping] = self.basis_hg
         self.basis_isaac = tuple(tuple(float(x) for x in r) for r in basis_il)
@@ -71,7 +85,9 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
             expected_policy_type=type(self.policy),
             expected_model_hash=compiled_model_hash(self.world.model),
             native_step_budget=(
-                73
+                96
+                if self.joint_task_response_enabled
+                else 73
                 if self.plastic_basis_isaac is not None
                 else 38
                 if self.synergy_response_enabled
@@ -115,16 +131,34 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
             )
             return super().propose()
         horizon = min(self.forecast_controls, 360 - frame)
-        candidates: list[tuple[str, MotionSynergyPlan | None, dict[str, Any], dict[str, Any]]] = []
+        candidates: list[
+            tuple[
+                str,
+                MotionSynergyPlan | WholeJointReferencePlan | None,
+                dict[str, Any],
+                dict[str, Any],
+            ]
+        ] = []
 
         def preview(
             name: str,
             coefficients: np.ndarray | None,
             basis: tuple[tuple[float, ...], ...] | None = None,
+            *,
+            whole: bool = False,
         ) -> tuple[int, int, int, int, float, float]:
             plan = (
                 None
                 if coefficients is None
+                else WholeJointReferencePlan(
+                    reference,
+                    self.hg_to_isaac,
+                    (
+                        tuple(float(v) for v in coefficients[0]),
+                        tuple(float(v) for v in coefficients[1]),
+                    ),
+                )
+                if whole
                 else MotionSynergyPlan(
                     reference,
                     self.basis_isaac if basis is None else basis,
@@ -180,6 +214,29 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
             c[3]["window_pass"] for c in candidates
         ):
             plastic_generations = search("plastic-", self.plastic_basis_isaac)
+        joint_response = None
+        if self.joint_task_response_enabled and not any(c[3]["window_pass"] for c in candidates):
+            from rosclaw_soccer.rsi.joint_task_response import (
+                propose_joint_task_response,
+                response_features,
+            )
+
+            probes = []
+            for axis in range(29):
+                for sign in (-1, 1):
+                    coeff = np.zeros((2, 29), dtype=np.float64)
+                    coeff[0, axis] = sign * 0.03
+                    preview(
+                        f"joint-fd-{axis:02d}-{'minus' if sign < 0 else 'plus'}", coeff, whole=True
+                    )
+                    probes.append(
+                        (axis, sign, response_features(candidates[-1][2], candidates[-1][3]))
+                    )
+            proposal, joint_response = propose_joint_task_response(
+                response_features(candidates[0][2], candidates[0][3]), probes
+            )
+            if proposal is not None:
+                preview("joint-task-response", proposal, whole=True)
         response_report = None
         if self.synergy_response_enabled and not any(c[3]["window_pass"] for c in candidates):
             from rosclaw_soccer.rsi.synergy_response_model import propose_synergy_response
@@ -202,7 +259,10 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
         name, plan, prediction, outcome = candidates[chosen]
         install = None
         if plan is not None:
-            install = condition_synergy_reference(self.policy, plan)
+            if isinstance(plan, WholeJointReferencePlan):
+                install = condition_whole_joint_reference(self.policy, plan)
+            else:
+                install = condition_synergy_reference(self.policy, plan)
             self.plan_applied = True
             self.selected_prediction = prediction
         self.candidate_predictions = [(c[0], c[2]) for c in candidates]
@@ -228,11 +288,14 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
                 selected_basis=(
                     "parent"
                     if plan is None
+                    else "joint-reference"
+                    if type(plan) is WholeJointReferencePlan
                     else "plastic"
                     if name.startswith("plastic-")
                     else "backbone"
                 ),
                 response_model=response_report,
+                joint_task_response=joint_response,
                 original_actual_target_authority_unchanged=True,
             )
         )
