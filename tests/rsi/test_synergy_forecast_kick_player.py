@@ -5,6 +5,7 @@ import pytest
 from test_predicted_touch_window import prediction
 
 import rosclaw_soccer.rsi.synergy_forecast_kick_player as synergy
+from scripts.rsi_review_motion_timing_teacher import verify_synergy_search
 
 
 @pytest.mark.parametrize("mode,expected_calls", [("parent", 1), ("rescue", 37), ("fail", 37)])
@@ -45,6 +46,11 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
     monkeypatch.setattr(synergy.SharedRoboNaldoPlayer, "propose", lambda self: (np.zeros(29), {}))
     p.propose()
     assert len(calls) == expected_calls
+    event = p.events[0]
+    audit_choice = verify_synergy_search(
+        event["candidate_windows"], [0.0] * expected_calls, event["generations"]
+    )
+    assert event["candidate_windows"][audit_choice]["name"] == event["selected"]
     assert bool(installed) == (mode == "rescue")
     if installed:
         assert installed[0] in calls
@@ -58,6 +64,14 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
             np.testing.assert_array_equal(np.array(call.coefficients), expected)
     p.propose()
     assert len(calls) == expected_calls
+
+
+def test_independent_audit_rejects_incomplete_search_and_forged_parent_plan():
+    window = dict(name="parent", coefficients=None, outcome={"window_pass": False})
+    with pytest.raises(ValueError, match="allocation"):
+        verify_synergy_search([window], [0.0], [])
+    with pytest.raises(ValueError, match="parent"):
+        verify_synergy_search([dict(window, coefficients=[[0.0]])], [0.0], [])
 
 
 def test_unsafe_high_travel_never_outranks_clean_complete_qualified_window():
