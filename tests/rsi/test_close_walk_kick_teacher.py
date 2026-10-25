@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from scripts.rsi_close_walk_kick_teacher import closed_shard_arguments
+from scripts.rsi_close_walk_kick_teacher import closed_shard_arguments, producer_finished
 
 
 def roots(tmp_path):
@@ -49,3 +49,15 @@ def test_bad_cohort_does_not_relaunch_or_silently_skip_physics(tmp_path, defect)
         paths[1] = paths[0]
     with pytest.raises(ValueError):
         closed_shard_arguments(paths, "frozen")
+
+
+def test_start_order_is_not_completion_of_simple_service():
+    assert not producer_finished(
+        dict(ActiveState="active", MainPID="123", Result="success", Job="")
+    )
+    assert not producer_finished(
+        dict(ActiveState="inactive", MainPID="0", Result="success", Job="123")
+    )
+    assert producer_finished(dict(ActiveState="inactive", MainPID="0", Result="success", Job=""))
+    with pytest.raises(ValueError, match="failed producer"):
+        producer_finished(dict(ActiveState="failed", MainPID="0", Result="exit-code"))

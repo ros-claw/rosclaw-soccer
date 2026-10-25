@@ -1,16 +1,73 @@
 """Declared bounded successor: authenticate closed producer cohorts, then audit.
 
-Use systemd After= for ordering only. Never Requires=/start/restart physical
-units to recover missing artifacts. Missing/failed cohorts require agent review.
+After= orders startup, NOT completion of Type=simple physics producers. Read
+their actual state to wait for completion; never start/restart physical units.
 """
 
 import argparse
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from rosclaw_soccer.providers.g1.velocity_policy import file_hash
+
+
+def producer_finished(state):
+    """Return false for a live/queued job even if an output marker exists."""
+    if state.get("ActiveState") == "failed" or state.get("Result") not in (None, "success"):
+        raise ValueError("failed producer requires review, not automatic physics retry")
+    if state.get("MainPID") not in (None, "0") or (
+        state.get("Job", "").isdigit() and int(state["Job"]) > 0
+    ):
+        return False
+    if state.get("ActiveState") in ("active", "activating", "deactivating"):
+        return False
+    if state.get("ActiveState") != "inactive":
+        raise ValueError("unrecognized producer observation; cannot infer completion")
+    return True  # May be garbage-collected; exact completed artifacts are checked next.
+
+
+def wait_for_producers(units, *, timeout_seconds=1200):
+    """Bounded read-only completion wait, not an agent wakeup or science loop."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        finished = []
+        for unit in units:
+            try:
+                result = subprocess.run(
+                    [
+                        "systemctl",
+                        "--user",
+                        "show",
+                        unit,
+                        "-p",
+                        "ActiveState",
+                        "-p",
+                        "MainPID",
+                        "-p",
+                        "Job",
+                        "-p",
+                        "Result",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                finished.append(False)  # Observation timeout is not physical termination.
+                continue
+            state = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+            if not state:
+                finished.append(False)
+                continue
+            finished.append(producer_finished(state))
+        if all(finished):
+            return
+        time.sleep(5)
+    raise TimeoutError("producer completion not observed; preserve physics and request review")
 
 
 def closed_shard_arguments(roots, producer_head):
@@ -45,10 +102,13 @@ def main():
     p.add_argument("--expected-producer-head", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--producer-unit", nargs=4)
     a = p.parse_args()
     from scripts.rsi_native_fresh_common import clean
 
     clean(a.expected_head)
+    if a.producer_unit is not None:
+        wait_for_producers(a.producer_unit)
     args = closed_shard_arguments(a.shard_root, a.expected_producer_head)
     subprocess.run(
         [
