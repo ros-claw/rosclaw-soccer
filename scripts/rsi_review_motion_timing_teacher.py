@@ -70,9 +70,10 @@ def main():
     if a.output.exists() or digest(cp) != a.pilot_hash:
         raise ValueError("unused output and exact closed pilot required")
     report = json.loads(cp.read_text())
-    if report["interface"] not in ("motion-timing", "motion-synergy"):
+    if report["interface"] not in ("motion-timing", "motion-synergy", "motion-synergy-response"):
         raise ValueError("explicit motion reference protocol required")
-    synergy = report["interface"] == "motion-synergy"
+    response = report["interface"] == "motion-synergy-response"
+    synergy = report["interface"] in ("motion-synergy", "motion-synergy-response")
     pins = dict(report["input_file_hashes"])
     fitted = None
     if synergy:
@@ -92,7 +93,8 @@ def main():
                 or declaration["timing_peak_shift_frames"] != [-3.0, 3.0]
             )
         )
-        or declaration["forecast_native_step_ceiling"] != (568320 if synergy else 46080)
+        or declaration["forecast_native_step_ceiling"]
+        != (583680 if response else 568320 if synergy else 46080)
         or [r["course_index"] for r in report["results"]] != expected_indices
     ):
         raise ValueError("frozen timing experiment differs")
@@ -112,6 +114,16 @@ def main():
         ).items()
     ):
         raise ValueError("frozen data-synergy search protocol differs")
+    if response and any(
+        declaration[k] != value
+        for k, value in dict(
+            synergy_response_enabled=True,
+            synergy_response_ridge=0.1,
+            synergy_response_forward_minimum_m=1.05,
+            synergy_response_lateral_ratio=0.27,
+        ).items()
+    ):
+        raise ValueError("frozen trajectory-response protocol differs")
     source_pins(pins)
     check_pins(pins)
 
@@ -131,6 +143,11 @@ def main():
         shared_native_scene(scene[0].read_text(), prefixes=("a/",))
     )
     layout = NativeVelocityLayout(model, robot_prefix="a/", ball_body_name="soccer_ball")
+    response_basis = None
+    if response:
+        artifact = a.synergy_model.parent / fitted["artifact"]["path"]
+        with np.load(artifact, allow_pickle=False) as raw:
+            response_basis = raw["basis_hg"].copy()
 
     def load_raw(folder, ref):
         path = folder / ref["path"]
@@ -241,12 +258,36 @@ def main():
                 if synergy
                 else ["parent", "timing--3", "timing-+3"]
             )
+            if response:
+                from rosclaw_soccer.rsi.synergy_response_model import propose_synergy_response
+
+                proposed, response_report = None, None
+                if not any(w["outcome"]["window_pass"] for w in windows[:37]):
+                    proposed, response_report = propose_synergy_response(
+                        response_basis,
+                        [
+                            (np.array(w["coefficients"], dtype=np.float64), w["outcome"])
+                            for w in windows[1:37]
+                        ],
+                    )
+                if hash_json(response_report) != hash_json(events[0]["response_model"]):
+                    raise ValueError(
+                        "learned response model differs from raw physical plan samples"
+                    )
+                if proposed is not None:
+                    expected_names.append("native-synergy-response")
+                    if len(windows) != 38 or not np.array_equal(
+                        proposed, np.array(windows[37]["coefficients"])
+                    ):
+                        raise ValueError("bounded response proposal differs")
             if [f[0] for f in forecasts] != expected_names:
                 raise ValueError("finite candidate sequence differs")
             eligible = [i for i, w in enumerate(windows) if i and w["outcome"]["window_pass"]]
             chosen = max(eligible, key=lambda i: windows[i]["outcome"]["reward"]) if eligible else 0
             if synergy:
-                chosen = verify_synergy_search(windows, peaks, events[0]["generations"])
+                chosen = verify_synergy_search(windows[:37], peaks[:37], events[0]["generations"])
+                if response and len(windows) == 38 and windows[37]["outcome"]["window_pass"]:
+                    chosen = 37
                 if (
                     chosen
                     and events[0]["installation"]["coefficients"] != windows[chosen]["coefficients"]
@@ -271,7 +312,7 @@ def main():
                 attempted_native_steps=charged,
                 integrated_native_steps=advanced,
                 future_nn_calls=advanced // 10,
-                maximum_native_steps=35520 if synergy else 2880,
+                maximum_native_steps=36480 if response else 35520 if synergy else 2880,
             ):
                 raise ValueError("forecast NN/budget accounting differs")
         elif c.get("changed_controls", 0):
