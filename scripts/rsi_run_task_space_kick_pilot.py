@@ -25,12 +25,14 @@ def main():
             "nn-outcome-response",
             "motion-timing",
             "motion-synergy",
+            "motion-synergy-response",
         ),
         default="measured-pose",
     )
     a = p.parse_args()
-    synergy = a.interface == "motion-synergy"
-    motion_timing = a.interface in ("motion-timing", "motion-synergy")
+    synergy_response = a.interface == "motion-synergy-response"
+    synergy = a.interface in ("motion-synergy", "motion-synergy-response")
+    motion_timing = synergy or a.interface == "motion-timing"
     nn_outcome = motion_timing or a.interface in (
         "nn-outcome",
         "nn-outcome-full-leg",
@@ -44,7 +46,7 @@ def main():
     )
     forecast_cap = (1 + 2 * len(axes) + int(response)) * 640 * 16 if nn_outcome else 172800
     if motion_timing:
-        forecast_cap = (37 if synergy else 3) * 960 * 16
+        forecast_cap = (38 if synergy_response else 37 if synergy else 3) * 960 * 16
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
@@ -169,6 +171,7 @@ def main():
 
     class Controlled(parent_type):
         basis_hg = fitted_basis
+        synergy_response_enabled = synergy_response
         candidate_axes = axes
         response_enabled = response
         foundation_relative = a.interface != "measured-pose"
@@ -208,6 +211,10 @@ def main():
             synergy_reference_trust_rad=0.06 if synergy else None,
             synergy_reference_intervals=48 if synergy else None,
             synergy_temporal_lobes=2 if synergy else None,
+            synergy_response_enabled=synergy_response,
+            synergy_response_ridge=0.1 if synergy_response else None,
+            synergy_response_forward_minimum_m=1.05 if synergy_response else None,
+            synergy_response_lateral_ratio=0.27 if synergy_response else None,
             reference_installations_not_changed_pd_controls=motion_timing,
             candidate_set=(
                 ["parent", "3generations_x12_data_synergy_plans"]

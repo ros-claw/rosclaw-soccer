@@ -35,6 +35,7 @@ def synergy_search_rank(
 
 class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
     basis_hg: np.ndarray | None = None
+    synergy_response_enabled = False
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -50,7 +51,7 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
             self,
             expected_policy_type=type(self.policy),
             expected_model_hash=compiled_model_hash(self.world.model),
-            native_step_budget=37 * 960,
+            native_step_budget=(38 if self.synergy_response_enabled else 37) * 960,
         )
         self.decided = self.plan_applied = False
         self.events: list[dict[str, Any]] = []
@@ -138,6 +139,19 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
                 )
                 mean = 0.5 * mean + 0.5 * elite.mean(axis=0)
                 std = np.maximum(0.006, 0.5 * std + 0.5 * elite.std(axis=0))
+        response_report = None
+        if self.synergy_response_enabled and not any(c[3]["window_pass"] for c in candidates):
+            from rosclaw_soccer.rsi.synergy_response_model import propose_synergy_response
+
+            assert self.basis_hg is not None
+            samples = [
+                (np.array(c[1].coefficients, dtype=np.float64), c[3])
+                for c in candidates
+                if c[1] is not None
+            ]
+            proposal, response_report = propose_synergy_response(self.basis_hg, samples)
+            if proposal is not None:
+                preview("native-synergy-response", proposal)
         eligible = [i for i, c in enumerate(candidates) if i and c[3]["window_pass"]]
         chosen = (
             max(eligible, key=lambda i: synergy_search_rank(candidates[i][2], candidates[i][3]))
@@ -169,6 +183,7 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
                     for c in candidates
                 ],
                 generations=generations,
+                response_model=response_report,
                 original_actual_target_authority_unchanged=True,
             )
         )

@@ -5,10 +5,13 @@ import pytest
 from test_predicted_touch_window import prediction
 
 import rosclaw_soccer.rsi.synergy_forecast_kick_player as synergy
+import rosclaw_soccer.rsi.synergy_response_model as response_model
 from scripts.rsi_review_motion_timing_teacher import verify_synergy_search
 
 
-@pytest.mark.parametrize("mode,expected_calls", [("parent", 1), ("rescue", 37), ("fail", 37)])
+@pytest.mark.parametrize(
+    "mode,expected_calls", [("parent", 1), ("rescue", 37), ("fail", 37), ("response", 38)]
+)
 def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
     monkeypatch, mode, expected_calls
 ):
@@ -21,6 +24,8 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
     p.selected_prediction = None
     p.events, p.candidate_predictions = [], []
     p.basis_isaac = tuple(tuple(float(i == j) for j in range(29)) for i in range(6))
+    p.basis_hg = np.eye(6, 29, dtype=np.float64)
+    p.synergy_response_enabled = mode == "response"
     calls, installed = [], []
 
     def forecast(*, controls, before_proposal, reference_plan):
@@ -33,6 +38,7 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
             and reference_plan is not None
             and reference_plan.coefficients[0][0] > 0
         )
+        passes = passes or (mode == "response" and len(calls) == 38)
         if not passes:
             r["qpos"][:, 0] *= 0.1
         return r
@@ -43,15 +49,23 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
 
     p.forecaster = SimpleNamespace(forecast=forecast)
     monkeypatch.setattr(synergy, "condition_synergy_reference", install)
+    monkeypatch.setattr(
+        response_model,
+        "propose_synergy_response",
+        lambda basis, samples: (np.full((2, 6), 0.001), {"physics_verified": False}),
+    )
     monkeypatch.setattr(synergy.SharedRoboNaldoPlayer, "propose", lambda self: (np.zeros(29), {}))
     p.propose()
     assert len(calls) == expected_calls
     event = p.events[0]
     audit_choice = verify_synergy_search(
-        event["candidate_windows"], [0.0] * expected_calls, event["generations"]
+        event["candidate_windows"][:37], [0.0] * min(37, expected_calls), event["generations"]
     )
-    assert event["candidate_windows"][audit_choice]["name"] == event["selected"]
-    assert bool(installed) == (mode == "rescue")
+    if mode == "response":
+        assert audit_choice == 0 and event["selected"] == "native-synergy-response"
+    else:
+        assert event["candidate_windows"][audit_choice]["name"] == event["selected"]
+    assert bool(installed) == (mode in ("rescue", "response"))
     if installed:
         assert installed[0] in calls
         assert p.events[0]["selected_window"]["window_pass"]
