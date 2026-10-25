@@ -8,6 +8,36 @@ from collections import deque
 from pathlib import Path
 
 
+def authenticated_case_pins(root, source):
+    """The campaign summary pins cases, not their deployment assets directly."""
+    from scripts.rsi_native_context_recovery_common import check_pins, digest
+
+    pins = dict(source["input_file_hashes"])
+    seen = set()
+    for row in source["results"]:
+        course = row["course"]
+        path = root / course / "complete.json"
+        if (
+            course in seen
+            or path.parent.parent.resolve() != root.resolve()
+            or path.is_symlink()
+            or digest(path) != row["source_hash"]
+        ):
+            raise ValueError("unique confined exact completed case required")
+        seen.add(course)
+        case = json.loads(path.read_text())
+        if not case["fresh_reexecution_exact"] or len(case["records"]) != 6:
+            raise ValueError("all six original physical records required")
+        additions = dict(case["input_file_hashes"])
+        additions[str(path)] = row["source_hash"]
+        for key, value in additions.items():
+            if key in pins and pins[key] != value:
+                raise ValueError("conflicting inherited asset identity")
+            pins[key] = value
+    check_pins(pins)
+    return pins
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for key in ("source", "output"):
@@ -30,7 +60,7 @@ def main():
         or len(source["results"]) != 5
     ):
         raise ValueError("complete unpromoted native approach study required")
-    pins = dict(source["input_file_hashes"])
+    pins = authenticated_case_pins(a.source, source)
     pins[str(path)] = a.source_hash
     source_pins(pins)
     check_pins(pins)
