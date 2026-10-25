@@ -8,12 +8,18 @@ from rosclaw_soccer.rsi.contextual_first_touch_option import first_touch_reward
 
 
 def predicted_touch_window(
-    prediction: dict[str, Any], *, ball_address: int, root_address: int, start_control: int
+    prediction: dict[str, Any],
+    *,
+    ball_address: int,
+    root_address: int,
+    start_control: int,
+    diagnostic_tail: bool = False,
 ) -> dict[str, Any]:
     n = prediction["controls"]
     if (
         type(n) is not int
-        or not 1 <= n <= 64
+        or type(diagnostic_tail) is not bool
+        or not 1 <= n <= (96 if diagnostic_tail else 64)
         or type(start_control) is not int
         or not 0 <= start_control < 300
     ):
@@ -28,7 +34,7 @@ def predicted_touch_window(
         or not np.isfinite(q).all()
         or not np.isfinite(force).all()
         or (force < 0).any()
-        or start_control + n > 300
+        or start_control + n > (360 if diagnostic_tail else 300)
         or root_address < 0
         or root_address + 7 > q.shape[1]
         or ball_address < 0
@@ -42,13 +48,14 @@ def predicted_touch_window(
     healthy = bool(
         (pelvis[:, 2] >= 0.65).all() and (1 - 2 * (quat[:, 1] ** 2 + quat[:, 2] ** 2) >= 0.9).all()
     )
-    clean = bool(not (force[:, 0, 2] > 1).any())
-    ball = q[9::10, ball_address : ball_address + 3]
+    formal_n = min(n, 300 - start_control)
+    clean = bool(not (force[: formal_n * 10, 0, 2] > 1).any())
+    ball = q[9 : formal_n * 10 : 10, ball_address : ball_address + 3]
     excursion = float(abs(ball[:, 1]).max())
-    by_control = force[:, 0].reshape(n, 10, 3).max(axis=1)
+    by_control = force[: formal_n * 10, 0].reshape(formal_n, 10, 3).max(axis=1)
     foot = np.flatnonzero((by_control[:, :2] > 1).any(axis=1))
     first = int(foot[0]) if len(foot) else None
-    complete = first is not None and first + 60 < n
+    complete = first is not None and first + 60 < formal_n
     forward = (
         float(ball[first + 60, 0] - ball[first, 0]) if first is not None and complete else None
     )

@@ -56,3 +56,21 @@ def test_deadline_and_early_physical_termination_are_not_padded():
         score(prediction(), start=240)
     s = score(prediction(n=8, first=0))
     assert s["forward_60_m"] is None and not s["window_pass"]
+
+
+def test_diagnostic_tail_never_extends_football_deadline_but_checks_body():
+    p = prediction(n=96, first=0)
+
+    def tail_score():
+        return predicted_touch_window(
+            p, ball_address=0, root_address=7, start_control=239, diagnostic_tail=True
+        )
+
+    assert tail_score()["window_pass"]
+    p["qpos"][-1, 9] = 0.64
+    assert not tail_score()["predicted_body_healthy"]
+    p = prediction(n=96, first=1)
+    assert not tail_score()["quality_observed"]  # first240 cannot borrow control300.
+    p = prediction(n=96, first=70)
+    assert not tail_score()["foot_observed"]  # contact309 isn't football evidence.
+    assert not tail_score()["window_pass"]

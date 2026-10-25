@@ -21,11 +21,17 @@ def main():
             "nn-outcome",
             "nn-outcome-full-leg",
             "nn-outcome-response",
+            "motion-timing",
         ),
         default="measured-pose",
     )
     a = p.parse_args()
-    nn_outcome = a.interface in ("nn-outcome", "nn-outcome-full-leg", "nn-outcome-response")
+    motion_timing = a.interface == "motion-timing"
+    nn_outcome = motion_timing or a.interface in (
+        "nn-outcome",
+        "nn-outcome-full-leg",
+        "nn-outcome-response",
+    )
     response = a.interface == "nn-outcome-response"
     axes = (
         tuple(range(12))
@@ -33,6 +39,8 @@ def main():
         else (0, 3, 4, 6, 9, 10)
     )
     forecast_cap = (1 + 2 * len(axes) + int(response)) * 640 * 16 if nn_outcome else 172800
+    if motion_timing:
+        forecast_cap = 3 * 960 * 16
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
@@ -42,12 +50,19 @@ def main():
         raise ValueError("unused pilot output and exact measured-G1 qualification required")
     qualification = json.loads(a.qualification.read_text())
     required = (
-        "G1_COPIED_NN_CLOSED_LOOP_64_CONTROL_FORECASTS_EXACT"
+        "G1_COPIED_NN_CLOSED_LOOP_96_CONTROL_FORECASTS_EXACT"
+        if motion_timing
+        else "G1_COPIED_NN_CLOSED_LOOP_64_CONTROL_FORECASTS_EXACT"
         if nn_outcome
         else "ACTUAL_G1_MATERIAL_POINT_HG29_DERIVATIVES_VERIFIED"
     )
     if qualification["status"] != required:
         raise ValueError("actual body derivative prerequisite missing")
+    if motion_timing and (
+        not qualification["before_proposal"]
+        or qualification["reference_conditioning"] != "OFF_original_arrays"
+    ):
+        raise ValueError("explicit pre-proposal OFF reference qualification required")
     pins = dict(qualification["input_file_hashes"])
     pins[str(a.qualification)] = a.qualification_hash
     originals, original_paths = {}, {}
@@ -73,6 +88,7 @@ def main():
     from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
 
     from rosclaw_soccer.rsi.experimental_velocity_evidence import admit_heading_evidence
+    from rosclaw_soccer.rsi.motion_timing_kick_player import MotionTimingKickPlayer
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.outcome_forecast_kick_player import OutcomeForecastKickPlayer
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
@@ -116,7 +132,13 @@ def main():
     preflight_receiving_courses(courses)
     instances = []
 
-    parent_type = OutcomeForecastKickPlayer if nn_outcome else TaskSpaceKickPlayer
+    parent_type = (
+        MotionTimingKickPlayer
+        if motion_timing
+        else OutcomeForecastKickPlayer
+        if nn_outcome
+        else TaskSpaceKickPlayer
+    )
 
     class Controlled(parent_type):
         candidate_axes = axes
@@ -143,9 +165,15 @@ def main():
             actual_world_ceiling=32,
             actual_native_step_ceiling=115200,
             forecast_native_step_ceiling=forecast_cap,
-            forecast_controls_per_candidate=64 if nn_outcome else 1,
+            forecast_controls_per_candidate=96 if motion_timing else 64 if nn_outcome else 1,
+            timing_intervals=24 if motion_timing else None,
+            timing_peak_shift_frames=[-3.0, 3.0] if motion_timing else None,
+            timing_trigger="first_measured_skill_entry_pre_proposal" if motion_timing else None,
+            reference_arrays_only=motion_timing,
             candidate_set=(
-                ["parent", "one_admissible_declared_joint_plusminus_0.03"]
+                ["parent", "timing--3", "timing-+3"]
+                if motion_timing
+                else ["parent", "one_admissible_declared_joint_plusminus_0.03"]
                 + (["native-response-coordinated"] if response else [])
             )
             if nn_outcome
@@ -154,18 +182,20 @@ def main():
                 "foot_nominal_plus_shin_clearance",
                 "foot_contact_alignment_plus_shin_clearance",
             ],
-            active_joints=list(axes) if nn_outcome else list(range(12)),
-            max_nominal_delta_rad=0.03 if nn_outcome else 0.12,
+            active_joints=None if motion_timing else list(axes) if nn_outcome else list(range(12)),
+            max_nominal_delta_rad=None if motion_timing else 0.03 if nn_outcome else 0.12,
             max_current_delta_rad=0.2 if a.interface == "measured-pose" else None,
             max_command_step_rad=0.1 if a.interface == "measured-pose" else None,
-            candidate_increment_step_cap_rad=0.03 if a.interface != "measured-pose" else None,
+            candidate_increment_step_cap_rad=0.03
+            if a.interface != "measured-pose" and not motion_timing
+            else None,
             fallback_to_parent_resets_increment=True,
             foot_shin_cost=None if nn_outcome else 100.0,
             posture_cost=None if nn_outcome else 0.1,
             shin_margin_m=None if nn_outcome else 0.015,
             maximum_retreat_m=None if nn_outcome else 0.04,
             contact_alignment_correction_m=None if nn_outcome else [0.02, 0.03, 0.015],
-            activation_foot_gap_m=0.06 if nn_outcome else 0.18,
+            activation_foot_gap_m=None if motion_timing else 0.06 if nn_outcome else 0.18,
             maximum_actual_interventions_per_world=1 if nn_outcome else None,
             candidate_selection_requires_observed_window_rescue=nn_outcome,
             local_native_response_model=response,
