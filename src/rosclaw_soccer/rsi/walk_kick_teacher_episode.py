@@ -15,6 +15,7 @@ from rosclaw_soccer.rsi.kick_reference_phase import nearest_kick_reference_phase
 from rosclaw_soccer.rsi.shared_kick_history import measured_kick_sample
 from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters, SharedNativeMotorWorld
 from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
+from rosclaw_soccer.rsi.walk_kick_approach_command import approach_command
 
 
 def evaluate_episode(
@@ -173,45 +174,17 @@ def evaluate_episode(
             switch = w.switch_pd_profile("a/", vp)
             if not switch["physics_unchanged"]:
                 raise ValueError("exit gain switch modified physical state")
-        desired_world = np.array(
-            [
-                parameters["speed_mps"],
-                np.clip(
-                    2 * (d.xpos[lo.ball, 1] + parameters["root_lateral_offset_m"] - q[1]), -0.4, 0.4
-                ),
-            ]
+        command = approach_command(
+            q=q,
+            v=v,
+            rotation=rot,
+            cached_ball_position=d.xpos[lo.ball],
+            previous=previous,
+            parameters=parameters,
+            fast=fast,
+            feedback=feedback,
+            halt=exit_frame is not None,
         )
-        if feedback:
-            from rosclaw_soccer.rsi.feedback_kick_approach import velocity_matched_approach
-
-            desired_world = velocity_matched_approach(
-                root_position=q[:3],
-                ball_position=q[36:39],
-                ball_velocity=v[35:38],
-                cruise_speed=parameters["speed_mps"],
-                entry_gap=parameters["entry_gap_m"],
-                lateral_offset=parameters["root_lateral_offset_m"],
-            )
-        if exit_frame is not None:
-            # Single preregistered halt intent; no goal/velocity parameter sweep.
-            desired_world[:] = 0.0
-        xy = rot[:2, :2].T @ desired_world
-        yaw = float(np.arctan2(rot[1, 0], rot[0, 0]))
-        wanted = np.array(
-            [
-                np.clip(xy[0], -0.5, 2.0 if fast else 1.0),
-                np.clip(xy[1], -0.5, 0.5),
-                np.clip(-2 * yaw, -1, 1),
-            ],
-            np.float32,
-        )
-        if exit_frame is not None:
-            wanted[:] = 0.0
-        if fast:
-            norm = float(np.linalg.norm(wanted[:2]))
-            if norm > 2:
-                wanted[:2] *= np.float32(2 / norm)
-        command = previous + np.clip(wanted - previous, -0.05, 0.05)
         previous = command.copy()
         shadow = None
         if continuation is not None:
