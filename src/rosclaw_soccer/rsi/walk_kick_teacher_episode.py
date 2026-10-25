@@ -24,6 +24,7 @@ def evaluate_episode(
     course: tuple[float, float, float],
     parameters: dict[str, Any],
     hard_limits: np.ndarray,
+    player_type: Any = SharedRoboNaldoPlayer,
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     """No copied rollout state or action playback; every call creates fresh NN state.
 
@@ -125,7 +126,7 @@ def evaluate_episode(
             switch = w.switch_pd_profile("a/", kp)
             if not switch["physics_unchanged"]:
                 raise ValueError("gain switch modified physical state")
-            kick = SharedRoboNaldoPlayer(w, "a/", policy, goal=np.array([8.0, 0.0, 0.11]))
+            kick = player_type(w, "a/", policy, goal=np.array([8.0, 0.0, 0.11]))
             history_receipt = kick.install_measured_entry(tuple(history), reference_frame=phase)
         desired_world = np.array(
             [
