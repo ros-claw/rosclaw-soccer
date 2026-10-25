@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -14,22 +15,67 @@ from rosclaw_soccer.rsi.research_loop_dispatch import dispatch_state
 from rosclaw_soccer.rsi.research_loop_watch import assess, collect
 
 
+def resume_campaigns(path: Path):
+    """Read the current checkpoint's observed jobs, never executable commands.
+
+    Read once per tick so a successor does not require editing the timer unit.
+    A changed pointer is metadata, not a reason to clear the idle deadline.
+    """
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("ordinary resume pointer required")
+    with path.open("rb") as stream:
+        raw = stream.read(262145)
+    if len(raw) > 262144:
+        raise ValueError("bounded resume pointer required")
+    pointer = json.loads(raw)
+    if (
+        type(pointer) is not dict
+        or pointer.get("schema") != "soccer.agent.resume_pointer.v1"
+        or pointer.get("goal_status") != "active"
+        or type(pointer.get("observation_campaigns")) is not list
+        or not 1 <= len(pointer["observation_campaigns"]) <= 128
+    ):
+        raise ValueError("active resume pointer with explicit bounded observed jobs required")
+    campaigns = []
+    for row in pointer["observation_campaigns"]:
+        if (
+            type(row) is not dict
+            or set(row) != {"unit", "root"}
+            or type(row["unit"]) is not str
+            or re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.@-]{0,190}\.service", row["unit"]) is None
+            or type(row["root"]) is not str
+            or not row["root"]
+            or "\x00" in row["root"]
+            or not Path(row["root"]).is_absolute()
+            or ".." in Path(row["root"]).parts
+        ):
+            raise ValueError("exact read-only service/root declaration required; no commands")
+        campaigns.append((row["unit"], row["root"]))
+    if len({unit for unit, _ in campaigns}) != len(campaigns):
+        raise ValueError("unique observed service units required")
+    return campaigns, "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--campaign", nargs=2, action="append", required=True, metavar=("UNIT", "ROOT")
-    )
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--campaign", nargs=2, action="append", metavar=("UNIT", "ROOT"))
+    selection.add_argument("--resume-pointer", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--dependency-plan", type=Path)
     arguments = parser.parse_args()
-    names = [name for name, _ in arguments.campaign]
+    pointer_hash = None
+    selected = arguments.campaign
+    if arguments.resume_pointer is not None:
+        selected, pointer_hash = resume_campaigns(arguments.resume_pointer)
+    names = [name for name, _ in selected]
     if len(names) != len(set(names)):
         parser.error("unique campaign units required")
     output = arguments.output
     previous = json.loads(output.read_text()) if output.exists() else {"campaigns": {}}
     now = time.time()
     campaigns = {}
-    for unit, root in arguments.campaign:
+    for unit, root in selected:
         try:
             campaigns[unit] = assess(
                 collect(unit, Path(root)), previous["campaigns"].get(unit), now=now
@@ -63,6 +109,8 @@ def main():
         agent_wakeup_provided_by_this_script=False,
         scientific_successor_automated=False,
         dependency_plan_hash=plan_hash,
+        resume_pointer_hash=pointer_hash,
+        resume_pointer_is_scientific_progress=False,
         dependency_plan_is_scientific_verification=False,
         goal_complete=False,
         hardware_authorized=False,
