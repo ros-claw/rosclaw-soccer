@@ -32,13 +32,25 @@ def main():
     pins = dict(review["input_file_hashes"])
     pins[str(a.effect_review)] = a.effect_review_hash
     synergy_model = None
+    feedback_complement = False
     if a.synergy_model is not None:
         if not pre_proposal or digest(a.synergy_model) != a.synergy_model_hash:
             raise ValueError("exact synergy model and explicit pre-proposal protocol required")
         synergy_model = json.loads(a.synergy_model.read_text())
-        if synergy_model["status"] != "PUBLIC_EXECUTED_MOTION_SYNERGIES_FITTED":
+        feedback_complement = (
+            synergy_model["status"] == "ACTUAL_SUCCESSFUL_MOTOR_FEEDBACK_COMPLEMENT_FITTED"
+        )
+        if (
+            synergy_model["status"] != "PUBLIC_EXECUTED_MOTION_SYNERGIES_FITTED"
+            and not feedback_complement
+        ):
             raise ValueError("executed public motion subspace required")
-        pins.update(synergy_model["input_file_hashes"])
+        if feedback_complement and not a.pre_proposal_128:
+            raise ValueError("new feedback complement requires explicit128 qualification")
+        for key, value in synergy_model["input_file_hashes"].items():
+            if key in pins and pins[key] != value:
+                raise ValueError("conflicting motion model source/asset binding")
+            pins[key] = value
         pins[str(a.synergy_model)] = a.synergy_model_hash
     if pins.get(str(a.reference_record)) != digest(a.reference_record):
         raise ValueError("explicit pinned original trajectory required")
@@ -155,7 +167,9 @@ def main():
             probes=frames,
             controls_per_probe=horizon,
             before_proposal=pre_proposal,
-            reference_conditioning="synergy_nonzero"
+            reference_conditioning="feedback_complement_nonzero"
+            if feedback_complement
+            else "synergy_nonzero"
             if synergy_model is not None
             else "OFF_original_arrays",
             actual_worlds=1,
@@ -225,10 +239,14 @@ def main():
             status=(
                 f"G1_COPIED_NN_CLOSED_LOOP_{horizon}_CONTROL_FORECASTS_EXACT"
                 if synergy_model is None
+                else "G1_FEEDBACK_COMPLEMENT_REFERENCE_NN_FUTURES_EXACT"
+                if feedback_complement
                 else "G1_SYNERGY_REFERENCE_NN_FUTURES_EXACT"
             ),
             before_proposal=pre_proposal,
-            reference_conditioning="synergy_nonzero"
+            reference_conditioning="feedback_complement_nonzero"
+            if feedback_complement
+            else "synergy_nonzero"
             if synergy_model is not None
             else "OFF_original_arrays",
             source_head=a.expected_head,
