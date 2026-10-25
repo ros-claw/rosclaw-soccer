@@ -15,10 +15,15 @@ def main():
     p.add_argument("--pre-proposal-128", action="store_true")
     p.add_argument("--synergy-model", type=Path)
     p.add_argument("--synergy-model-hash")
+    p.add_argument("--whole-joint-reference", action="store_true")
     a = p.parse_args()
     if a.pre_proposal_96 and a.pre_proposal_128:
         raise ValueError("one explicit forecast qualification protocol required")
     pre_proposal = a.pre_proposal_96 or a.pre_proposal_128
+    if a.whole_joint_reference and (not a.pre_proposal_128 or a.synergy_model is not None):
+        raise ValueError(
+            "whole-joint reference requires separate128 protocol without fitted PCA mixing"
+        )
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
@@ -91,6 +96,10 @@ def main():
     from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
     from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
     from rosclaw_soccer.rsi.walk_kick_teacher_episode import evaluate_episode
+    from rosclaw_soccer.rsi.whole_joint_reference import (
+        WholeJointReferencePlan,
+        condition_whole_joint_reference,
+    )
 
     cfgs = [
         Path(k)
@@ -155,6 +164,15 @@ def main():
                     ((0.01, 0.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)),
                 )
                 condition_synergy_reference(self.policy, plan)
+            if a.whole_joint_reference:
+                condition_whole_joint_reference(
+                    self.policy,
+                    WholeJointReferencePlan(
+                        reference_frame,
+                        tuple(int(i) for i in types[3]),
+                        ((0.001,) * 29, (-0.001,) * 29),
+                    ),
+                )
             return receipt
 
         def propose(self):
@@ -177,7 +195,9 @@ def main():
             probes=frames,
             controls_per_probe=horizon,
             before_proposal=pre_proposal,
-            reference_conditioning="feedback_complement_nonzero"
+            reference_conditioning="whole_joint_reference_nonzero"
+            if a.whole_joint_reference
+            else "feedback_complement_nonzero"
             if feedback_complement
             else "synergy_nonzero"
             if synergy_model is not None
@@ -186,7 +206,7 @@ def main():
             actual_native_step_ceiling=3600,
             forecast_native_step_ceiling=forecast_budget,
             every_future_target_and_native_array_must_match=True,
-            no_changed_targets=synergy_model is None,
+            no_changed_targets=synergy_model is None and not a.whole_joint_reference,
             copied_history_no_enter_or_reset=True,
             optimizer_updates=0,
             teacher_effectiveness_proven=False,
@@ -232,9 +252,9 @@ def main():
         same = set(old.files) == set(arrays) and all(
             np.array_equal(old[k], v) for k, v in arrays.items()
         )
-        if synergy_model is None and not same:
+        if synergy_model is None and not a.whole_joint_reference and not same:
             raise ValueError("owned forecasts changed original actual whole trajectory")
-        if synergy_model is not None and same:
+        if (synergy_model is not None or a.whole_joint_reference) and same:
             raise ValueError(
                 "nonzero reference qualification did not change actual whole trajectory"
             )
@@ -247,14 +267,18 @@ def main():
         a.output / "complete.json",
         dict(
             status=(
-                f"G1_COPIED_NN_CLOSED_LOOP_{horizon}_CONTROL_FORECASTS_EXACT"
+                "G1_WHOLE_JOINT_REFERENCE_NN_FUTURES_EXACT"
+                if a.whole_joint_reference
+                else f"G1_COPIED_NN_CLOSED_LOOP_{horizon}_CONTROL_FORECASTS_EXACT"
                 if synergy_model is None
                 else "G1_FEEDBACK_COMPLEMENT_REFERENCE_NN_FUTURES_EXACT"
                 if feedback_complement
                 else "G1_SYNERGY_REFERENCE_NN_FUTURES_EXACT"
             ),
             before_proposal=pre_proposal,
-            reference_conditioning="feedback_complement_nonzero"
+            reference_conditioning="whole_joint_reference_nonzero"
+            if a.whole_joint_reference
+            else "feedback_complement_nonzero"
             if feedback_complement
             else "synergy_nonzero"
             if synergy_model is not None
@@ -266,7 +290,7 @@ def main():
             actual_native_steps=row["native_steps"],
             forecasts=probe.predictor.counters(),
             all_future_nn_targets_and_native_arrays_exact=True,
-            actual_whole_trajectory_unchanged=synergy_model is None,
+            actual_whole_trajectory_unchanged=synergy_model is None and not a.whole_joint_reference,
             teacher_effectiveness_proven=False,
             optimizer_updates=0,
             promotion_authorized=False,

@@ -22,6 +22,10 @@ from rosclaw_soccer.rsi.motion_synergy_reference import (
 from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
 from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
 from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
+from rosclaw_soccer.rsi.whole_joint_reference import (
+    WholeJointReferencePlan,
+    condition_whole_joint_reference,
+)
 
 
 def policy_state_hash(policy: Any) -> str:
@@ -185,7 +189,10 @@ class SharedNNForecaster:
         first_target: np.ndarray | None = None,
         first_action_history: np.ndarray | None = None,
         before_proposal: bool = False,
-        reference_plan: MotionTimingPlan | MotionSynergyPlan | None = None,
+        reference_plan: MotionTimingPlan
+        | MotionSynergyPlan
+        | WholeJointReferencePlan
+        | None = None,
     ) -> dict[str, Any]:
         import mujoco
 
@@ -222,6 +229,10 @@ class SharedNNForecaster:
         if reference_plan is not None:
             if type(reference_plan) is MotionSynergyPlan:
                 reference_applied = condition_synergy_reference(policy, reference_plan)["applied"]
+            elif type(reference_plan) is WholeJointReferencePlan:
+                reference_applied = condition_whole_joint_reference(policy, reference_plan)[
+                    "applied"
+                ]
             elif isinstance(reference_plan, MotionTimingPlan):
                 reference_applied = condition_motion_reference(policy, reference_plan)["applied"]
             else:
