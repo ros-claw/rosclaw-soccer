@@ -25,6 +25,7 @@ def evaluate_episode(
     parameters: dict[str, Any],
     hard_limits: np.ndarray,
     player_type: Any = SharedRoboNaldoPlayer,
+    post_contact_exit: bool = False,
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     """No copied rollout state or action playback; every call creates fresh NN state.
 
@@ -36,6 +37,8 @@ def evaluate_episode(
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 
     state_type, output_type, policy_type, mapping = policy_types
+    if type(post_contact_exit) is not bool:
+        raise ValueError("explicit post-contact exit research switch required")
     fast = assets.get("experimental_fast", False)
     feedback = parameters.get("approach_feedback", False)
     phase_feedback = parameters.get("entry_phase_feedback", False)
@@ -94,6 +97,16 @@ def evaluate_episode(
     kick, entry, phase, history_receipt = None, None, None, None
     contacted = False
     entry_state = None
+    continuation = None
+    if post_contact_exit:
+        from rosclaw_soccer.rsi.observed_velocity_continuation import (
+            ObservedVelocityContinuation,
+        )
+
+        continuation = ObservedVelocityContinuation(stream)
+    exit_frame = None
+    observed_foot = False
+    continuation_receipts, shadow_observations = [], []
     for frame in range(360):
         q, v = lo.canonical(d)
         rot = d.xmat[lo.pelvis].reshape(3, 3)
@@ -128,6 +141,11 @@ def evaluate_episode(
                 raise ValueError("gain switch modified physical state")
             kick = player_type(w, "a/", policy, goal=np.array([8.0, 0.0, 0.11]))
             history_receipt = kick.install_measured_entry(tuple(history), reference_frame=phase)
+        if post_contact_exit and kick is not None and exit_frame is None and observed_foot:
+            exit_frame = frame
+            switch = w.switch_pd_profile("a/", vp)
+            if not switch["physics_unchanged"]:
+                raise ValueError("exit gain switch modified physical state")
         desired_world = np.array(
             [
                 parameters["speed_mps"],
@@ -147,6 +165,9 @@ def evaluate_episode(
                 entry_gap=parameters["entry_gap_m"],
                 lateral_offset=parameters["root_lateral_offset_m"],
             )
+        if exit_frame is not None:
+            # Single preregistered halt intent; no goal/velocity parameter sweep.
+            desired_world[:] = 0.0
         xy = rot[:2, :2].T @ desired_world
         yaw = float(np.arctan2(rot[1, 0], rot[0, 0]))
         wanted = np.array(
@@ -157,27 +178,41 @@ def evaluate_episode(
             ],
             np.float32,
         )
+        if exit_frame is not None:
+            wanted[:] = 0.0
         if fast:
             norm = float(np.linalg.norm(wanted[:2]))
             if norm > 2:
                 wanted[:2] *= np.float32(2 / norm)
         command = previous + np.clip(wanted - previous, -0.05, 0.05)
         previous = command.copy()
-        if kick is None:
+        shadow = None
+        if continuation is not None:
+            shadow = continuation.propose(q, v, lo.angular_velocity_body(d), command, frame=frame)
+            shadow_observations.append(stream.last_observation.copy())
+        if continuation is not None and (kick is None or exit_frame is not None):
+            assert shadow is not None
+            target = shadow
+        elif kick is None:
             target = stream.propose(q, v, lo.angular_velocity_body(d), command, frame=frame)
         else:
             target = kick.propose()[0]
         result = w.advance({"a/": target})
-        if kick is not None:
+        if kick is not None and exit_frame is None:
             kick.commit()
+        if continuation is not None:
+            continuation_receipts.append(
+                continuation.observe_executed(target, completed_control=w.control_steps)
+            )
         if not w.failed:
             history.append(measured_kick_sample(w, "a/"))
         contacted |= bool(w.last_ball_contact_bodies["a/"])
+        observed_foot |= bool((result["ball_forces"][:, 0, :2] > 1).any())
         for key in raw:
             raw[key].append(result[key])
         targets.append(target.copy())
         commands.append(command.copy())
-        velocity_active.append(kick is None)
+        velocity_active.append(kick is None or exit_frame is not None)
         # Explicit actual qpos addresses, never infer positions from array order.
         ball_controls.append(result["qpos"][-1, lo.bq : lo.bq + 3].copy())
         body_controls.append(result["qpos"][:, lo.rq + 2].copy())
@@ -191,6 +226,8 @@ def evaluate_episode(
         pelvis_z_per_substep_m=np.stack(body_controls),
         velocity_control_active=np.asarray(velocity_active, dtype=bool),
     )
+    if continuation is not None:
+        arrays["velocity_shadow_observations"] = np.stack(shadow_observations)
     if w.control_steps >= 300:
         # All non-foot bodies are aggregated in measured force slot2. Empty
         # slots3..5 denote no extra disjoint body categories, not missing data.
@@ -240,4 +277,13 @@ def evaluate_episode(
         feedback_reference_phase=phase_feedback,
         physical_teacher_qualified=False,
     )
+    if continuation is not None:
+        row.update(
+            post_contact_exit=True,
+            exit_control=exit_frame,
+            exit_trigger="completed_previous_control_foot_force_gt1N",
+            exit_command_intent="zero_velocity_existing_rate_limit",
+            observed_velocity_continuation=continuation_receipts,
+            new_neural_optimizer_updates=0,
+        )
     return row, arrays
