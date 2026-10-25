@@ -19,7 +19,7 @@ def predicted_touch_window(
     if (
         type(n) is not int
         or type(diagnostic_tail) is not bool
-        or not 1 <= n <= (96 if diagnostic_tail else 64)
+        or not 1 <= n <= (128 if diagnostic_tail else 64)
         or type(start_control) is not int
         or not 0 <= start_control < 300
     ):

@@ -12,9 +12,13 @@ def main():
     p.add_argument("--effect-review-hash", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--pre-proposal-96", action="store_true")
+    p.add_argument("--pre-proposal-128", action="store_true")
     p.add_argument("--synergy-model", type=Path)
     p.add_argument("--synergy-model-hash")
     a = p.parse_args()
+    if a.pre_proposal_96 and a.pre_proposal_128:
+        raise ValueError("one explicit forecast qualification protocol required")
+    pre_proposal = a.pre_proposal_96 or a.pre_proposal_128
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
@@ -29,7 +33,7 @@ def main():
     pins[str(a.effect_review)] = a.effect_review_hash
     synergy_model = None
     if a.synergy_model is not None:
-        if not a.pre_proposal_96 or digest(a.synergy_model) != a.synergy_model_hash:
+        if not pre_proposal or digest(a.synergy_model) != a.synergy_model_hash:
             raise ValueError("exact synergy model and explicit pre-proposal protocol required")
         synergy_model = json.loads(a.synergy_model.read_text())
         if synergy_model["status"] != "PUBLIC_EXECUTED_MOTION_SYNERGIES_FITTED":
@@ -95,7 +99,7 @@ def main():
     types = _load_robonaldo(one("/policy/robonaldo/FreeKick.py").parents[2])
     instances = []
     frames = (80, 100, 150, 220)
-    horizon = 96 if a.pre_proposal_96 else 64
+    horizon = 128 if a.pre_proposal_128 else 96 if a.pre_proposal_96 else 64
     forecast_budget = len(frames) * horizon * 10
     basis_isaac = None
     if synergy_model is not None:
@@ -132,12 +136,12 @@ def main():
             return receipt
 
         def propose(self):
-            if a.pre_proposal_96 and self.world.control_steps in frames:
+            if pre_proposal and self.world.control_steps in frames:
                 self.predictions.append(
                     self.predictor.forecast(controls=horizon, before_proposal=True)
                 )
             target, receipt = super().propose()
-            if not a.pre_proposal_96 and self.world.control_steps in frames:
+            if not pre_proposal and self.world.control_steps in frames:
                 self.predictions.append(self.predictor.forecast(controls=horizon))
             return target, receipt
 
@@ -150,7 +154,7 @@ def main():
             model_hash=model_hash,
             probes=frames,
             controls_per_probe=horizon,
-            before_proposal=a.pre_proposal_96,
+            before_proposal=pre_proposal,
             reference_conditioning="synergy_nonzero"
             if synergy_model is not None
             else "OFF_original_arrays",
@@ -223,7 +227,7 @@ def main():
                 if synergy_model is None
                 else "G1_SYNERGY_REFERENCE_NN_FUTURES_EXACT"
             ),
-            before_proposal=a.pre_proposal_96,
+            before_proposal=pre_proposal,
             reference_conditioning="synergy_nonzero"
             if synergy_model is not None
             else "OFF_original_arrays",

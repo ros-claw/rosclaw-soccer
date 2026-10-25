@@ -201,8 +201,8 @@ class SharedNNForecaster:
             or compiled_model_hash(donor.model) != self.model_hash
         ):
             raise ValueError("one admitted pending proposal at unchanged actual boundary required")
-        if type(controls) is not int or not 1 <= controls <= (96 if before_proposal else 64):
-            raise ValueError("bounded64 pending/96 pre-proposal closed-loop horizon required")
+        if type(controls) is not int or not 1 <= controls <= (128 if before_proposal else 64):
+            raise ValueError("bounded64 pending/128 pre-proposal closed-loop horizon required")
         if (reference_plan is not None and not before_proposal) or (
             before_proposal and (first_target is not None or first_action_history is not None)
         ):

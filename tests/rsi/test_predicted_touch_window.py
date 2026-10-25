@@ -74,3 +74,18 @@ def test_diagnostic_tail_never_extends_football_deadline_but_checks_body():
     p = prediction(n=96, first=70)
     assert not tail_score()["foot_observed"]  # contact309 isn't football evidence.
     assert not tail_score()["window_pass"]
+
+
+def test_longer_forecast_observes_existing_formal_quality_without_extending_exam():
+    short = predicted_touch_window(
+        prediction(96, 38), ball_address=0, root_address=7, start_control=165, diagnostic_tail=True
+    )
+    long = predicted_touch_window(
+        prediction(128, 38), ball_address=0, root_address=7, start_control=165, diagnostic_tail=True
+    )
+    assert not short["quality_observed"]
+    assert long["quality_observed"] and long["first_foot_global_control"] == 203
+    late = predicted_touch_window(
+        prediction(128, 38), ball_address=0, root_address=7, start_control=202, diagnostic_tail=True
+    )
+    assert not late["quality_observed"]  # first240 still cannot borrow control300.
