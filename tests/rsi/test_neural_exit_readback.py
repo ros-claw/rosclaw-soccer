@@ -1,6 +1,7 @@
 """Synthetic codec/NN-reader checks, with no physical integration."""
 
 import copy
+import json
 
 import numpy as np
 import pytest
@@ -10,7 +11,7 @@ from test_shared_native_motor_world import source_xml
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.observed_velocity_continuation import ObservedVelocityContinuation
 from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
-from scripts.rsi_review_neural_exit_pilot import verify_velocity_history
+from scripts.rsi_review_neural_exit_pilot import closed_producer, verify_velocity_history
 
 
 def fixture(monkeypatch):
@@ -85,3 +86,47 @@ def test_tampered_history_or_future_trigger_cannot_pass(monkeypatch, defect):
         arrays["velocity_control_active"][1] = True
     with pytest.raises(ValueError):
         verify_velocity_history(row, arrays, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "defect", [None, "no_history", "wrong_head", "failed_later", "fake_manager"]
+)
+def test_collected_unit_requires_real_matching_manager_completion(monkeypatch, tmp_path, defect):
+    unit, head = "probe.service", "a" * 40
+    event = dict(
+        _COMM="systemd",
+        _TRANSPORT="journal",
+        USER_UNIT=unit,
+        JOB_TYPE="start",
+        JOB_RESULT="done",
+        MESSAGE_ID="39f53479d3a045ac8e11786248231fbf",
+        USER_INVOCATION_ID="invocation",
+        __CURSOR="cursor",
+        MESSAGE=f"Finished python -m scripts.rsi_run_neural_exit_pilot --expected-head {head}"
+        f" --output {tmp_path}.",
+    )
+    if defect == "wrong_head":
+        event["MESSAGE"] = event["MESSAGE"].replace(head, "b" * 40)
+    if defect == "fake_manager":
+        event["_COMM"] = "python"
+    events = [] if defect == "no_history" else [event]
+    if defect == "failed_later":
+        events.append(event | dict(JOB_RESULT="failed"))
+    calls = []
+
+    def read_only(argv, **kwargs):
+        calls.append(argv)
+        if argv[0] == "systemctl":
+            return "MainPID=0\nActiveState=inactive\nResult=success\nExecMainStatus=0\n"
+        assert argv[0] == "journalctl"
+        return "\n".join(json.dumps(e) for e in events)
+
+    monkeypatch.setattr("scripts.rsi_review_neural_exit_pilot.subprocess.check_output", read_only)
+    if defect:
+        with pytest.raises(ValueError):
+            closed_producer(unit, head, tmp_path)
+    else:
+        result = closed_producer(unit, head, tmp_path)
+        assert result["manager_completion_verified"]
+        assert not result["producer_restarted"]
+    assert [c[0] for c in calls] == ["systemctl", "journalctl"]

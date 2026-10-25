@@ -2,7 +2,91 @@
 
 import argparse
 import json
+import re
+import shlex
+import subprocess
 from pathlib import Path
+
+
+def closed_producer(unit, head, root):
+    """Read manager-issued completion even after transient-unit GC; never retry."""
+    if re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.@-]{0,190}\.service", unit) is None:
+        raise ValueError("one explicit read-only service name required")
+    status = dict(
+        line.split("=", 1)
+        for line in subprocess.check_output(
+            [
+                "systemctl",
+                "--user",
+                "show",
+                unit,
+                "-p",
+                "MainPID",
+                "-p",
+                "ActiveState",
+                "-p",
+                "Result",
+                "-p",
+                "ExecMainStatus",
+            ],
+            text=True,
+            timeout=10,
+        ).splitlines()
+    )
+    if (
+        status.get("MainPID") != "0"
+        or status.get("ActiveState") != "inactive"
+        or status.get("Result") != "success"
+        or status.get("ExecMainStatus") != "0"
+    ):
+        raise ValueError("producer must no longer be running and have no observed failure")
+    raw = subprocess.check_output(
+        ["journalctl", "--user", "-u", unit, "-o", "json", "-n", "128", "--no-pager"],
+        text=True,
+        timeout=10,
+    )
+    if len(raw) > 8 * 1024 * 1024:
+        raise ValueError("bounded producer journal required")
+    events = [json.loads(line) for line in raw.splitlines()]
+    manager = [
+        event
+        for event in events
+        if event.get("_COMM") == "systemd"
+        and event.get("_TRANSPORT") == "journal"
+        and event.get("USER_UNIT") == unit
+        and event.get("JOB_TYPE") == "start"
+    ]
+    if not manager:
+        raise ValueError("missing actual systemd producer completion history")
+    done = manager[-1]
+    if (
+        done.get("JOB_RESULT") != "done"
+        or done.get("MESSAGE_ID") != "39f53479d3a045ac8e11786248231fbf"
+        or not done.get("USER_INVOCATION_ID")
+        or type(done.get("MESSAGE")) is not str
+        or not done["MESSAGE"].startswith("Finished ")
+    ):
+        raise ValueError("latest producer invocation did not complete successfully")
+    argv = shlex.split(done["MESSAGE"][len("Finished ") :].removesuffix("."))
+    for flag, expected in (
+        ("--expected-head", head),
+        ("--output", str(root)),
+        ("-m", "scripts.rsi_run_neural_exit_pilot"),
+    ):
+        if (
+            argv.count(flag) != 1
+            or argv.index(flag) + 1 >= len(argv)
+            or argv[argv.index(flag) + 1] != expected
+        ):
+            raise ValueError("journal completion is for another source or output")
+    return dict(
+        invocation_id=done["USER_INVOCATION_ID"],
+        cursor=done["__CURSOR"],
+        source_head=head,
+        output_root=str(root),
+        manager_completion_verified=True,
+        producer_restarted=False,
+    )
 
 
 def verify_velocity_history(row, arrays, *, layout, model, params, session):
@@ -96,12 +180,11 @@ def main():
         parser.add_argument("--" + key, required=True)
     a = parser.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
-    from scripts.rsi_collect_shadow_motor import wait_for_terminal_collection
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
 
     clean(a.expected_head)
-    wait_for_terminal_collection(a.pilot_unit)
+    terminal = closed_producer(a.pilot_unit, a.producer_head, a.pilot)
     cp = a.pilot / "complete.json"
     if a.output.exists() or digest(cp) != a.pilot_hash:
         raise ValueError("new readback root and exact completed producer required")
@@ -230,6 +313,7 @@ def main():
         dict(
             status="NEURAL_EXIT_RAW_HISTORY_AND_CPU_NN_VERIFIED_NOT_TEACHER",
             source_head=a.expected_head,
+            producer_terminal=terminal,
             input_file_hashes=pins,
             results=results,
             rescues=rescues,
