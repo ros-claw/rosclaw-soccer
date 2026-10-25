@@ -19,6 +19,7 @@ import pytest
         "rsi_review_native_role_learning.py",
         "rsi_probe_native_team_intent.py",
         "rsi_run_native_contact_authority.py",
+        "rsi_probe_experimental_velocity_envelope.py",
     ],
 )
 def test_command_family_bootstrap_does_not_train_or_allocate_physics(script, tmp_path, monkeypatch):
