@@ -1,0 +1,229 @@
+"""Qualify copied velocity NN/current-body one-control futures, not a new teacher."""
+
+import argparse
+import json
+from pathlib import Path
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    for key in ("effect-review", "reference-record", "output"):
+        p.add_argument("--" + key, type=Path, required=True)
+    p.add_argument("--effect-review-hash", required=True)
+    p.add_argument("--expected-head", required=True)
+    a = p.parse_args()
+    from scripts.rsi_atomic_artifacts import write_once
+    from scripts.rsi_native_context_recovery_common import check_pins, digest
+    from scripts.rsi_native_fresh_common import clean, source_pins
+
+    clean(a.expected_head)
+    if (
+        a.output.exists()
+        or a.effect_review.is_symlink()
+        or digest(a.effect_review) != a.effect_review_hash
+    ):
+        raise ValueError("unused output and exact original native-effect lineage required")
+    effect = json.loads(a.effect_review.read_text())
+    if effect["status"] != "TASK_SPACE_NATIVE_EFFECT_READBACK_COMPLETE":
+        raise ValueError("original closed native task-space effect review required")
+    pins = dict(effect["input_file_hashes"])
+    pins[str(a.effect_review)] = a.effect_review_hash
+    if a.reference_record.is_symlink() or pins.get(str(a.reference_record)) != digest(
+        a.reference_record
+    ):
+        raise ValueError("exact pinned original ONNX whole execution required")
+    reference = json.loads(a.reference_record.read_text())
+    if reference["arm"] != "onnx" or reference["entry_control"] != 77:
+        raise ValueError("same preregistered original velocity-to-kick source boundary required")
+    source_pins(pins)
+    check_pins(pins)
+
+    def one(suffix):
+        rows = [Path(k) for k in pins if k.endswith(suffix)]
+        if len(rows) != 1:
+            raise ValueError("unique original pinned native asset required: " + suffix)
+        return rows[0]
+
+    import mujoco
+    import numpy as np
+    from rosclaw.simforge.backends.unitree_mujoco_backend import _load_robonaldo
+    from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
+
+    from rosclaw_soccer.rsi.experimental_velocity_evidence import admit_heading_evidence
+    from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
+    from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
+    from rosclaw_soccer.rsi.shared_velocity_forecast import SharedVelocityForecaster
+    from rosclaw_soccer.rsi.walk_kick_teacher_episode import evaluate_episode
+
+    cfgs = [
+        Path(k)
+        for k in pins
+        if k.endswith(".json")
+        and Path(k).stat().st_size < 2048
+        and json.loads(Path(k).read_text()).get("schema")
+        == "soccer.native_single_finisher_experimental_approach.v1"
+    ]
+    if len(cfgs) != 1:
+        raise ValueError("one original experimental-envelope ancestry required")
+    assets, _ = admit_heading_evidence(cfgs[0], pins[str(cfgs[0])])
+    vm, vc = one("/velocity/v0/exported/policy.onnx"), one("/velocity/v0/params/deploy.yaml")
+    assets.update(
+        velocity_model=vm,
+        velocity_config=vc,
+        velocity_model_hash=pins[str(vm)],
+        velocity_config_hash=pins[str(vc)],
+        experimental_fast=reference["experimental_fast_approach"],
+    )
+    model = mujoco.MjModel.from_xml_string(
+        shared_native_scene(
+            one("/cached-standard/declared-scene.xml").read_text(), prefixes=("a/",)
+        )
+    )
+    model_hash = compiled_model_hash(model)
+    types = _load_robonaldo(one("/policy/robonaldo/FreeKick.py").parents[2])
+    frames = (0, 20, 40, 60, 76)
+    a.output.mkdir()
+    write_once(
+        a.output / "declaration.json",
+        dict(
+            protocol="soccer.current_velocity_nn_native_one_control_qualification.v1",
+            source_head=a.expected_head,
+            input_file_hashes=pins,
+            model_hash=model_hash,
+            probes=frames,
+            controls_per_probe=1,
+            actual_world_ceiling=1,
+            actual_native_step_ceiling=3600,
+            forecast_native_step_ceiling=50,
+            maximum_future_velocity_nn_calls=5,
+            future_skill_switch_prediction_qualified=False,
+            task_effectiveness_proven=False,
+            neural_optimizer_updates=0,
+            hardware_authorized=False,
+            promotion_authorized=False,
+        ),
+    )
+    forecaster = None
+    saved = []
+
+    def probe(*, stream, world, command, frame):
+        nonlocal forecaster
+        if frame not in frames:
+            return
+        if forecaster is None:
+            forecaster = SharedVelocityForecaster(
+                world, stream, expected_model_hash=model_hash, native_step_budget=50
+            )
+        if forecaster.world is not world or forecaster.stream is not stream:
+            raise ValueError("same original current-world velocity actor required")
+        predicted = forecaster.forecast(command)
+        artifact = a.output / f"forecast-{frame:03d}.npz"
+        np.savez_compressed(
+            artifact,
+            **{
+                k: predicted[k]
+                for k in (
+                    "qpos",
+                    "qvel",
+                    "torque",
+                    "ball_forces",
+                    "joint_target",
+                    "observation",
+                    "action",
+                )
+            },
+        )
+        pins[str(artifact)] = digest(artifact)
+        saved.append(
+            dict(
+                frame=frame,
+                artifact=artifact.name,
+                phase_after=predicted["phase_after"],
+                copied_next_frame=predicted["copied_next_frame"],
+                actual_completed_control=predicted["actual_completed_control"],
+                donor_stream_hash=predicted["donor_stream_hash"],
+                copied_stream_after_hash=predicted["copied_stream_after_hash"],
+            )
+        )
+        write_once(a.output / f"forecast-{frame:03d}.json", saved[-1])
+
+    row, actual = evaluate_episode(
+        model=model,
+        assets=assets,
+        policy_types=types,
+        course=tuple(reference["course"]),
+        parameters=reference["parameters"],
+        hard_limits=np.array(G1_HARD_TORQUE_LIMITS),
+        velocity_boundary_probe=probe,
+    )
+    artifact = a.output / "actual-unvalidated.npz"
+    np.savez_compressed(artifact, **actual)
+    pins[str(artifact)] = digest(artifact)
+    write_once(a.output / "actual-unvalidated.json", row)
+    if (
+        row["controls"] != 360
+        or row["native_steps"] != 3600
+        or row["healthy_full_horizon"] is not True
+        or row["entry_control"] != 77
+        or [r["frame"] for r in saved] != list(frames)
+    ):
+        raise ValueError("same full healthy actual episode and five pre-kick NN probes required")
+    original = a.reference_record.parent / reference["artifact"]["path"]
+    if pins.get(str(original)) != digest(original):
+        raise ValueError("original comparator arrays changed")
+    with np.load(original, allow_pickle=False) as old:
+        if set(old.files) != set(actual) or any(
+            not np.array_equal(old[k], v) for k, v in actual.items()
+        ):
+            raise ValueError("velocity NN forecasts changed original whole actual trajectory")
+    for record in saved:
+        frame = record["frame"]
+        with np.load(a.output / record["artifact"], allow_pickle=False) as forecast:
+            if any(
+                not np.array_equal(forecast[k], actual[k][frame * 10 : (frame + 1) * 10])
+                for k in ("qpos", "qvel", "torque", "ball_forces")
+            ) or not np.array_equal(forecast["joint_target"], actual["joint_targets"][frame]):
+                raise ValueError("copied velocity NN/native future differs from actual execution")
+            if not np.array_equal(forecast["observation"][6:9], actual["commands"][frame]):
+                raise ValueError("copied current command differs from actual control")
+        if record["actual_completed_control"] != frame or record["copied_next_frame"] != frame + 1:
+            raise ValueError("velocity NN forecast reset or fabricated the absolute gait clock")
+    assert forecaster is not None
+    counters = forecaster.counters()
+    if counters != dict(
+        forecast_calls=5,
+        attempted_native_steps=50,
+        integrated_native_steps=50,
+        maximum_native_steps=50,
+        future_velocity_nn_calls=5,
+    ):
+        raise ValueError("all five copied velocity NN and native calls must be charged")
+    check_pins(pins)
+    clean(a.expected_head)
+    write_once(
+        a.output / "complete.json",
+        dict(
+            status="CURRENT_VELOCITY_NN_ONE_CONTROL_NATIVE_FUTURES_EXACT",
+            source_head=a.expected_head,
+            input_file_hashes=pins,
+            declaration_hash=digest(a.output / "declaration.json"),
+            model_hash=model_hash,
+            actual_record=row,
+            probes=saved,
+            actual_worlds=1,
+            actual_native_steps=3600,
+            forecasts=counters,
+            original_whole_actual_trajectory_unchanged=True,
+            phase_or_action_history_reset=False,
+            future_skill_switch_prediction_qualified=False,
+            task_effectiveness_proven=False,
+            neural_optimizer_updates=0,
+            hardware_authorized=False,
+            promotion_authorized=False,
+            goal_complete=False,
+        ),
+    )
+
+
+if __name__ == "__main__":
+    main()

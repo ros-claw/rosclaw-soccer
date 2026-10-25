@@ -3,6 +3,7 @@
 import contextlib
 import io
 from collections import deque
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -27,6 +28,7 @@ def evaluate_episode(
     player_type: Any = SharedRoboNaldoPlayer,
     post_contact_exit: bool = False,
     protect_passing_entry_prediction: bool = False,
+    velocity_boundary_probe: Callable[..., None] | None = None,
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     """No copied rollout state or action playback; every call creates fresh NN state.
 
@@ -42,6 +44,8 @@ def evaluate_episode(
         type(post_contact_exit) is not bool
         or type(protect_passing_entry_prediction) is not bool
         or (protect_passing_entry_prediction and not post_contact_exit)
+        or (velocity_boundary_probe is not None and not callable(velocity_boundary_probe))
+        or (velocity_boundary_probe is not None and post_contact_exit)
     ):
         raise ValueError("explicit post-contact exit research switch required")
     fast = assets.get("experimental_fast", False)
@@ -217,6 +221,8 @@ def evaluate_episode(
             assert shadow is not None
             target = shadow
         elif kick is None:
+            if velocity_boundary_probe is not None:
+                velocity_boundary_probe(stream=stream, world=w, command=command.copy(), frame=frame)
             target = stream.propose(q, v, lo.angular_velocity_body(d), command, frame=frame)
         else:
             target = kick.propose()[0]
