@@ -71,6 +71,7 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
             2,
             20,
             36,
+            59,
         ):
             raise ValueError("explicit bounded additional command-candidate protocol required")
         if self.extra_candidate_ceiling and (
