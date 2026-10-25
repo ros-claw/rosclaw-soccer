@@ -90,8 +90,11 @@ def main():
     pins[str(a.pilot / "declaration.json")] = report["declaration_hash"]
     declaration = json.loads((a.pilot / "declaration.json").read_text())
     expanded = report.get("expanded_public_validation", False)
+    perturbed = report.get("perturbed_public_validation", False)
     if type(expanded) is not bool or (expanded and not full_window):
         raise ValueError("explicit full-window expanded public protocol required")
+    if type(perturbed) is not bool or (perturbed and not expanded):
+        raise ValueError("explicit local robustness protocol required")
     expected_indices = (
         list(range(40)) if expanded else [b * 10 + j for b in range(4) for j in (0, 1, 2, 3)]
     )
@@ -157,6 +160,17 @@ def main():
     from rosclaw_soccer.rsi.walk_kick_teacher_audit import relabel_arrays
     from rosclaw_soccer.sim.contracts import hash_json
 
+    perturbed_courses = None
+    if perturbed:
+        from rosclaw_soccer.rsi.synergy_teacher_perturbations import declare_synergy_perturbations
+        from rosclaw_soccer.rsi.walk_kick_teacher_plan import search_course_bank
+
+        perturbed_courses, reconstructed = declare_synergy_perturbations(
+            search_course_bank(expanded_public=True), seed=2026102519
+        )
+        if hash_json(reconstructed) != hash_json(declaration["perturbation_declaration"]):
+            raise ValueError("whole perturbation declaration differs from frozen seed/domain")
+
     scene = [Path(k) for k in pins if k.endswith("/cached-standard/declared-scene.xml")]
     if len(scene) != 1:
         raise ValueError("one qualified body required")
@@ -209,16 +223,6 @@ def main():
             worlds += 1
             pair[arm], arrays[arm] = row, raw
         b, c = pair["B"], pair["C"]
-        if (
-            synergy
-            and result["course_index"] in [r["course_index"] for r in fitted["records"]]
-            and b["outcome"]["task_pass"]
-            and b["healthy_full_horizon"]
-        ):
-            innovations.append(
-                np.diff(arrays["B"]["joint_targets"][b["entry_control"] : 300], axis=0)
-            )
-            training_indices.append(result["course_index"])
         old_record_path = (
             a.shard_root[result["course_index"] % 4]
             / f"course-{result['course_index']:02d}"
@@ -227,15 +231,47 @@ def main():
         if pins.get(str(old_record_path)) != digest(old_record_path):
             raise ValueError("explicit pinned historical original record required")
         old_record = json.loads(old_record_path.read_text())
+        expected_course = (
+            list(perturbed_courses[result["course_index"]].course)
+            if perturbed
+            else old_record["course"]
+        )
+        if any(
+            row["course"] != expected_course
+            or row["parameters"] != old_record["parameters"]
+            or row["experimental_fast_approach"] != old_record["experimental_fast_approach"]
+            for row in (b, c)
+        ):
+            raise ValueError("actual course/unchanged source approach parameters differ")
         old_path = old_record_path.parent / old_record["artifact"]["path"]
         if digest(old_path) != old_record["artifact"]["hash"]:
             raise ValueError("historical original trajectory changed")
         pins[str(old_path)] = old_record["artifact"]["hash"]
         with np.load(old_path, allow_pickle=False) as old:
-            if set(old.files) != set(arrays["B"]) or any(
-                not np.array_equal(old[k], value) for k, value in arrays["B"].items()
+            if not perturbed and (
+                set(old.files) != set(arrays["B"])
+                or any(not np.array_equal(old[k], value) for k, value in arrays["B"].items())
             ):
                 raise ValueError("actual B differs from historical whole original trajectory")
+            if perturbed and np.array_equal(
+                old["qpos"][:10, layout.bq : layout.bq + 3],
+                arrays["B"]["qpos"][:10, layout.bq : layout.bq + 3],
+            ):
+                raise ValueError("new perturbed launch did not change actual initial ball state")
+            if synergy and result["course_index"] in [r["course_index"] for r in fitted["records"]]:
+                targets = old["joint_targets"] if perturbed else arrays["B"]["joint_targets"]
+                entry = old_record["entry_control"] if perturbed else b["entry_control"]
+                innovations.append(np.diff(targets[entry:300], axis=0))
+                training_indices.append(result["course_index"])
+        if b["entry_control"] != c["entry_control"]:
+            raise ValueError("paired actual skill entry differs")
+        if b["entry_control"] is not None:
+            entry = b["entry_control"]
+            for key in ("qpos", "qvel", "torque", "ball_forces"):
+                if not np.array_equal(
+                    arrays["B"][key][: entry * 10], arrays["C"][key][: entry * 10]
+                ):
+                    raise ValueError("paired actual pre-plan body prefix differs")
         events = c.get("controller_events", [])
         items = c.get("candidate_forecasts", [])
         if len(events) > 1 or c.get("changed_controls", 0) not in (0, 1):
@@ -420,11 +456,20 @@ def main():
             source_head=a.expected_head,
             data_synergy_fit_independently_recomputed=synergy,
             expanded_public_validation=expanded,
+            perturbed_public_validation=perturbed,
             qualified_on_expanded_public=(
                 expanded
+                and not perturbed
                 and len(rescues) >= 2
                 and not regressions
                 and sum(r["C"]["task_pass"] for r in results) >= 32
+            ),
+            qualified_on_local_perturbations=(
+                perturbed
+                and not regressions
+                and sum(r["C"]["task_pass"] for r in results) >= 32
+                and all(r["C_healthy"] for r in results)
+                and all(results[i]["C"]["task_pass"] for i in (0, 30))
             ),
             input_file_hashes=pins,
             results=results,

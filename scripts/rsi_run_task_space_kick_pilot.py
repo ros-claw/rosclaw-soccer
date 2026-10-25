@@ -19,6 +19,7 @@ def main():
     p.add_argument("--expand-40", action="store_true")
     p.add_argument("--expansion-gate", type=Path)
     p.add_argument("--expansion-gate-hash")
+    p.add_argument("--perturb-40", action="store_true")
     p.add_argument(
         "--interface",
         choices=(
@@ -46,6 +47,8 @@ def main():
     forecast_controls = 128 if full_window else 96
     if a.expand_40 and not full_window:
         raise ValueError("expanded validation requires the full-window teacher protocol")
+    if a.perturb_40 and not a.expand_40:
+        raise ValueError("local robustness requires explicit expanded40 protocol and its gate")
     course_count = 40 if a.expand_40 else 16
     world_cap, native_cap = 2 * course_count, 2 * course_count * 3600
     motion_timing = synergy or a.interface == "motion-timing"
@@ -107,8 +110,10 @@ def main():
             or not gate["qualified_for_expansion"]
             or gate["regressions"]
             or len(set(gate["rescues"])) < 2
-            or gate["actual_worlds"] != 32
+            or gate["actual_worlds"] != (80 if a.perturb_40 else 32)
             or gate["new_physical_steps"] != 0
+            or (a.perturb_40 and not gate.get("qualified_on_expanded_public", False))
+            or gate.get("perturbed_public_validation", False)
         ):
             raise ValueError("two distinct rescues and zero regression independent gate required")
         for key, value in gate["input_file_hashes"].items():
@@ -208,6 +213,11 @@ def main():
     types = _load_robonaldo(one("/policy/robonaldo/FreeKick.py").parents[2])
     courses = search_course_bank(expanded_public=True)
     preflight_receiving_courses(courses)
+    perturbation_declaration = None
+    if a.perturb_40:
+        from rosclaw_soccer.rsi.synergy_teacher_perturbations import declare_synergy_perturbations
+
+        courses, perturbation_declaration = declare_synergy_perturbations(courses, seed=2026102519)
     instances = []
 
     parent_type = (
@@ -248,6 +258,8 @@ def main():
             protocol="soccer.g2.bounded_contact_authority_pilot.v3",
             interface=a.interface,
             expanded_public_validation=a.expand_40,
+            perturbed_public_validation=a.perturb_40,
+            perturbation_declaration=perturbation_declaration,
             expansion_gate_hash=a.expansion_gate_hash if a.expand_40 else None,
             freeze_inadmissible_parent_joints=a.interface == "precontact-sparse",
             end_alignment_after_actual_first_foot=a.interface == "precontact-sparse",
@@ -371,12 +383,16 @@ def main():
             ).any():
                 raise ValueError("hard torque bound changed")
             if arm == "B":
-                with np.load(original_paths[index].parent / original["artifact"]["path"]) as old:
-                    if set(old.files) != set(arrays) or any(
-                        not np.array_equal(old[k], v) for k, v in arrays.items()
-                    ):
-                        raise ValueError("baseline differs from closed original raw physics")
-                row["exact_original_baseline"] = True
+                if not a.perturb_40:
+                    with np.load(
+                        original_paths[index].parent / original["artifact"]["path"]
+                    ) as old:
+                        if set(old.files) != set(arrays) or any(
+                            not np.array_equal(old[k], v) for k, v in arrays.items()
+                        ):
+                            raise ValueError("baseline differs from closed original raw physics")
+                row["exact_original_baseline"] = not a.perturb_40
+                row["new_perturbed_baseline_execution"] = a.perturb_40
             elif instances:
                 if len(instances) != 1:
                     raise ValueError("one private local controller required")
@@ -436,9 +452,12 @@ def main():
                         )
                     row["candidate_forecasts"] = saved
                 if controller.changed_controls == 0:
-                    with np.load(
-                        original_paths[index].parent / original["artifact"]["path"]
-                    ) as old:
+                    zero_reference = (
+                        folder / "B.npz"
+                        if a.perturb_40
+                        else original_paths[index].parent / original["artifact"]["path"]
+                    )
+                    with np.load(zero_reference) as old:
                         if any(not np.array_equal(old[k], v) for k, v in arrays.items()):
                             raise ValueError("zero/off branch altered the legacy trajectory")
             if worlds > world_cap or native > native_cap or forecast_attempted > forecast_cap:
@@ -503,11 +522,20 @@ def main():
             regressions=regressions,
             qualified_for_expansion=len(rescues) >= 2 and not regressions,
             expanded_public_validation=a.expand_40,
+            perturbed_public_validation=a.perturb_40,
             qualified_on_expanded_public=(
                 a.expand_40
+                and not a.perturb_40
                 and len(rescues) >= 2
                 and not regressions
                 and sum(r["arms"]["C"]["task_pass"] for r in results) >= 32
+            ),
+            qualified_on_local_perturbations=(
+                a.perturb_40
+                and not regressions
+                and sum(r["arms"]["C"]["task_pass"] for r in results) >= 32
+                and all(r["arms"]["C"]["healthy"] for r in results)
+                and all(results[i]["arms"]["C"]["task_pass"] for i in (0, 30))
             ),
             optimizer_updates=0,
             physical_teacher_qualified=False,
