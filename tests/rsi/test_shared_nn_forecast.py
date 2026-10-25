@@ -209,10 +209,15 @@ def test_preproposal_cannot_overwrite_first_action_or_use_pending_history(tmp_pa
     assert f.counters()["attempted_native_steps"] == 0
 
 
-def test_conditioned_reference_forecast_equals_actual_selected_plan(tmp_path):
+@pytest.mark.parametrize("kind", ["timing", "synergy"])
+def test_conditioned_reference_forecast_equals_actual_selected_plan(tmp_path, kind):
     from rosclaw_soccer.rsi.motion_reference_timing import (
         MotionTimingPlan,
         condition_motion_reference,
+    )
+    from rosclaw_soccer.rsi.motion_synergy_reference import (
+        MotionSynergyPlan,
+        condition_synergy_reference,
     )
 
     p, f = setup(tmp_path)
@@ -225,11 +230,18 @@ def test_conditioned_reference_forecast_equals_actual_selected_plan(tmp_path):
     policy.motion_joint_vel = np.repeat(2 * t * 0.001, 29, axis=1)
     policy.motion_body_pos = np.zeros((100, 2, 3))
     policy.motion_body_quat = np.tile([1.0, 0.0, 0.0, 0.0], (100, 2, 1))
-    plan = MotionTimingPlan(2, 24, 3.0)
+    plan = (
+        MotionTimingPlan(2, 24, 3.0)
+        if kind == "timing"
+        else MotionSynergyPlan(2, ((0.01,) * 29,), ((0.01,), (-0.01,)))
+    )
     before = policy_state_hash(policy)
     predicted = f.forecast(controls=4, before_proposal=True, reference_plan=plan)
     assert before == policy_state_hash(policy)
-    condition_motion_reference(policy, plan)
+    if kind == "timing":
+        condition_motion_reference(policy, plan)
+    else:
+        condition_synergy_reference(policy, plan)
     records = []
     for _ in range(4):
         target, _ = p.propose()

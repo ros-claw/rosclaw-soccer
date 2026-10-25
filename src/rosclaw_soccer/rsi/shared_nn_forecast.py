@@ -15,6 +15,10 @@ from typing import Any
 import numpy as np
 
 from rosclaw_soccer.rsi.motion_reference_timing import MotionTimingPlan, condition_motion_reference
+from rosclaw_soccer.rsi.motion_synergy_reference import (
+    MotionSynergyPlan,
+    condition_synergy_reference,
+)
 from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
 from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
 from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
@@ -181,7 +185,7 @@ class SharedNNForecaster:
         first_target: np.ndarray | None = None,
         first_action_history: np.ndarray | None = None,
         before_proposal: bool = False,
-        reference_plan: MotionTimingPlan | None = None,
+        reference_plan: MotionTimingPlan | MotionSynergyPlan | None = None,
     ) -> dict[str, Any]:
         import mujoco
 
@@ -214,8 +218,14 @@ class SharedNNForecaster:
         )
         before = policy_state_hash(source.policy)
         policy = copy_sim_policy(source.policy)
+        reference_applied = False
         if reference_plan is not None:
-            condition_motion_reference(policy, reference_plan)
+            if type(reference_plan) is MotionSynergyPlan:
+                reference_applied = condition_synergy_reference(policy, reference_plan)["applied"]
+            elif isinstance(reference_plan, MotionTimingPlan):
+                reference_applied = condition_motion_reference(policy, reference_plan)["applied"]
+            else:
+                raise ValueError("explicit supported data-only reference plan required")
         # A pre-proposal fork has no target/history to rewind. The first NN call
         # will be made below on the owned world's measured body, exactly once.
         parent_target = np.zeros(29, np.float64)
@@ -309,8 +319,7 @@ class SharedNNForecaster:
             body_failed=owned.failed,
             donor_software_unchanged=True,
             before_proposal=before_proposal,
-            reference_conditioned=reference_plan is not None
-            and reference_plan.peak_shift_frames != 0,
+            reference_conditioned=reference_applied,
             prediction_is_not_actual_execution=True,
             promotion_authorized=False,
             hardware_authorized=False,

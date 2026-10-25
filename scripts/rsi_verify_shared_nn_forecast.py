@@ -12,6 +12,8 @@ def main():
     p.add_argument("--effect-review-hash", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--pre-proposal-96", action="store_true")
+    p.add_argument("--synergy-model", type=Path)
+    p.add_argument("--synergy-model-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -25,6 +27,15 @@ def main():
         raise ValueError("closed physical effect analysis required")
     pins = dict(review["input_file_hashes"])
     pins[str(a.effect_review)] = a.effect_review_hash
+    synergy_model = None
+    if a.synergy_model is not None:
+        if not a.pre_proposal_96 or digest(a.synergy_model) != a.synergy_model_hash:
+            raise ValueError("exact synergy model and explicit pre-proposal protocol required")
+        synergy_model = json.loads(a.synergy_model.read_text())
+        if synergy_model["status"] != "PUBLIC_EXECUTED_MOTION_SYNERGIES_FITTED":
+            raise ValueError("executed public motion subspace required")
+        pins.update(synergy_model["input_file_hashes"])
+        pins[str(a.synergy_model)] = a.synergy_model_hash
     if pins.get(str(a.reference_record)) != digest(a.reference_record):
         raise ValueError("explicit pinned original trajectory required")
     reference = json.loads(a.reference_record.read_text())
@@ -45,6 +56,10 @@ def main():
     from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
 
     from rosclaw_soccer.rsi.experimental_velocity_evidence import admit_heading_evidence
+    from rosclaw_soccer.rsi.motion_synergy_reference import (
+        MotionSynergyPlan,
+        condition_synergy_reference,
+    )
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
     from rosclaw_soccer.rsi.shared_nn_forecast import SharedNNForecaster
     from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
@@ -82,6 +97,16 @@ def main():
     frames = (80, 100, 150, 220)
     horizon = 96 if a.pre_proposal_96 else 64
     forecast_budget = len(frames) * horizon * 10
+    basis_isaac = None
+    if synergy_model is not None:
+        with np.load(
+            a.synergy_model.parent / synergy_model["artifact"]["path"], allow_pickle=False
+        ) as raw:
+            basis_hg = raw["basis_hg"]
+        if basis_hg.shape != (6, 29):
+            raise ValueError("rank6 motion subspace required")
+        basis_isaac = np.zeros_like(basis_hg)
+        basis_isaac[:, types[3]] = basis_hg
 
     class Probe(SharedRoboNaldoPlayer):
         def __init__(self, *args, **kwargs):
@@ -94,6 +119,17 @@ def main():
             )
             self.predictions = []
             instances.append(self)
+
+        def install_measured_entry(self, samples, *, reference_frame):
+            receipt = super().install_measured_entry(samples, reference_frame=reference_frame)
+            if basis_isaac is not None:
+                plan = MotionSynergyPlan(
+                    reference_frame,
+                    tuple(tuple(float(x) for x in r) for r in basis_isaac),
+                    ((0.01, 0.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)),
+                )
+                condition_synergy_reference(self.policy, plan)
+            return receipt
 
         def propose(self):
             if a.pre_proposal_96 and self.world.control_steps in frames:
@@ -115,12 +151,14 @@ def main():
             probes=frames,
             controls_per_probe=horizon,
             before_proposal=a.pre_proposal_96,
-            reference_conditioning="OFF_original_arrays",
+            reference_conditioning="synergy_nonzero"
+            if synergy_model is not None
+            else "OFF_original_arrays",
             actual_worlds=1,
             actual_native_step_ceiling=3600,
             forecast_native_step_ceiling=forecast_budget,
             every_future_target_and_native_array_must_match=True,
-            no_changed_targets=True,
+            no_changed_targets=synergy_model is None,
             copied_history_no_enter_or_reset=True,
             optimizer_updates=0,
             teacher_effectiveness_proven=False,
@@ -163,10 +201,15 @@ def main():
         )
         pins[str(artifact)] = digest(artifact)
     with np.load(a.reference_record.parent / reference["artifact"]["path"]) as old:
-        if set(old.files) != set(arrays) or any(
-            not np.array_equal(old[k], v) for k, v in arrays.items()
-        ):
+        same = set(old.files) == set(arrays) and all(
+            np.array_equal(old[k], v) for k, v in arrays.items()
+        )
+        if synergy_model is None and not same:
             raise ValueError("owned forecasts changed original actual whole trajectory")
+        if synergy_model is not None and same:
+            raise ValueError(
+                "nonzero reference qualification did not change actual whole trajectory"
+            )
     artifact = a.output / "actual.npz"
     np.savez_compressed(artifact, **arrays)
     pins[str(artifact)] = digest(artifact)
@@ -175,9 +218,15 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status=f"G1_COPIED_NN_CLOSED_LOOP_{horizon}_CONTROL_FORECASTS_EXACT",
+            status=(
+                f"G1_COPIED_NN_CLOSED_LOOP_{horizon}_CONTROL_FORECASTS_EXACT"
+                if synergy_model is None
+                else "G1_SYNERGY_REFERENCE_NN_FUTURES_EXACT"
+            ),
             before_proposal=a.pre_proposal_96,
-            reference_conditioning="OFF_original_arrays",
+            reference_conditioning="synergy_nonzero"
+            if synergy_model is not None
+            else "OFF_original_arrays",
             source_head=a.expected_head,
             input_file_hashes=pins,
             actual_record=row,
@@ -185,7 +234,7 @@ def main():
             actual_native_steps=row["native_steps"],
             forecasts=probe.predictor.counters(),
             all_future_nn_targets_and_native_arrays_exact=True,
-            actual_whole_trajectory_unchanged=True,
+            actual_whole_trajectory_unchanged=synergy_model is None,
             teacher_effectiveness_proven=False,
             optimizer_updates=0,
             promotion_authorized=False,
