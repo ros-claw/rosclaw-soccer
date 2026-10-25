@@ -23,6 +23,9 @@ def main():
     p.add_argument("--target-qualification", type=Path)
     p.add_argument("--target-qualification-hash")
     p.add_argument("--target-feasible-axes", action="store_true")
+    p.add_argument("--actuated-task-response", action="store_true")
+    p.add_argument("--task-qualification-audit", type=Path)
+    p.add_argument("--task-qualification-audit-hash")
     p.add_argument("--motor-memory", type=Path)
     p.add_argument("--motor-memory-hash")
     p.add_argument("--memory-nominal-16", action="store_true")
@@ -34,9 +37,36 @@ def main():
         raise ValueError("nominal transfer is an explicit fixed-memory study")
     if memory != (a.motor_memory_hash is not None):
         raise ValueError("explicit memory artifact and exact hash required together")
-    if a.target_feasible_axes and not a.executed_target_search:
+    if a.target_feasible_axes and not (a.executed_target_search or a.actuated_task_response):
         raise ValueError("explicit executed-target study required for per-axis feasibility")
-    if sum((a.aim_command_search, a.sequential_restoration, a.executed_target_search, memory)) > 1:
+    if a.actuated_task_response and not a.target_feasible_axes:
+        raise ValueError("actual-task response requires the qualified per-axis interface")
+    if a.actuated_task_response and any(
+        value is None
+        for value in (
+            a.target_qualification,
+            a.target_qualification_hash,
+            a.task_qualification_audit,
+            a.task_qualification_audit_hash,
+        )
+    ):
+        raise ValueError("actual-task direction qualification and independent readback required")
+    if not a.actuated_task_response and (
+        a.task_qualification_audit is not None or a.task_qualification_audit_hash is not None
+    ):
+        raise ValueError("task-axis audit belongs only to the explicit actual-task protocol")
+    if (
+        sum(
+            (
+                a.aim_command_search,
+                a.sequential_restoration,
+                a.executed_target_search,
+                memory,
+                a.actuated_task_response,
+            )
+        )
+        > 1
+    ):
         raise ValueError("one explicit teacher mechanism per pilot required")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -45,8 +75,18 @@ def main():
 
     clean(a.expected_head)
     from rosclaw_soccer.rsi.partial_motor_memory import NOMINAL_MEMORY_TRANSFER_INDICES
+    from scripts.rsi_actuated_task_pilot_common import (
+        ACTUATED_INDICES,
+        admit_actuated_qualification,
+    )
 
-    indices = NOMINAL_MEMORY_TRANSFER_INDICES if a.memory_nominal_16 else INDICES
+    indices = (
+        ACTUATED_INDICES
+        if a.actuated_task_response
+        else NOMINAL_MEMORY_TRANSFER_INDICES
+        if a.memory_nominal_16
+        else INDICES
+    )
     world_ceiling = 2 * len(indices)
     native_ceiling = 3600 * world_ceiling
     if a.output.exists():
@@ -116,9 +156,18 @@ def main():
             raise ValueError("unchanged reference and exact actual composite futures required")
         merge_pins(pins, qualified["input_file_hashes"])
         pins[str(path)] = a.target_qualification_hash
+    if a.actuated_task_response:
+        admit_actuated_qualification(
+            a.target_qualification,
+            a.target_qualification_hash,
+            a.task_qualification_audit,
+            a.task_qualification_audit_hash,
+            pins,
+        )
     audit = json.loads(a.champion_audit.read_text())
     if (
-        audit.get("perturbed_public_validation", False) != (not a.memory_nominal_16)
+        audit.get("perturbed_public_validation", False)
+        != (not (a.memory_nominal_16 or a.actuated_task_response))
         or audit["actual_worlds"] != 80
     ):
         raise ValueError("exact declared nominal/perturbed consumed40 champion source required")
@@ -153,6 +202,7 @@ def main():
         check_pins(pins)
     import numpy as np
 
+    from rosclaw_soccer.rsi.actuated_response_kick_player import ActuatedResponseKickPlayer
     from rosclaw_soccer.rsi.aim_command_kick_player import (
         AimCommandKickPlayer,
         declared_aim_commands,
@@ -178,7 +228,9 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="soccer.partial_motor_memory_nominal16_transfer.v1"
+            protocol="soccer.full_nn_actuated_task_response_nominal6.v1"
+            if a.actuated_task_response
+            else "soccer.partial_motor_memory_nominal16_transfer.v1"
             if a.memory_nominal_16
             else "soccer.partial_motor_memory_source_retrieval.v1"
             if memory
@@ -193,6 +245,8 @@ def main():
             development_bank_is_consumed=True,
             aim_command_search=a.aim_command_search,
             executed_target_search=a.executed_target_search,
+            actuated_task_response=a.actuated_task_response,
+            task_qualification_audit_hash=a.task_qualification_audit_hash,
             executed_target_projection_mode="per_axis"
             if a.target_feasible_axes or memory
             else "whole_tick",
@@ -213,12 +267,15 @@ def main():
             require_observed_ghost_progress_for_new_center=a.sequential_restoration,
             forecast_controls=128,
             controls_retention_indices=[0, 30],
-            failure_indices=[2, 8, 22, 27],
+            failure_indices=[2, 6, 8, 21] if a.actuated_task_response else [2, 8, 22, 27],
             old_candidate_ceiling=37,
             new_candidate_ceiling=candidate_cap,
             new_probe_axes=None if memory else 6 if a.executed_target_search else 29,
             new_probe_signs=None if a.executed_target_search or memory else [-1, 1],
-            probe_reference_rad=None if a.executed_target_search or memory else 0.03,
+            probe_reference_rad=None
+            if a.executed_target_search or memory or a.actuated_task_response
+            else 0.03,
+            probe_actual_target_rad=0.03 if a.actuated_task_response else None,
             proposal_l1_trust_rad=None if a.executed_target_search or memory else 0.06,
             proposal_axis_trust_rad=0.06 if a.executed_target_search or memory else 0.03,
             temporal_lobe="typed_frozen_memory_options"
@@ -228,7 +285,9 @@ def main():
             else "first24intervals_only",
             second_lobe_coefficients_zero=not (a.executed_target_search or memory),
             old_success_branch_must_not_search_new_actions=True,
-            new_research_direction="frozen_partial_options_current_body_retrieval"
+            new_research_direction="task_derived_HG29_actual_target_response_not_PCA_or_reference"
+            if a.actuated_task_response
+            else "frozen_partial_options_current_body_retrieval"
             if memory
             else "actual_HG29_target_authority_not_reference_input"
             if a.executed_target_search
@@ -254,6 +313,8 @@ def main():
             class Controlled(
                 PartialMemoryKickPlayer
                 if memory and arm == "C"
+                else ActuatedResponseKickPlayer
+                if a.actuated_task_response and arm == "C"
                 else ExecutedSynergyKickPlayer
                 if a.executed_target_search and arm == "C"
                 else AimCommandKickPlayer
@@ -267,6 +328,7 @@ def main():
                     and not a.aim_command_search
                     and not a.executed_target_search
                     and not memory
+                    and not a.actuated_task_response
                 )
                 joint_response_iterations = 4 if a.sequential_restoration and arm == "C" else 1
                 target_projection_mode = (
@@ -289,9 +351,38 @@ def main():
                 hard_limits=context["hard_limits"],
                 player_type=Controlled,
             )
+            if a.actuated_task_response:
+                # Preserve charged physical output even if a later assertion fails.
+                np.savez_compressed(folder / f"{arm}-unvalidated.npz", **arrays)
             if len(instances) != 1:
                 raise ValueError("one privately owned actual teacher required")
             ctrl = instances[0]
+            if a.actuated_task_response:
+                for j, (_, forecast) in enumerate(ctrl.candidate_predictions):
+                    np.savez_compressed(
+                        folder / f"{arm}-forecast-{j:02d}-unvalidated.npz",
+                        **{
+                            k: forecast[k]
+                            for k in (
+                                "qpos",
+                                "qvel",
+                                "torque",
+                                "ball_forces",
+                                "joint_targets",
+                                "policy_ticks",
+                            )
+                        },
+                    )
+                write_once(
+                    folder / f"{arm}-unvalidated.json",
+                    dict(
+                        actual_record=row,
+                        controller_events=ctrl.events,
+                        actual_target_edits=getattr(ctrl, "target_edits", []),
+                        forecasts=ctrl.forecaster.counters(),
+                        validation_complete=False,
+                    ),
+                )
             if arm == "B":
                 ap = rp.parent / old["artifact"]["path"]
                 if pins.get(str(ap)) != digest(ap):
@@ -342,7 +433,7 @@ def main():
                         requested_controls=forecast["requested_controls"],
                         **(
                             dict(target_edits=forecast["executed_target_edits"])
-                            if a.executed_target_search or memory
+                            if a.executed_target_search or memory or a.actuated_task_response
                             else {}
                         ),
                     )
@@ -361,7 +452,7 @@ def main():
                 desired_command_world_point=ctrl.goal.tolist(),
                 **(
                     dict(actual_target_edits=getattr(ctrl, "target_edits", []))
-                    if a.executed_target_search or memory
+                    if a.executed_target_search or memory or a.actuated_task_response
                     else {}
                 ),
             )
@@ -400,7 +491,9 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="FULL_NN_PARTIAL_MEMORY_RETRIEVAL_COMPLETE"
+            status="FULL_NN_ACTUATED_TASK_RESPONSE_PILOT_COMPLETE"
+            if a.actuated_task_response
+            else "FULL_NN_PARTIAL_MEMORY_RETRIEVAL_COMPLETE"
             if memory
             else "FULL_NN_EXECUTED_TARGET_PILOT_COMPLETE"
             if a.executed_target_search
@@ -421,6 +514,7 @@ def main():
             neural_optimizer_updates=0,
             physical_teacher_qualified=False,
             memory_nominal_transfer=a.memory_nominal_16,
+            actuated_task_response=a.actuated_task_response,
             memory_retrieval_is_not_independent_generalization=memory,
             hardware_authorized=False,
             promotion_authorized=False,

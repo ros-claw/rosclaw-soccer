@@ -157,23 +157,38 @@ def main():
     sequential = dec.get("sequential_restoration", False)
     aim = dec.get("aim_command_search", False)
     executed = dec.get("executed_target_search", False)
+    actuated = dec.get("actuated_task_response", False)
     memory = dec.get("partial_motor_memory", False)
     nominal = dec.get("memory_nominal_transfer", False)
     if type(nominal) is not bool or (nominal and not memory):
         raise ValueError("explicit nominal transfer scope only for fixed memory required")
     from rosclaw_soccer.rsi.partial_motor_memory import NOMINAL_MEMORY_TRANSFER_INDICES
+    from scripts.rsi_actuated_task_pilot_common import (
+        ACTUATED_INDICES,
+        admit_actuated_qualification,
+        descriptor_plan,
+        verify_actuated_response,
+    )
 
-    indices = list(NOMINAL_MEMORY_TRANSFER_INDICES) if nominal else [0, 2, 8, 22, 27, 30]
+    indices = (
+        list(ACTUATED_INDICES)
+        if actuated
+        else list(NOMINAL_MEMORY_TRANSFER_INDICES)
+        if nominal
+        else [0, 2, 8, 22, 27, 30]
+    )
     world_ceiling = 2 * len(indices)
     native_ceiling = 3600 * world_ceiling
     projection = dec.get("executed_target_projection_mode", "whole_tick")
     if memory and projection != "per_axis":
         raise ValueError("memory target requires its qualified per-axis interface")
+    if actuated and projection != "per_axis":
+        raise ValueError("actual-task response requires its qualified per-axis interface")
     if executed and projection not in ("whole_tick", "per_axis"):
         raise ValueError("explicit executed-target projection contract required")
     if (
-        any(type(v) is not bool for v in (sequential, aim, executed, memory))
-        or sum((sequential, aim, executed, memory)) > 1
+        any(type(v) is not bool for v in (sequential, aim, executed, memory, actuated))
+        or sum((sequential, aim, executed, memory, actuated)) > 1
     ):
         raise ValueError("explicit boolean response protocol required")
     candidate_cap = 39 if memory else 73 if executed else 57 if aim else 273 if sequential else 96
@@ -193,7 +208,9 @@ def main():
     if (
         report["status"]
         != (
-            "FULL_NN_PARTIAL_MEMORY_RETRIEVAL_COMPLETE"
+            "FULL_NN_ACTUATED_TASK_RESPONSE_PILOT_COMPLETE"
+            if actuated
+            else "FULL_NN_PARTIAL_MEMORY_RETRIEVAL_COMPLETE"
             if memory
             else "FULL_NN_EXECUTED_TARGET_PILOT_COMPLETE"
             if executed
@@ -225,6 +242,32 @@ def main():
     pins[str(cp)], pins[str(dp)] = a.pilot_hash, report["declaration_hash"]
     source_pins(pins)
     check_pins(pins)
+    if actuated:
+        from scripts.rsi_native_fresh_common import receipt
+
+        qp, _ = receipt(pins, dec["target_qualification_hash"])
+        ap, _ = receipt(pins, dec["task_qualification_audit_hash"])
+        admit_actuated_qualification(
+            qp, dec["target_qualification_hash"], ap, dec["task_qualification_audit_hash"], pins
+        )
+        if any(
+            dec.get(k) != v
+            for k, v in dict(
+                protocol="soccer.full_nn_actuated_task_response_nominal6.v1",
+                failure_indices=[2, 6, 8, 21],
+                new_candidate_ceiling=96,
+                new_probe_axes=29,
+                new_probe_signs=[-1, 1],
+                probe_reference_rad=None,
+                probe_actual_target_rad=0.03,
+                proposal_axis_trust_rad=0.03,
+                proposal_l1_trust_rad=0.06,
+                maximum_response_rounds=1,
+                second_lobe_coefficients_zero=True,
+                temporal_lobe="first24intervals_only",
+            ).items()
+        ):
+            raise ValueError("fixed nominal actual-target one-shot pilot declaration differs")
     from scripts.rsi_review_motion_timing_teacher import verify_synergy_search
     from scripts.rsi_teacher_physics_context import load_teacher_context
 
@@ -272,7 +315,7 @@ def main():
 
     lo = context["layout"]
     codec = None
-    if executed or memory:
+    if executed or memory or actuated:
         from importlib import import_module
 
         import yaml
@@ -313,6 +356,8 @@ def main():
     champion = json.loads(original_cp.read_text())
     if memory and champion.get("perturbed_public_validation", False) != (not nominal):
         raise ValueError("nominal transfer may not be relabeled from the perturbed source bank")
+    if actuated and champion.get("perturbed_public_validation", False):
+        raise ValueError("nominal actual-target study cannot substitute perturbed source cases")
 
     def record(path, expected, root):
         if not path.resolve().is_relative_to(root.resolve()) or digest(path) != expected:
@@ -444,7 +489,7 @@ def main():
                 )
                 peaks.append(float(pred["ball_forces"][:, 0, 2].max()))
                 forecasts.append(pred)
-                if executed or memory:
+                if executed or memory or actuated:
                     if (
                         memory
                         and arm == "C"
@@ -462,11 +507,21 @@ def main():
                                 list(r) for r in remembered.coefficients
                             ]:
                                 raise ValueError("frozen memory target coefficients differ")
-                        plan = ExecutedTargetSynergy(
-                            frame,
-                            tuple(tuple(float(x) for x in r) for r in context["basis"]),
-                            tuple(tuple(float(x) for x in r) for r in windows[-1]["coefficients"]),
-                            projection_mode=projection,
+                        plan = (
+                            descriptor_plan(
+                                event["additional_candidate_search"]["candidate_plans"][j - 37],
+                                windows[-1],
+                                frame,
+                            )
+                            if actuated
+                            else ExecutedTargetSynergy(
+                                frame,
+                                tuple(tuple(float(x) for x in r) for r in context["basis"]),
+                                tuple(
+                                    tuple(float(x) for x in r) for r in windows[-1]["coefficients"]
+                                ),
+                                projection_mode=projection,
+                            )
                         )
                         verify_target_edits(
                             f["target_edits"],
@@ -490,6 +545,8 @@ def main():
                 expected = 1 if windows[0]["outcome"]["window_pass"] else 37
                 if len(windows) != expected or event["joint_task_response"] is not None:
                     raise ValueError("old qualified branch must prohibit new search")
+            elif actuated:
+                verify_actuated_response(windows, forecasts, event, row["entry_control"])
             elif memory:
                 if len(windows) != 39 or event["joint_task_response"] is not None:
                     raise ValueError("exact two frozen memory candidates required")
@@ -635,7 +692,7 @@ def main():
                 "parent"
                 if not chosen
                 else "executed-target"
-                if (executed and chosen >= 37) or memory_target
+                if ((executed or actuated) and chosen >= 37) or memory_target
                 else "aim-command"
                 if (aim and chosen >= 37) or memory_aim
                 else "joint-reference"
@@ -682,8 +739,8 @@ def main():
                     )
                 ):
                     raise ValueError("installed aim command modified measurements/history/task")
-            if executed or memory:
-                target_chosen = (executed and chosen >= 37) or memory_target
+            if executed or memory or actuated:
+                target_chosen = ((executed or actuated) and chosen >= 37) or memory_target
                 if event["original_actual_target_authority_unchanged"] != (not target_chosen):
                     raise ValueError("actual target authority was mislabeled as unchanged NN")
                 if target_chosen:
@@ -700,11 +757,19 @@ def main():
                     if installation.get("projection_mode", "whole_tick") != projection:
                         raise ValueError("installed target projection mode differs")
                     coeff = windows[chosen]["coefficients"]
-                    plan = ExecutedTargetSynergy(
-                        row["entry_control"],
-                        tuple(tuple(float(x) for x in r) for r in context["basis"]),
-                        (tuple(coeff[0]), tuple(coeff[1])),
-                        projection_mode=projection,
+                    plan = (
+                        descriptor_plan(
+                            event["additional_candidate_search"]["candidate_plans"][chosen - 37],
+                            windows[chosen],
+                            row["entry_control"],
+                        )
+                        if actuated
+                        else ExecutedTargetSynergy(
+                            row["entry_control"],
+                            tuple(tuple(float(x) for x in r) for r in context["basis"]),
+                            (tuple(coeff[0]), tuple(coeff[1])),
+                            projection_mode=projection,
+                        )
                     )
                     verify_target_edits(
                         row["actual_target_edits"],
@@ -716,7 +781,7 @@ def main():
                     )
                 elif row["actual_target_edits"]:
                     raise ValueError("passing old branch must preserve complete old control path")
-            if chosen >= 37 and not aim and not executed and not memory:
+            if chosen >= 37 and not aim and not executed and not memory and not actuated:
                 installation = event["installation"]
                 if installation["hg_to_isaac"] != [int(j) for j in context["types"][3]] or any(
                     b["start_frame"] != row["admitted_reference_phase"]
@@ -775,7 +840,9 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="FULL_NN_PARTIAL_MEMORY_RAW_AND_RETRIEVAL_VERIFIED"
+            status="FULL_NN_ACTUATED_TASK_RESPONSE_RAW_AND_PHYSICAL_EXAM_VERIFIED"
+            if actuated
+            else "FULL_NN_PARTIAL_MEMORY_RAW_AND_RETRIEVAL_VERIFIED"
             if memory
             else "FULL_NN_EXECUTED_TARGET_RAW_AND_PHYSICAL_EXAM_VERIFIED"
             if executed
@@ -784,9 +851,10 @@ def main():
             else "FULL_NN_JOINT_TASK_RESPONSE_RAW_AND_PHYSICAL_EXAM_VERIFIED",
             aim_command_search=aim,
             executed_target_search=executed,
+            actuated_task_response=actuated,
             partial_motor_memory=memory,
             memory_nominal_transfer=nominal,
-            executed_target_projection_mode=projection if executed else None,
+            executed_target_projection_mode=projection if executed or actuated else None,
             sequential_restoration=sequential,
             source_head=a.expected_head,
             input_file_hashes=pins,
