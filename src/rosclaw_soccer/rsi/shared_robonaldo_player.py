@@ -82,6 +82,7 @@ class SharedRoboNaldoPlayer:
         self.boundary = world.control_steps
         self.pending: np.ndarray | None = None
         self.failed = False
+        self.retired = False
         self.proposals = 0
         self.commits = 0
         self.measured_entry_receipt: str | None = None
@@ -116,6 +117,7 @@ class SharedRoboNaldoPlayer:
         w._require_current_boundary()
         if (
             self.failed
+            or self.retired
             or self.proposals
             or self.pending is not None
             or self.boundary != w.control_steps
@@ -142,6 +144,46 @@ class SharedRoboNaldoPlayer:
         self.measured_entry_receipt = receipt
         return receipt
 
+    def retire_unexecuted_entry(self) -> dict[str, Any]:
+        """Release only an unused SIM skill; never clear a failure or reset a body.
+
+        This is not general hot replacement. Any proposal, commit, outstanding
+        target or stale boundary makes retirement ineligible. A retired adapter
+        stays terminal, while the world may admit a new private skill later.
+        PD switching and physical advancement remain the caller's explicit work.
+        """
+        from rosclaw_soccer.rsi.shared_episode_clock import absolute_control_frame
+
+        w, p = self.world, self.policy
+        w._require_current_boundary()
+        identities = (id(p), id(p.state_cmd), id(p.policy_output))
+        if (
+            self.failed
+            or self.retired
+            or self.proposals != 0
+            or self.commits != 0
+            or self.pending is not None
+            or self.boundary != w.control_steps
+            or w._private_policy_owners.get(self.prefix) != identities
+        ):
+            raise ValueError("only a healthy owned unexecuted current SIM entry can retire")
+        frame = absolute_control_frame(w, control_origin=self._forecast_control_origin)
+        del w._private_policy_owners[self.prefix]
+        self.retired = True
+        return dict(
+            schema="soccer.sim.unexecuted_entry_retirement.v1",
+            prefix=self.prefix,
+            absolute_control_frame=frame,
+            consumed_world_controls=w.control_steps,
+            entry_receipt=self.measured_entry_receipt,
+            proposals=0,
+            commits=0,
+            physics_unchanged=True,
+            pd_profile_unchanged=True,
+            adapter_terminal=True,
+            hardware_authorized=False,
+        )
+
     def _observe(self) -> tuple[np.ndarray, np.ndarray]:
         w, layout = self.world, self.layout
         q, v = layout.canonical(w.data)
@@ -160,7 +202,12 @@ class SharedRoboNaldoPlayer:
     def propose(self) -> tuple[np.ndarray, dict[str, Any]]:
         w, p = self.world, self.policy
         w._require_current_boundary()
-        if self.failed or self.pending is not None or self.boundary != w.control_steps:
+        if (
+            self.failed
+            or self.retired
+            or self.pending is not None
+            or self.boundary != w.control_steps
+        ):
             raise ValueError("one fresh proposal per unchanged healthy shared boundary required")
         if not np.array_equal(p.target_pos_w, self.goal):
             self.failed = True
@@ -197,7 +244,12 @@ class SharedRoboNaldoPlayer:
         )
 
     def commit(self) -> None:
-        if self.failed or self.pending is None or self.world.control_steps != self.boundary + 1:
+        if (
+            self.failed
+            or self.retired
+            or self.pending is None
+            or self.world.control_steps != self.boundary + 1
+        ):
             raise ValueError("exactly one shared physical control after proposal required")
         if not np.array_equal(self.pending, self.world.last_applied_target(self.prefix)):
             self.failed = True

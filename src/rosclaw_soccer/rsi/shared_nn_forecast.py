@@ -24,6 +24,7 @@ from rosclaw_soccer.rsi.motion_synergy_reference import (
     MotionSynergyPlan,
     condition_synergy_reference,
 )
+from rosclaw_soccer.rsi.shared_episode_clock import absolute_control_frame
 from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
 from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
 from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
@@ -130,6 +131,7 @@ def _fork_pending_player(
     ghost.boundary = world.control_steps
     ghost.pending = None if player.pending is None else player.pending.copy()
     ghost.failed = False
+    ghost.retired = False
     ghost.proposals, ghost.commits = player.proposals, player.commits
     ghost.measured_entry_receipt = player.measured_entry_receipt
     # Owned worlds count their own consumed controls from zero. Temporal motor
@@ -163,6 +165,7 @@ class SharedNNForecaster:
         if (
             type(player.policy) is not expected_policy_type
             or player.failed
+            or getattr(player, "retired", False)
             or len(world.layouts) != 1
             or world._torque_layer_owners
             or world.model.opt.integrator != mujoco.mjtIntegrator.mjINT_EULER
@@ -212,8 +215,12 @@ class SharedNNForecaster:
 
         source, donor = self.player, self.player.world
         donor._require_current_boundary()
+        frame = absolute_control_frame(
+            donor, control_origin=getattr(source, "_forecast_control_origin", 0)
+        )
         if (
             source.failed
+            or getattr(source, "retired", False)
             or type(before_proposal) is not bool
             or ((source.pending is None) != before_proposal)
             or source.boundary != donor.control_steps
@@ -362,7 +369,7 @@ class SharedNNForecaster:
             **arrays,
             joint_targets=np.stack(targets),
             policy_ticks=np.array(ticks, np.int64),
-            donor_control_frame=donor.control_steps,
+            donor_control_frame=frame,
             controls=len(records),
             requested_controls=controls,
             native_steps=owned.native_steps,

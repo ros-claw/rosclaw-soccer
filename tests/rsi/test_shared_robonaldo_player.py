@@ -96,6 +96,53 @@ def test_commit_requires_actual_control_and_unmodified_target():
     assert a.failed
 
 
+def test_retirement_releases_only_unused_owner_without_body_or_pd_change():
+    w = setup()
+    a, b = player(w), player(w, "b/")
+    before = (w.data.qpos.copy(), w.data.qvel.copy(), w.data.ctrl.copy(), w.data.time)
+    params = dict(w.parameters)
+    receipt = a.retire_unexecuted_entry()
+    assert receipt["adapter_terminal"] and not receipt["hardware_authorized"]
+    assert "a/" not in w._private_policy_owners
+    assert "b/" in w._private_policy_owners and not b.retired
+    assert w.control_steps == w.native_steps == 0
+    for observed, expected in zip((w.data.qpos, w.data.qvel, w.data.ctrl), before[:3], strict=True):
+        np.testing.assert_array_equal(observed, expected)
+    assert w.data.time == before[3]
+    assert all(w.parameters[k] is v for k, v in params.items())
+    with pytest.raises(ValueError, match="one fresh proposal"):
+        a.propose()
+    with pytest.raises(ValueError, match="one shared physical"):
+        a.commit()
+    with pytest.raises(ValueError, match="unexecuted"):
+        a.retire_unexecuted_entry()
+    fresh = player(w)
+    assert fresh.policy is not a.policy and not fresh.retired
+    fresh.propose()
+
+
+@pytest.mark.parametrize("defect", ["failed", "pending", "committed", "owner", "stale"])
+def test_retirement_cannot_clear_failure_or_discard_an_executed_proposal(defect):
+    w = setup()
+    a = player(w)
+    if defect == "failed":
+        a.failed = True
+    elif defect == "pending":
+        a.propose()
+    elif defect == "committed":
+        target, _ = a.propose()
+        w.advance({"a/": target, "b/": np.zeros(29)})
+        a.commit()
+    elif defect == "owner":
+        w._private_policy_owners["a/"] = (1, 2, 3)
+    else:
+        w.advance({"a/": np.zeros(29), "b/": np.zeros(29)})
+    owner = w._private_policy_owners["a/"]
+    with pytest.raises(ValueError, match="unexecuted"):
+        a.retire_unexecuted_entry()
+    assert w._private_policy_owners["a/"] == owner and not a.retired
+
+
 @pytest.mark.parametrize("defect", ["nan", "gain", "tick"])
 def test_invalid_policy_output_poisoned_without_physics(defect):
     w = setup()

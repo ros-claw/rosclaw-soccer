@@ -10,7 +10,12 @@ from test_shared_native_motor_world import source_xml
 
 from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters, SharedNativeMotorWorld
 from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
-from rosclaw_soccer.rsi.shared_nn_forecast import SharedNNForecaster, policy_state_hash
+from rosclaw_soccer.rsi.shared_nn_forecast import (
+    SharedNNForecaster,
+    _fork_pending_player,
+    copy_sim_policy,
+    policy_state_hash,
+)
 from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
 from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
 
@@ -131,6 +136,48 @@ def test_independent_forecast_copies_and_budget_enforcement(tmp_path):
     with pytest.raises(RuntimeError, match="exhausted"):
         f.forecast(controls=1)
     assert f.counters()["integrated_native_steps"] == 80
+
+
+def test_nested_owned_future_keeps_absolute_clock_without_faking_consumed_steps(tmp_path):
+    player, forecaster = setup(tmp_path)
+    donor = player.world
+    data = mujoco.MjData(donor.model)
+    mujoco.mj_copyData(data, donor.model, donor.data)
+    owned = SharedNativeMotorWorld(
+        donor.model, data, players=donor.parameters, ball_body_name="ball"
+    )
+    ghost = _fork_pending_player(player, owned, copy_sim_policy(player.policy))
+    nested = SharedNNForecaster(
+        ghost,
+        expected_policy_type=ForecastPolicy,
+        expected_model_hash=compiled_model_hash(donor.model),
+        native_step_budget=80,
+    )
+    expected, actual = forecaster.forecast(controls=4), nested.forecast(controls=4)
+    assert actual["donor_control_frame"] == expected["donor_control_frame"] == 1
+    assert donor.control_steps == 1 and owned.control_steps == 0
+    assert owned.data.time == donor.data.time
+    for key in ("qpos", "qvel", "torque", "ball_forces", "joint_targets", "policy_ticks"):
+        np.testing.assert_array_equal(actual[key], expected[key])
+    ghost._forecast_control_origin = 2
+    with pytest.raises(ValueError, match="uninterrupted native episode time"):
+        nested.forecast(controls=1)
+    assert nested.counters()["attempted_native_steps"] == 40
+
+
+def test_retired_player_cannot_make_new_or_existing_forecasts(tmp_path):
+    player, forecaster = setup(tmp_path)
+    player.retired = True
+    with pytest.raises(ValueError, match="unchanged actual boundary"):
+        forecaster.forecast(controls=1)
+    assert forecaster.counters()["attempted_native_steps"] == 0
+    with pytest.raises(ValueError, match="qualified single-player"):
+        SharedNNForecaster(
+            player,
+            expected_policy_type=ForecastPolicy,
+            expected_model_hash=compiled_model_hash(player.world.model),
+            native_step_budget=10,
+        )
 
 
 def test_modified_first_action_requires_actual_encoding_and_copied_history_only(tmp_path):

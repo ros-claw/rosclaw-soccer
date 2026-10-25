@@ -9,6 +9,7 @@ from rosclaw_soccer.rsi.executed_target_synergy import (
     apply_executed_target_synergy,
 )
 from rosclaw_soccer.rsi.predicted_touch_window import predicted_touch_window
+from rosclaw_soccer.rsi.shared_episode_clock import absolute_control_frame
 from rosclaw_soccer.rsi.synergy_forecast_kick_player import (
     Candidate,
     SynergyForecastKickPlayer,
@@ -33,6 +34,9 @@ class ExecutedSynergyKickPlayer(SynergyForecastKickPlayer):
     def _search_additional_candidates(
         self, candidates: list[Candidate], horizon: int
     ) -> dict[str, Any]:
+        frame = absolute_control_frame(
+            self.world, control_origin=getattr(self, "_forecast_control_origin", 0)
+        )
         assert self.basis_hg is not None
         basis = tuple(tuple(float(x) for x in row) for row in self.basis_hg)
         rng = np.random.default_rng(7001)
@@ -44,7 +48,7 @@ class ExecutedSynergyKickPlayer(SynergyForecastKickPlayer):
             ranks = []
             for i, coeff in enumerate(population):
                 plan = ExecutedTargetSynergy(
-                    self.world.control_steps,
+                    frame,
                     basis,
                     (
                         tuple(float(x) for x in coeff[0]),
@@ -59,7 +63,7 @@ class ExecutedSynergyKickPlayer(SynergyForecastKickPlayer):
                     predicted,
                     ball_address=self.layout.bq,
                     root_address=self.layout.rq,
-                    start_control=self.world.control_steps,
+                    start_control=frame,
                     diagnostic_tail=True,
                 )
                 candidates.append((f"target-g{generation}-p{i:02d}", plan, predicted, window))

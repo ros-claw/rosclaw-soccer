@@ -14,6 +14,7 @@ from rosclaw_soccer.rsi.executed_synergy_kick_player import ExecutedSynergyKickP
 from rosclaw_soccer.rsi.executed_target_synergy import ExecutedTargetSynergy
 from rosclaw_soccer.rsi.partial_motor_memory import MotorOption, encode_motor_option
 from rosclaw_soccer.rsi.predicted_touch_window import predicted_touch_window
+from rosclaw_soccer.rsi.shared_episode_clock import absolute_control_frame
 from rosclaw_soccer.rsi.synergy_forecast_kick_player import Candidate
 
 
@@ -43,6 +44,9 @@ class PartialMemoryKickPlayer(ExecutedSynergyKickPlayer):
     def _search_additional_candidates(
         self, candidates: list[Candidate], horizon: int
     ) -> dict[str, Any]:
+        frame = absolute_control_frame(
+            self.world, control_origin=getattr(self, "_forecast_control_origin", 0)
+        )
         for i, remembered in enumerate(self.memory_options):
             option: MotorOption
             if type(remembered) is AimGoalCommand:
@@ -52,7 +56,7 @@ class PartialMemoryKickPlayer(ExecutedSynergyKickPlayer):
                 )
             else:
                 assert type(remembered) is ExecutedTargetSynergy
-                option = replace(remembered, start_control=self.world.control_steps)
+                option = replace(remembered, start_control=frame)
                 predicted = self.forecaster.forecast(
                     controls=horizon, before_proposal=True, target_plan=option
                 )
@@ -60,7 +64,7 @@ class PartialMemoryKickPlayer(ExecutedSynergyKickPlayer):
                 predicted,
                 ball_address=self.layout.bq,
                 root_address=self.layout.rq,
-                start_control=self.world.control_steps,
+                start_control=frame,
                 diagnostic_tail=True,
             )
             candidates.append((f"memory-{i:02d}", option, predicted, window))

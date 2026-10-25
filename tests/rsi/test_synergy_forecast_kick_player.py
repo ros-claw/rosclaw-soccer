@@ -19,6 +19,8 @@ from scripts.rsi_review_motion_timing_teacher import (
 
 
 @pytest.mark.parametrize("projection", ["whole_tick", "per_axis"])
+@pytest.mark.parametrize("plan_first", [False, True])
+@pytest.mark.parametrize("origin", [0, 100])
 @pytest.mark.parametrize(
     "mode,expected_calls",
     [
@@ -44,7 +46,7 @@ from scripts.rsi_review_motion_timing_teacher import (
     ],
 )
 def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
-    monkeypatch, mode, expected_calls, projection
+    monkeypatch, mode, expected_calls, projection, plan_first, origin
 ):
     p = object.__new__(
         PartialMemoryKickPlayer
@@ -55,11 +57,17 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
         if mode.startswith("aim")
         else synergy.SynergyForecastKickPlayer
     )
-    p.world = SimpleNamespace(_require_current_boundary=lambda: None, control_steps=100)
+    p.world = SimpleNamespace(
+        _require_current_boundary=lambda: None,
+        control_steps=100 - origin,
+        data=SimpleNamespace(time=2.0),
+    )
+    p._forecast_control_origin = origin
     p.policy = SimpleNamespace(time_step=20, WARMUP_STEPS=0, motion_total_steps=100)
     p.pending, p.measured_entry_receipt = None, "actual"
     p.layout = SimpleNamespace(bq=0, rq=7)
     p.decided = p.plan_applied = False
+    p.failed = False
     p.selected_prediction = None
     p.events, p.candidate_predictions = [], []
     p.target_edits, p.executed_target_plan = [], None
@@ -170,17 +178,31 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
         "propose_synergy_response",
         lambda basis, samples: (np.full((2, 6), 0.001), {"physics_verified": False}),
     )
+    actual_proposals = []
+
+    def actual_propose(self):
+        actual_proposals.append(True)
+        return np.zeros(29), {"proposed_target": np.zeros(29)}
+
     monkeypatch.setattr(
         synergy.SharedRoboNaldoPlayer,
         "propose",
-        lambda self: (np.zeros(29), {"proposed_target": np.zeros(29)}),
+        actual_propose,
     )
     monkeypatch.setattr(
         executed_controller,
         "apply_executed_target_synergy",
         lambda self, plan: (np.zeros(29), {"applied": True}),
     )
+    if plan_first:
+        p.plan_entry()
+        assert not actual_proposals
+        assert p.pending is None
+        assert len(calls) == expected_calls
+        p.plan_entry()
+        assert len(calls) == expected_calls
     p.propose()
+    assert len(actual_proposals) == 1
     assert len(calls) == expected_calls
     event = p.events[0]
     audit_choice = verify_synergy_search(
@@ -288,3 +310,23 @@ def test_unsafe_high_travel_never_outranks_clean_complete_qualified_window():
     )
     bad = dict(safe, window_pass=False, predicted_body_healthy=False, reward=100.0)
     assert synergy.synergy_search_rank(good, safe) > synergy.synergy_search_rank(good, bad)
+
+
+def test_partial_planning_exception_cannot_turn_into_unplanned_actual_proposal(monkeypatch):
+    player = object.__new__(synergy.SynergyForecastKickPlayer)
+    player.failed = player.retired = player.decided = False
+
+    def broken(self):
+        self.decided = True
+        raise RuntimeError("interrupted search")
+
+    def unexpected_proposal(self):
+        pytest.fail("no actual inference after a partial planning failure")
+
+    monkeypatch.setattr(synergy.SynergyForecastKickPlayer, "_plan_entry", broken)
+    monkeypatch.setattr(synergy.SharedRoboNaldoPlayer, "propose", unexpected_proposal)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        player.plan_entry()
+    assert player.failed
+    with pytest.raises(ValueError, match="healthy active"):
+        player.propose()

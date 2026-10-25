@@ -16,6 +16,7 @@ from rosclaw_soccer.rsi.motion_synergy_reference import (
     condition_synergy_reference,
 )
 from rosclaw_soccer.rsi.predicted_touch_window import predicted_touch_window
+from rosclaw_soccer.rsi.shared_episode_clock import absolute_control_frame
 from rosclaw_soccer.rsi.shared_nn_forecast import SharedNNForecaster
 from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
 from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
@@ -152,13 +153,35 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
         return None
 
     def propose(self) -> tuple[np.ndarray, dict[str, Any]]:
+        self.plan_entry()
+        return super().propose()
+
+    def plan_entry(self) -> None:
+        """Plan once without consuming the actual policy's next NN proposal.
+
+        Predictions own their physics and NN history. This leaves the real
+        measured entry available for a bounded switch decision, not playback.
+        """
+        if self.failed or getattr(self, "retired", False):
+            raise ValueError("healthy active SIM entry required for planning")
         if self.decided:
-            return super().propose()
+            return
+        try:
+            self._plan_entry()
+        except BaseException:
+            # A partial search/installation may have changed private state.
+            # It must not become an implicit parent-policy retry next time.
+            self.failed = True
+            raise
+
+    def _plan_entry(self) -> None:
         self.world._require_current_boundary()
         if self.pending is not None or self.measured_entry_receipt is None:
             raise ValueError("single actual measured pre-proposal skill entry required")
         self.decided = True
-        frame = self.world.control_steps
+        frame = absolute_control_frame(
+            self.world, control_origin=getattr(self, "_forecast_control_origin", 0)
+        )
         reference = int(self.policy.time_step) - int(self.policy.WARMUP_STEPS)
         if frame > 239 or reference + 48 >= self.policy.motion_total_steps:
             self.events.append(
@@ -169,7 +192,7 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
                     skipped="no_complete_reference_window",
                 )
             )
-            return super().propose()
+            return
         horizon = min(self.forecast_controls, 360 - frame)
         candidates: list[Candidate] = []
 
@@ -401,4 +424,3 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
                 ),
             )
         )
-        return super().propose()

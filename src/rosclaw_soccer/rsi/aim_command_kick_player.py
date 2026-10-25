@@ -6,6 +6,7 @@ import numpy as np
 
 from rosclaw_soccer.rsi.aim_goal_command import AimGoalCommand
 from rosclaw_soccer.rsi.predicted_touch_window import predicted_touch_window
+from rosclaw_soccer.rsi.shared_episode_clock import absolute_control_frame
 from rosclaw_soccer.rsi.synergy_forecast_kick_player import Candidate, SynergyForecastKickPlayer
 
 
@@ -43,7 +44,9 @@ class AimCommandKickPlayer(SynergyForecastKickPlayer):
                 predicted,
                 ball_address=self.layout.bq,
                 root_address=self.layout.rq,
-                start_control=self.world.control_steps,
+                start_control=absolute_control_frame(
+                    self.world, control_origin=getattr(self, "_forecast_control_origin", 0)
+                ),
                 diagnostic_tail=True,
             )
             candidates.append((f"aim-goal-{i:02d}", command, predicted, window))
