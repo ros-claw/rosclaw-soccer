@@ -12,6 +12,8 @@ def main():
     p.add_argument("--qualification-hash", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--shard-root", type=Path, nargs=4, required=True)
+    p.add_argument("--synergy-model", type=Path)
+    p.add_argument("--synergy-model-hash")
     p.add_argument(
         "--interface",
         choices=(
@@ -22,11 +24,13 @@ def main():
             "nn-outcome-full-leg",
             "nn-outcome-response",
             "motion-timing",
+            "motion-synergy",
         ),
         default="measured-pose",
     )
     a = p.parse_args()
-    motion_timing = a.interface == "motion-timing"
+    synergy = a.interface == "motion-synergy"
+    motion_timing = a.interface in ("motion-timing", "motion-synergy")
     nn_outcome = motion_timing or a.interface in (
         "nn-outcome",
         "nn-outcome-full-leg",
@@ -40,7 +44,7 @@ def main():
     )
     forecast_cap = (1 + 2 * len(axes) + int(response)) * 640 * 16 if nn_outcome else 172800
     if motion_timing:
-        forecast_cap = 3 * 960 * 16
+        forecast_cap = (37 if synergy else 3) * 960 * 16
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
@@ -50,7 +54,9 @@ def main():
         raise ValueError("unused pilot output and exact measured-G1 qualification required")
     qualification = json.loads(a.qualification.read_text())
     required = (
-        "G1_COPIED_NN_CLOSED_LOOP_96_CONTROL_FORECASTS_EXACT"
+        "G1_SYNERGY_REFERENCE_NN_FUTURES_EXACT"
+        if synergy
+        else "G1_COPIED_NN_CLOSED_LOOP_96_CONTROL_FORECASTS_EXACT"
         if motion_timing
         else "G1_COPIED_NN_CLOSED_LOOP_64_CONTROL_FORECASTS_EXACT"
         if nn_outcome
@@ -58,13 +64,23 @@ def main():
     )
     if qualification["status"] != required:
         raise ValueError("actual body derivative prerequisite missing")
-    if motion_timing and (
-        not qualification["before_proposal"]
-        or qualification["reference_conditioning"] != "OFF_original_arrays"
+    if (
+        motion_timing
+        and not synergy
+        and (
+            not qualification["before_proposal"]
+            or qualification["reference_conditioning"] != "OFF_original_arrays"
+        )
     ):
         raise ValueError("explicit pre-proposal OFF reference qualification required")
     pins = dict(qualification["input_file_hashes"])
     pins[str(a.qualification)] = a.qualification_hash
+    if synergy and (
+        a.synergy_model is None
+        or pins.get(str(a.synergy_model)) != a.synergy_model_hash
+        or digest(a.synergy_model) != a.synergy_model_hash
+    ):
+        raise ValueError("explicit qualified data-derived motion model required")
     originals, original_paths = {}, {}
     indices = [b * 10 + j for b in range(4) for j in (0, 1, 2, 3)]
     for index in indices:
@@ -93,6 +109,7 @@ def main():
     from rosclaw_soccer.rsi.outcome_forecast_kick_player import OutcomeForecastKickPlayer
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
     from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
+    from rosclaw_soccer.rsi.synergy_forecast_kick_player import SynergyForecastKickPlayer
     from rosclaw_soccer.rsi.task_space_kick_player import TaskSpaceKickPlayer
     from rosclaw_soccer.rsi.walk_kick_teacher_audit import relabel_arrays
     from rosclaw_soccer.rsi.walk_kick_teacher_episode import evaluate_episode
@@ -133,14 +150,25 @@ def main():
     instances = []
 
     parent_type = (
-        MotionTimingKickPlayer
+        SynergyForecastKickPlayer
+        if synergy
+        else MotionTimingKickPlayer
         if motion_timing
         else OutcomeForecastKickPlayer
         if nn_outcome
         else TaskSpaceKickPlayer
     )
+    fitted_basis = None
+    if synergy:
+        fitted = json.loads(a.synergy_model.read_text())
+        artifact = a.synergy_model.parent / fitted["artifact"]["path"]
+        if pins.get(str(artifact)) != fitted["artifact"]["hash"]:
+            raise ValueError("qualified synergy artifact binding differs")
+        with np.load(artifact, allow_pickle=False) as raw:
+            fitted_basis = raw["basis_hg"].copy()
 
     class Controlled(parent_type):
+        basis_hg = fitted_basis
         candidate_axes = axes
         response_enabled = response
         foundation_relative = a.interface != "measured-pose"
@@ -166,12 +194,25 @@ def main():
             actual_native_step_ceiling=115200,
             forecast_native_step_ceiling=forecast_cap,
             forecast_controls_per_candidate=96 if motion_timing else 64 if nn_outcome else 1,
-            timing_intervals=24 if motion_timing else None,
-            timing_peak_shift_frames=[-3.0, 3.0] if motion_timing else None,
+            timing_intervals=24 if motion_timing and not synergy else None,
+            timing_peak_shift_frames=[-3.0, 3.0] if motion_timing and not synergy else None,
             timing_trigger="first_measured_skill_entry_pre_proposal" if motion_timing else None,
             reference_arrays_only=motion_timing,
+            synergy_cem_population=12 if synergy else None,
+            synergy_cem_generations=3 if synergy else None,
+            synergy_cem_elites=3 if synergy else None,
+            synergy_cem_seed=7001 if synergy else None,
+            synergy_cem_initial_std_rad=0.025 if synergy else None,
+            synergy_cem_minimum_std_rad=0.006 if synergy else None,
+            synergy_cem_update_smoothing=0.5 if synergy else None,
+            synergy_reference_trust_rad=0.06 if synergy else None,
+            synergy_reference_intervals=48 if synergy else None,
+            synergy_temporal_lobes=2 if synergy else None,
+            reference_installations_not_changed_pd_controls=motion_timing,
             candidate_set=(
-                ["parent", "timing--3", "timing-+3"]
+                ["parent", "3generations_x12_data_synergy_plans"]
+                if synergy
+                else ["parent", "timing--3", "timing-+3"]
                 if motion_timing
                 else ["parent", "one_admissible_declared_joint_plusminus_0.03"]
                 + (["native-response-coordinated"] if response else [])
