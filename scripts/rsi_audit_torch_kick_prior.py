@@ -12,6 +12,7 @@ def main():
     p.add_argument("--expected-producer-head", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--expected-candidate-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_close_walk_kick_teacher import wait_for_producers
@@ -42,7 +43,13 @@ def main():
             raise ValueError("ordinary complete physical shard required")
         source = json.loads(cp.read_text())
         if (
-            source["status"] != "PUBLIC40_FROZEN_KICK_BACKEND_SHARD_EXECUTED_NOT_TRAINED"
+            source["status"]
+            != (
+                "PUBLIC40_KICK_HEAD_PPO_CANDIDATE_SHARD_PHYSICALLY_MEASURED"
+                if a.expected_candidate_hash is not None
+                else "PUBLIC40_FROZEN_KICK_BACKEND_SHARD_EXECUTED_NOT_TRAINED"
+            )
+            or source.get("candidate_report_hash") != a.expected_candidate_hash
             or source["source_head"] != a.expected_producer_head
             or source["worlds"] != 20
             or source["actor_optimizer_updates"] != 0
@@ -77,6 +84,12 @@ def main():
             measured = {}
             for arm in ("onnx", "torch"):
                 row = rows[arm]
+                if row.get("candidate_report_hash") != (
+                    a.expected_candidate_hash if arm == "torch" else None
+                ):
+                    raise ValueError(
+                        "actual arm candidate identity differs from declared comparison"
+                    )
                 rp = folder / (arm + ".json")
                 if rp.is_symlink() or hash_json(json.loads(rp.read_text())) != hash_json(row):
                     raise ValueError("original physical row differs")
@@ -176,7 +189,12 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="ALL80_KICK_BACKEND_TRIALS_NATIVE_LABELS_AND_SOURCE_IDENTITY_VERIFIED",
+            status=(
+                "ALL80_KICK_HEAD_PPO_CANDIDATE_TRIALS_NATIVE_VERIFIED"
+                if a.expected_candidate_hash is not None
+                else "ALL80_KICK_BACKEND_TRIALS_NATIVE_LABELS_AND_SOURCE_IDENTITY_VERIFIED"
+            ),
+            candidate_report_hash=a.expected_candidate_hash,
             source_head=a.expected_head,
             input_file_hashes=pins,
             worlds=80,

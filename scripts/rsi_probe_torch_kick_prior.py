@@ -17,6 +17,8 @@ def main():
     ):
         p.add_argument("--" + key, required=True)
     p.add_argument("--shard", type=int, choices=range(4), required=True)
+    p.add_argument("--candidate", type=Path)
+    p.add_argument("--candidate-hash")
     a = p.parse_args()
     from rosclaw_soccer.rsi.experimental_velocity_evidence import admit_heading_evidence
     from rosclaw_soccer.rsi.walk_kick_teacher_plan import search_course_bank
@@ -26,6 +28,8 @@ def main():
     from scripts.rsi_native_fresh_common import clean, source_pins
 
     clean(a.expected_head)
+    if (a.candidate is None) != (a.candidate_hash is None):
+        raise ValueError("candidate report and exact hash must be declared together")
     courses = search_course_bank(expanded_public=True)
     bank_hash = preflight_receiving_courses(courses)
     if (
@@ -59,6 +63,15 @@ def main():
             raise ValueError("conflicting physical/source identity")
         pins[name] = h
     pins.update({str(a.source_audit): a.source_audit_hash, str(a.fidelity): a.fidelity_hash})
+    candidate = None
+    if a.candidate is not None:
+        from rosclaw_soccer.rsi.kick_ppo_candidate import admit_pilot
+
+        candidate_pins, candidate = admit_pilot(a.candidate, a.candidate_hash)
+        for name, h in candidate_pins.items():
+            if name in pins and pins[name] != h:
+                raise ValueError("conflicting learned candidate identity")
+            pins[name] = h
     source_pins(pins)
     check_pins(pins)
 
@@ -108,10 +121,17 @@ def main():
     )
     original_types = _load_robonaldo(one("/policy/robonaldo/FreeKick.py").parents[2])
     state, output, policy, mapping = original_types
+    torch_factory = torch_kick_policy_type(
+        policy, one("/policy/robonaldo/model/policy-obs-aic.onnx")
+    )
+    if candidate is not None:
+        from rosclaw_soccer.rsi.kick_ppo_candidate import candidate_factory
+
+        torch_factory = candidate_factory(torch_factory, candidate)
     torch_types = (
         state,
         output,
-        torch_kick_policy_type(policy, one("/policy/robonaldo/model/policy-obs-aic.onnx")),
+        torch_factory,
         mapping,
     )
     model = mujoco.MjModel.from_xml_string(
@@ -119,11 +139,25 @@ def main():
             one("/cached-standard/declared-scene.xml").read_text(), prefixes=("a/",)
         )
     )
+    if candidate is not None:
+        from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+
+        if (
+            hash_json(
+                NativeVelocityLayout(
+                    model, robot_prefix="a/", ball_body_name="soccer_ball"
+                ).profile()
+            )
+            != candidate["body_hash"]
+        ):
+            raise ValueError("candidate body contract does not match actual compiled world")
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
         dict(
             protocol="soccer.public40_frozen_kick_backend_pair.v1",
+            candidate_report_hash=a.candidate_hash,
+            candidate_was_previously_motor_trained=candidate is not None,
             source_head=a.expected_head,
             input_file_hashes=pins,
             assigned_indices=list(range(a.shard, 40, 4)),
@@ -175,6 +209,7 @@ def main():
             np.savez_compressed(artifact, **arrays)
             row.update(
                 arm=arm,
+                candidate_report_hash=a.candidate_hash if arm == "torch" else None,
                 course_index=index,
                 artifact=dict(path=artifact.name, hash=digest(artifact)),
             )
@@ -187,7 +222,12 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="PUBLIC40_FROZEN_KICK_BACKEND_SHARD_EXECUTED_NOT_TRAINED",
+            status=(
+                "PUBLIC40_KICK_HEAD_PPO_CANDIDATE_SHARD_PHYSICALLY_MEASURED"
+                if candidate is not None
+                else "PUBLIC40_FROZEN_KICK_BACKEND_SHARD_EXECUTED_NOT_TRAINED"
+            ),
+            candidate_report_hash=a.candidate_hash,
             source_head=a.expected_head,
             input_file_hashes=pins,
             results=results,
