@@ -89,7 +89,12 @@ def main():
     pins[str(cp)] = a.pilot_hash
     pins[str(a.pilot / "declaration.json")] = report["declaration_hash"]
     declaration = json.loads((a.pilot / "declaration.json").read_text())
-    expected_indices = [b * 10 + j for b in range(4) for j in (0, 1, 2, 3)]
+    expanded = report.get("expanded_public_validation", False)
+    if type(expanded) is not bool or (expanded and not full_window):
+        raise ValueError("explicit full-window expanded public protocol required")
+    expected_indices = (
+        list(range(40)) if expanded else [b * 10 + j for b in range(4) for j in (0, 1, 2, 3)]
+    )
     if (
         declaration["course_indices"] != expected_indices
         or (
@@ -100,7 +105,17 @@ def main():
             )
         )
         or declaration["forecast_native_step_ceiling"]
-        != (757760 if full_window else 583680 if response else 568320 if synergy else 46080)
+        != (
+            1894400
+            if expanded
+            else 757760
+            if full_window
+            else 583680
+            if response
+            else 568320
+            if synergy
+            else 46080
+        )
         or [r["course_index"] for r in report["results"]] != expected_indices
     ):
         raise ValueError("frozen timing experiment differs")
@@ -194,7 +209,12 @@ def main():
             worlds += 1
             pair[arm], arrays[arm] = row, raw
         b, c = pair["B"], pair["C"]
-        if synergy and b["outcome"]["task_pass"] and b["healthy_full_horizon"]:
+        if (
+            synergy
+            and result["course_index"] in [r["course_index"] for r in fitted["records"]]
+            and b["outcome"]["task_pass"]
+            and b["healthy_full_horizon"]
+        ):
             innovations.append(
                 np.diff(arrays["B"]["joint_targets"][b["entry_control"] : 300], axis=0)
             )
@@ -399,6 +419,13 @@ def main():
             ),
             source_head=a.expected_head,
             data_synergy_fit_independently_recomputed=synergy,
+            expanded_public_validation=expanded,
+            qualified_on_expanded_public=(
+                expanded
+                and len(rescues) >= 2
+                and not regressions
+                and sum(r["C"]["task_pass"] for r in results) >= 32
+            ),
             input_file_hashes=pins,
             results=results,
             rescues=rescues,

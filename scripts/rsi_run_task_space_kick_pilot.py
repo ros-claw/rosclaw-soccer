@@ -16,6 +16,9 @@ def main():
     p.add_argument("--synergy-model-hash")
     p.add_argument("--window-qualification", type=Path)
     p.add_argument("--window-qualification-hash")
+    p.add_argument("--expand-40", action="store_true")
+    p.add_argument("--expansion-gate", type=Path)
+    p.add_argument("--expansion-gate-hash")
     p.add_argument(
         "--interface",
         choices=(
@@ -41,6 +44,10 @@ def main():
         "motion-synergy-full-window",
     )
     forecast_controls = 128 if full_window else 96
+    if a.expand_40 and not full_window:
+        raise ValueError("expanded validation requires the full-window teacher protocol")
+    course_count = 40 if a.expand_40 else 16
+    world_cap, native_cap = 2 * course_count, 2 * course_count * 3600
     motion_timing = synergy or a.interface == "motion-timing"
     nn_outcome = motion_timing or a.interface in (
         "nn-outcome",
@@ -56,7 +63,10 @@ def main():
     forecast_cap = (1 + 2 * len(axes) + int(response)) * 640 * 16 if nn_outcome else 172800
     if motion_timing:
         forecast_cap = (
-            (38 if synergy_response else 37 if synergy else 3) * forecast_controls * 10 * 16
+            (38 if synergy_response else 37 if synergy else 3)
+            * forecast_controls
+            * 10
+            * course_count
         )
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -88,6 +98,24 @@ def main():
         raise ValueError("explicit pre-proposal OFF reference qualification required")
     pins = dict(qualification["input_file_hashes"])
     pins[str(a.qualification)] = a.qualification_hash
+    if a.expand_40:
+        if a.expansion_gate is None or digest(a.expansion_gate) != a.expansion_gate_hash:
+            raise ValueError("exact independently verified expansion gate required")
+        gate = json.loads(a.expansion_gate.read_text())
+        if (
+            gate["status"] != "MOTION_SYNERGY_TEACHER_RAW_CEM_FUTURES_AND_FULL_EXAM_VERIFIED"
+            or not gate["qualified_for_expansion"]
+            or gate["regressions"]
+            or len(set(gate["rescues"])) < 2
+            or gate["actual_worlds"] != 32
+            or gate["new_physical_steps"] != 0
+        ):
+            raise ValueError("two distinct rescues and zero regression independent gate required")
+        for key, value in gate["input_file_hashes"].items():
+            if key in pins and pins[key] != value:
+                raise ValueError("conflicting expansion gate provenance")
+            pins[key] = value
+        pins[str(a.expansion_gate)] = a.expansion_gate_hash
     if full_window:
         if (
             a.window_qualification is None
@@ -113,7 +141,9 @@ def main():
     ):
         raise ValueError("explicit qualified data-derived motion model required")
     originals, original_paths = {}, {}
-    indices = [b * 10 + j for b in range(4) for j in (0, 1, 2, 3)]
+    indices = (
+        list(range(40)) if a.expand_40 else [b * 10 + j for b in range(4) for j in (0, 1, 2, 3)]
+    )
     for index in indices:
         path = a.shard_root[index % 4] / f"course-{index:02d}" / "onnx.json"
         if pins.get(str(path)) != digest(path):
@@ -217,14 +247,16 @@ def main():
         dict(
             protocol="soccer.g2.bounded_contact_authority_pilot.v3",
             interface=a.interface,
+            expanded_public_validation=a.expand_40,
+            expansion_gate_hash=a.expansion_gate_hash if a.expand_40 else None,
             freeze_inadmissible_parent_joints=a.interface == "precontact-sparse",
             end_alignment_after_actual_first_foot=a.interface == "precontact-sparse",
             source_head=a.expected_head,
             input_file_hashes=pins,
             course_indices=indices,
             arms=["B", "C"],
-            actual_world_ceiling=32,
-            actual_native_step_ceiling=115200,
+            actual_world_ceiling=world_cap,
+            actual_native_step_ceiling=native_cap,
             forecast_native_step_ceiling=forecast_cap,
             forecast_controls_per_candidate=forecast_controls
             if motion_timing
@@ -409,7 +441,7 @@ def main():
                     ) as old:
                         if any(not np.array_equal(old[k], v) for k, v in arrays.items()):
                             raise ValueError("zero/off branch altered the legacy trajectory")
-            if worlds > 32 or native > 115200 or forecast_attempted > forecast_cap:
+            if worlds > world_cap or native > native_cap or forecast_attempted > forecast_cap:
                 raise ValueError("frozen physical budget exceeded")
             artifact = folder / f"{arm}.npz"
             np.savez_compressed(artifact, **arrays)
@@ -470,6 +502,13 @@ def main():
             rescues=rescues,
             regressions=regressions,
             qualified_for_expansion=len(rescues) >= 2 and not regressions,
+            expanded_public_validation=a.expand_40,
+            qualified_on_expanded_public=(
+                a.expand_40
+                and len(rescues) >= 2
+                and not regressions
+                and sum(r["arms"]["C"]["task_pass"] for r in results) >= 32
+            ),
             optimizer_updates=0,
             physical_teacher_qualified=False,
             promotion_authorized=False,
