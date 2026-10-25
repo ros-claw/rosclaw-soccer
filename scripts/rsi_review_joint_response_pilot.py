@@ -113,7 +113,8 @@ def main():
             )
             pelvis = arrays["qpos"][:, lo.rq : lo.rq + 7]
             healthy = bool(
-                (pelvis[:, 2] >= 0.65).all()
+                row["controls"] == 360
+                and (pelvis[:, 2] >= 0.65).all()
                 and (1 - 2 * (pelvis[:, 4] ** 2 + pelvis[:, 5] ** 2) >= 0.9).all()
             )
             if (
@@ -290,7 +291,8 @@ def main():
             dict(course_index=i, B=outcomes["B"], C=outcomes["C"], C_healthy=health["C"])
         )
     if (
-        native != 43200
+        native > 43200
+        or native != report["actual_native_steps"]
         or worlds != 12
         or charged != report["forecast_requested_native_steps"]
         or integrated != report["forecast_integrated_native_steps"]
