@@ -14,6 +14,8 @@ def nearest_kick_reference_phase(
     joint_velocity: np.ndarray,
     reference_position_hg: np.ndarray,
     reference_velocity_hg: np.ndarray,
+    *,
+    minimum_frame: int = 0,
 ) -> dict[str, Any]:
     """Fixed 0..250 search, squared pose plus one-control velocity displacement.
 
@@ -26,6 +28,8 @@ def nearest_kick_reference_phase(
     )
     if (
         q.shape != (29,)
+        or type(minimum_frame) is not int
+        or not 0 <= minimum_frame <= 250
         or v.shape != (29,)
         or rp.ndim != 2
         or rp.shape[1:] != (29,)
@@ -38,14 +42,14 @@ def nearest_kick_reference_phase(
         cost = np.mean((rp[:251] - q) ** 2 + (0.02 * (rv[:251] - v)) ** 2, axis=1)
     if not np.isfinite(cost).all():
         raise ValueError("finite measured phase costs required")
-    frame = int(np.argmin(cost))
+    frame = int(np.argmin(cost[minimum_frame:])) + minimum_frame
     return dict(
         schema="soccer.kick.measured_reference_phase.v1",
         reference_frame=frame,
         selected_cost_rad2=float(cost[frame]),
         frame_zero_cost_rad2=float(cost[0]),
         phase_costs_rad2=cost.tolist(),
-        search_first=0,
+        search_first=minimum_frame,
         search_last=250,
         velocity_weight_seconds=0.02,
         first_tie_selected=True,

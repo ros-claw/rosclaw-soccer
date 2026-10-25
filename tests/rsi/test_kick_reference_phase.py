@@ -26,6 +26,17 @@ def test_no_search_after250_and_ties_choose_first():
     assert r["reference_frame"] == 0 and len(r["phase_costs_rad2"]) == 251
 
 
+def test_explicit_contact_window_does_not_change_default_phase_selection():
+    q, v, rp, rv = arrays()
+    rp[53] = 0
+    rp[204] = 0.1
+    assert nearest_kick_reference_phase(q, v, rp, rv)["reference_frame"] == 53
+    selected = nearest_kick_reference_phase(q, v, rp, rv, minimum_frame=180)
+    assert selected["reference_frame"] == 204 and selected["search_first"] == 180
+    with pytest.raises(ValueError):
+        nearest_kick_reference_phase(q, v, rp, rv, minimum_frame=True)
+
+
 @pytest.mark.parametrize("defect", ["short", "nonfinite", "wrong_order_size", "overflow"])
 def test_bad_reference_rejected(defect):
     q, v, rp, rv = arrays()

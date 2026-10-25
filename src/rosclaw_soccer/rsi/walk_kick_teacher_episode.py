@@ -36,6 +36,14 @@ def evaluate_episode(
 
     state_type, output_type, policy_type, mapping = policy_types
     fast = assets.get("experimental_fast", False)
+    feedback = parameters.get("approach_feedback", False)
+    phase_feedback = parameters.get("entry_phase_feedback", False)
+    if (
+        type(feedback) is not bool
+        or type(phase_feedback) is not bool
+        or (phase_feedback and not feedback)
+    ):
+        raise ValueError("explicit measured-state approach hypothesis switch required")
     if type(fast) is not bool:
         raise ValueError("explicit experimental speed mode required")
     stream_args: dict[str, Any] = dict(
@@ -105,12 +113,13 @@ def evaluate_episode(
             with contextlib.redirect_stdout(io.StringIO()):
                 policy = policy_type(state_type(29), output_type(29))
             phase = parameters["reference_frame"]
-            if phase is None:
+            if phase is None or phase_feedback:
                 phase = nearest_kick_reference_phase(
                     q[7:36],
                     v[6:35],
                     policy.motion_joint_pos[:, mapping],
                     policy.motion_joint_vel[:, mapping],
+                    minimum_frame=180 if phase_feedback else 0,
                 )["reference_frame"]
             kp = NativePDParameters(np.array(policy.kps), np.array(policy.kds), vp.effort)
             switch = w.switch_pd_profile("a/", kp)
@@ -126,6 +135,17 @@ def evaluate_episode(
                 ),
             ]
         )
+        if feedback:
+            from rosclaw_soccer.rsi.feedback_kick_approach import velocity_matched_approach
+
+            desired_world = velocity_matched_approach(
+                root_position=q[:3],
+                ball_position=q[36:39],
+                ball_velocity=v[35:38],
+                cruise_speed=parameters["speed_mps"],
+                entry_gap=parameters["entry_gap_m"],
+                lateral_offset=parameters["root_lateral_offset_m"],
+            )
         xy = rot[:2, :2].T @ desired_world
         yaw = float(np.arctan2(rot[1, 0], rot[0, 0]))
         wanted = np.array(
@@ -215,6 +235,8 @@ def evaluate_episode(
         robot_qpos_address=lo.rq,
         optimizer_updates=0,
         experimental_fast_approach=fast,
+        feedback_approach=feedback,
+        feedback_reference_phase=phase_feedback,
         physical_teacher_qualified=False,
     )
     return row, arrays
