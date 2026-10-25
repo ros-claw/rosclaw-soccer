@@ -12,6 +12,9 @@ def main():
     p.add_argument("--qualification-hash", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--shard-root", type=Path, nargs=4, required=True)
+    p.add_argument(
+        "--interface", choices=("measured-pose", "foundation-increment"), default="measured-pose"
+    )
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -91,6 +94,8 @@ def main():
     instances = []
 
     class Controlled(TaskSpaceKickPlayer):
+        foundation_relative = a.interface == "foundation-increment"
+
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             instances.append(self)
@@ -99,7 +104,8 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="soccer.g2.bounded_surface_contact_pilot.v1",
+            protocol="soccer.g2.bounded_surface_contact_pilot.v2",
+            interface=a.interface,
             source_head=a.expected_head,
             input_file_hashes=pins,
             course_indices=indices,
@@ -114,8 +120,12 @@ def main():
             ],
             active_joints=list(range(12)),
             max_nominal_delta_rad=0.12,
-            max_current_delta_rad=0.2,
-            max_command_step_rad=0.1,
+            max_current_delta_rad=0.2 if a.interface == "measured-pose" else None,
+            max_command_step_rad=0.1 if a.interface == "measured-pose" else None,
+            candidate_increment_step_cap_rad=0.03
+            if a.interface == "foundation-increment"
+            else None,
+            fallback_to_parent_resets_increment=True,
             foot_shin_cost=100.0,
             posture_cost=0.1,
             shin_margin_m=0.015,

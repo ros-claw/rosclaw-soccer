@@ -94,6 +94,8 @@ def task_candidate(
 class TaskSpaceKickPlayer(SharedRoboNaldoPlayer):
     """Own history commits the actual composite action, never an unexecuted prior."""
 
+    foundation_relative = False
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         from importlib import import_module
@@ -111,10 +113,13 @@ class TaskSpaceKickPlayer(SharedRoboNaldoPlayer):
         self.selected_prediction: dict[str, Any] | None = None
         self.events: list[dict[str, Any]] = []
         self.changed_controls = 0
+        self.previous_delta = np.zeros(29, np.float64)
+        self.nominal_for_commit: np.ndarray | None = None
         self.selected_records: list[tuple[int, dict[str, Any]]] = []
 
     def propose(self) -> tuple[np.ndarray, dict[str, Any]]:
         nominal, receipt = super().propose()
+        self.nominal_for_commit = nominal.copy()
         self.executed_history = None
         self.selected_prediction = None
         surfaces = measure_ball_surfaces(self.world.model, self.world.data, self.layout)["surfaces"]
@@ -135,12 +140,17 @@ class TaskSpaceKickPlayer(SharedRoboNaldoPlayer):
             ("parent", nominal, None, prediction)
         ]
         statuses = []
+        candidate_function = task_candidate
+        if self.foundation_relative:
+            from rosclaw_soccer.rsi.foundation_delta_tasks import incremental_task_candidate
+
+            candidate_function = incremental_task_candidate
         for contact in (False, True):
-            candidate, status = task_candidate(
+            candidate, status = candidate_function(
                 self.layout,
                 self.world.data,
                 nominal,
-                self.previous_target,
+                self.previous_delta if self.foundation_relative else self.previous_target,
                 surfaces,
                 contact=contact,
             )
@@ -208,6 +218,9 @@ class TaskSpaceKickPlayer(SharedRoboNaldoPlayer):
                 scores=scores,
                 requested_delta_rad=(target - nominal).tolist(),
                 measured_gaps={n: s.get("gap_m") for n, s in surfaces.items()},
+                nominal_tracking_error_rad=float(
+                    np.max(abs(nominal[:12] - self.world.data.qpos[self.layout.qi[:12]]))
+                ),
             )
         )
         return target.copy(), receipt
@@ -248,3 +261,6 @@ class TaskSpaceKickPlayer(SharedRoboNaldoPlayer):
                 ].items()
             }
         self.previous_target = target
+        if self.nominal_for_commit is None:
+            raise ValueError("committed target lacks its corresponding foundation target")
+        self.previous_delta = target - self.nominal_for_commit
