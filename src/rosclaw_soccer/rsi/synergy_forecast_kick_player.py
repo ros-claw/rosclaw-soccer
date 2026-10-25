@@ -37,6 +37,8 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
     basis_hg: np.ndarray | None = None
     synergy_response_enabled = False
     forecast_controls = 96
+    plastic_basis_hg: np.ndarray | None = None
+    plastic_basis_isaac: tuple[tuple[float, ...], ...] | None = None
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -50,11 +52,31 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
         basis_il = np.zeros_like(self.basis_hg)
         basis_il[:, mapping] = self.basis_hg
         self.basis_isaac = tuple(tuple(float(x) for x in r) for r in basis_il)
+        if self.plastic_basis_hg is not None:
+            if (
+                self.forecast_controls != 128
+                or self.synergy_response_enabled
+                or self.plastic_basis_hg.shape != (6, 29)
+                or self.plastic_basis_hg.dtype != np.float64
+                or not np.isfinite(self.plastic_basis_hg).all()
+            ):
+                raise ValueError(
+                    "qualified128 feedback complement without response-model mixing required"
+                )
+            plastic_il = np.zeros_like(self.plastic_basis_hg)
+            plastic_il[:, mapping] = self.plastic_basis_hg
+            self.plastic_basis_isaac = tuple(tuple(float(x) for x in r) for r in plastic_il)
         self.forecaster = SharedNNForecaster(
             self,
             expected_policy_type=type(self.policy),
             expected_model_hash=compiled_model_hash(self.world.model),
-            native_step_budget=(38 if self.synergy_response_enabled else 37)
+            native_step_budget=(
+                73
+                if self.plastic_basis_isaac is not None
+                else 38
+                if self.synergy_response_enabled
+                else 37
+            )
             * self.forecast_controls
             * 10,
         )
@@ -96,14 +118,16 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
         candidates: list[tuple[str, MotionSynergyPlan | None, dict[str, Any], dict[str, Any]]] = []
 
         def preview(
-            name: str, coefficients: np.ndarray | None
+            name: str,
+            coefficients: np.ndarray | None,
+            basis: tuple[tuple[float, ...], ...] | None = None,
         ) -> tuple[int, int, int, int, float, float]:
             plan = (
                 None
                 if coefficients is None
                 else MotionSynergyPlan(
                     reference,
-                    self.basis_isaac,
+                    self.basis_isaac if basis is None else basis,
                     (
                         tuple(float(v) for v in coefficients[0]),
                         tuple(float(v) for v in coefficients[1]),
@@ -123,18 +147,20 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
             candidates.append((name, plan, predicted, score))
             return synergy_search_rank(predicted, score)
 
-        preview("parent", None)
-        generations = []
-        if not candidates[0][3]["window_pass"]:
+        def search(prefix: str, basis: tuple[tuple[float, ...], ...]) -> list[dict[str, Any]]:
+            local_generations = []
             rng = np.random.default_rng(7001)  # SAME seed per state; no course-label lookup.
             mean, std = np.zeros((2, 6)), np.full((2, 6), 0.025)
             for generation in range(3):
                 noise = rng.normal(size=(6, 2, 6))
                 population = np.clip(mean + np.concatenate((noise, -noise)) * std, -0.06, 0.06)
-                ranks = [preview(f"g{generation}-p{i:02d}", c) for i, c in enumerate(population)]
+                ranks = [
+                    preview(f"{prefix}g{generation}-p{i:02d}", c, basis)
+                    for i, c in enumerate(population)
+                ]
                 order = sorted(range(12), key=lambda i: ranks[i], reverse=True)
                 elite = population[order[:3]]
-                generations.append(
+                local_generations.append(
                     dict(
                         generation=generation,
                         elite_indices=order[:3],
@@ -144,6 +170,16 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
                 )
                 mean = 0.5 * mean + 0.5 * elite.mean(axis=0)
                 std = np.maximum(0.006, 0.5 * std + 0.5 * elite.std(axis=0))
+            return local_generations
+
+        preview("parent", None)
+        generations = [] if candidates[0][3]["window_pass"] else search("", self.basis_isaac)
+        plastic_generations = []
+        # Never replace a passing old candidate, even for a larger proxy reward.
+        if self.plastic_basis_isaac is not None and not any(
+            c[3]["window_pass"] for c in candidates
+        ):
+            plastic_generations = search("plastic-", self.plastic_basis_isaac)
         response_report = None
         if self.synergy_response_enabled and not any(c[3]["window_pass"] for c in candidates):
             from rosclaw_soccer.rsi.synergy_response_model import propose_synergy_response
@@ -188,6 +224,14 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
                     for c in candidates
                 ],
                 generations=generations,
+                plastic_generations=plastic_generations,
+                selected_basis=(
+                    "parent"
+                    if plan is None
+                    else "plastic"
+                    if name.startswith("plastic-")
+                    else "backbone"
+                ),
                 response_model=response_report,
                 original_actual_target_authority_unchanged=True,
             )

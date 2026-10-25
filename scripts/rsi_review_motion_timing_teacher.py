@@ -52,6 +52,27 @@ def verify_synergy_search(windows, peaks, generations):
     return max(eligible, key=rank) if eligible else 0
 
 
+def verify_stable_plastic_search(windows, peaks, generations, plastic_generations):
+    """A passing frozen branch wins; the complement is searched ONLY on abstention."""
+    stable = verify_synergy_search(windows[:37], peaks[:37], generations)
+    if stable or windows[0]["outcome"]["window_pass"]:
+        if (
+            len(windows) != (1 if windows[0]["outcome"]["window_pass"] else 37)
+            or plastic_generations
+        ):
+            raise ValueError("plastic search must not replace a passing frozen branch")
+        return stable
+    if len(windows) != 73:
+        raise ValueError("full bounded complement search required after backbone abstention")
+    synthetic = [windows[0]]
+    for w in windows[37:]:
+        if not w["name"].startswith("plastic-"):
+            raise ValueError("explicit plastic candidate namespace required")
+        synthetic.append(dict(w, name=w["name"][len("plastic-") :]))
+    selected = verify_synergy_search(synthetic, [peaks[0], *peaks[37:]], plastic_generations)
+    return 36 + selected if selected else 0
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for key in ("pilot", "output"):
