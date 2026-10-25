@@ -67,9 +67,9 @@ def main():
         velocity_config=vc,
         velocity_model_hash=pins[str(vm)],
         velocity_config_hash=pins[str(vc)],
-        experimental_fast=reference["experimental_fast_approach"],
         **fast,
     )
+    assets["experimental_fast"] = reference["experimental_fast_approach"]
     model = mujoco.MjModel.from_xml_string(
         shared_native_scene(
             one("/cached-standard/declared-scene.xml").read_text(), prefixes=("a/",)
