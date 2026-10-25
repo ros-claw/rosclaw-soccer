@@ -21,6 +21,7 @@ import pytest
         "rsi_run_native_contact_authority.py",
         "rsi_probe_experimental_velocity_envelope.py",
         "rsi_run_accelerated_approach_contact.py",
+        "rsi_audit_approach_contact_attribution.py",
     ],
 )
 def test_command_family_bootstrap_does_not_train_or_allocate_physics(script, tmp_path, monkeypatch):

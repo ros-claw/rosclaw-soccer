@@ -1,7 +1,10 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.native_contact_authority_metrics import contact_authority_metrics
+from rosclaw_soccer.rsi.native_contact_authority_metrics import (
+    contact_attribution_diagnostics,
+    contact_authority_metrics,
+)
 
 
 def arrays(n=300):
@@ -65,3 +68,24 @@ def test_nonfinite_measurements_fail_closed():
     data["teacher_applied_delta"][50, 0] = np.nan
     with pytest.raises(ValueError):
         contact_authority_metrics(data)
+
+
+@pytest.mark.parametrize("agent,part", [(3, 2), (7, 0)])
+def test_contact_attribution_does_not_credit_leg_or_opponent_assistance(agent, part):
+    data = arrays()
+    data["ball_forces"][60 * 10, 3, 0] = 2
+    data["ball_forces"][60 * 10, agent, part] = 3
+    result = contact_attribution_diagnostics(data)
+    assert result["originally_declared_comotion_controls"] == 26
+    assert result["additional_conservative_foot_only_proxy_controls"] == 0
+    assert result["diagnostic_defined_after_pilot_not_preregistered"]
+    assert result["original_scoring_unchanged"]
+    assert not result["foot_possession_qualified"]
+
+
+def test_clean_foot_contact_remains_described_but_not_promoted():
+    data = arrays()
+    data["ball_forces"][60 * 10, 3, 0] = 2
+    result = contact_attribution_diagnostics(data)
+    assert result["additional_conservative_foot_only_proxy_controls"] == 26
+    assert not result["foot_possession_qualified"]

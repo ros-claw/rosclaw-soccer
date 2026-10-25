@@ -95,3 +95,49 @@ def contact_authority_metrics(arrays: dict[str, np.ndarray]) -> dict[str, Any]:
         physical_possession_qualified=False,
         official_exam_pass_proven=False,
     )
+
+
+def contact_attribution_diagnostics(arrays: dict[str, np.ndarray]) -> dict[str, Any]:
+    """Post-hoc contamination audit, never a replacement formal success rule.
+
+    Keep the originally declared proxy intact. Count an additional conservative
+    proxy only when the past25 controls contain neither selected-player nonfoot
+    contact nor another player's ball contact. This does not prove possession.
+    """
+    original = contact_authority_metrics(arrays)
+    n = original["controls"]
+    force = arrays["ball_forces"].reshape(n, 10, 8, 3).max(axis=1)
+    foot = force[:, 3, :2].max(axis=1) > 1
+    nonfoot = force[:, 3, 2] > 1
+    others = force[:, [0, 1, 2, 4, 5, 6, 7]].max(axis=(1, 2)) > 1
+    age_foot = age_nonfoot = age_other = 999
+    clean = 0
+    for i in range(50, n):
+        age_foot = 0 if foot[i] else age_foot + 1
+        age_nonfoot = 0 if nonfoot[i] else age_nonfoot + 1
+        age_other = 0 if others[i] else age_other + 1
+        clean += int(
+            age_foot <= 25
+            and age_nonfoot > 25
+            and age_other > 25
+            and arrays["foot_gap_after_m"][i, 3] < 0.35
+            and arrays["nearest_foot_relative_speed_mps"][i, 3] < 0.5
+        )
+    first = original["first_postwarmup_foot_contact_control"]
+    return dict(
+        schema="soccer.native_contact_attribution_diagnostic.v1",
+        originally_declared_comotion_controls=original["close_recent_comotion_controls"],
+        additional_conservative_foot_only_proxy_controls=clean,
+        selected_nonfoot_peak_force_n=float(force[:, 3, 2].max()),
+        warmup_nonfoot_by_player=(force[:50, :, 2].max(axis=0) > 1).tolist(),
+        selected_nonfoot_in_first_followup60=None
+        if first is None
+        else bool(nonfoot[first : first + 61].any()),
+        other_agent_contact_in_first_followup60=None
+        if first is None
+        else bool(others[first : first + 61].any()),
+        diagnostic_defined_after_pilot_not_preregistered=True,
+        original_scoring_unchanged=True,
+        foot_possession_qualified=False,
+        physical_steps_added=0,
+    )
