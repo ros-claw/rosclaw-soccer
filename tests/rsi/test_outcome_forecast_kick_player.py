@@ -70,6 +70,7 @@ def test_eligible_observed_rescue_then_reward_and_smallest_change_tie_break():
 def test_axis_scope_has_exact_declared_forecast_budget():
     assert candidate_native_budget((0, 3, 4, 6, 9, 10)) == 8320
     assert candidate_native_budget(tuple(range(12))) == 16000
+    assert candidate_native_budget(tuple(range(12)), response=True) == 16640
 
 
 @pytest.mark.parametrize("axes", [(), (0, 0), (12,), (True,), [0, 1]])

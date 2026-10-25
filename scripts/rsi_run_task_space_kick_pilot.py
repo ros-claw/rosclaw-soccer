@@ -20,13 +20,19 @@ def main():
             "precontact-sparse",
             "nn-outcome",
             "nn-outcome-full-leg",
+            "nn-outcome-response",
         ),
         default="measured-pose",
     )
     a = p.parse_args()
-    nn_outcome = a.interface in ("nn-outcome", "nn-outcome-full-leg")
-    axes = tuple(range(12)) if a.interface == "nn-outcome-full-leg" else (0, 3, 4, 6, 9, 10)
-    forecast_cap = (1 + 2 * len(axes)) * 640 * 16 if nn_outcome else 172800
+    nn_outcome = a.interface in ("nn-outcome", "nn-outcome-full-leg", "nn-outcome-response")
+    response = a.interface == "nn-outcome-response"
+    axes = (
+        tuple(range(12))
+        if a.interface in ("nn-outcome-full-leg", "nn-outcome-response")
+        else (0, 3, 4, 6, 9, 10)
+    )
+    forecast_cap = (1 + 2 * len(axes) + int(response)) * 640 * 16 if nn_outcome else 172800
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
@@ -114,6 +120,7 @@ def main():
 
     class Controlled(parent_type):
         candidate_axes = axes
+        response_enabled = response
         foundation_relative = a.interface != "measured-pose"
         precontact_sparse = a.interface == "precontact-sparse"
 
@@ -137,7 +144,10 @@ def main():
             actual_native_step_ceiling=115200,
             forecast_native_step_ceiling=forecast_cap,
             forecast_controls_per_candidate=64 if nn_outcome else 1,
-            candidate_set=["parent", "one_admissible_declared_joint_plusminus_0.03"]
+            candidate_set=(
+                ["parent", "one_admissible_declared_joint_plusminus_0.03"]
+                + (["native-response-coordinated"] if response else [])
+            )
             if nn_outcome
             else [
                 "original",
@@ -158,6 +168,10 @@ def main():
             activation_foot_gap_m=0.06 if nn_outcome else 0.18,
             maximum_actual_interventions_per_world=1 if nn_outcome else None,
             candidate_selection_requires_observed_window_rescue=nn_outcome,
+            local_native_response_model=response,
+            response_target_forward_margin_m=1.2 if response else None,
+            response_target_lateral_ratio=0.25 if response else None,
+            response_ridge=0.1 if response else None,
             no_model_or_gain_changes=True,
             privileged_per_course_approach=True,
             original_exam_unchanged=True,

@@ -18,7 +18,7 @@ from rosclaw_soccer.rsi.task_space_kick_player import encode_modified_target
 PITCH_AXES = (0, 3, 4, 6, 9, 10)
 
 
-def candidate_native_budget(axes: tuple[int, ...]) -> int:
+def candidate_native_budget(axes: tuple[int, ...], *, response: bool = False) -> int:
     if (
         type(axes) is not tuple
         or not axes
@@ -26,7 +26,9 @@ def candidate_native_budget(axes: tuple[int, ...]) -> int:
         or any(type(i) is not int or not 0 <= i < 12 for i in axes)
     ):
         raise ValueError("explicit unique candidate leg axes required")
-    return (1 + 2 * len(axes)) * 640
+    if type(response) is not bool:
+        raise ValueError("explicit response-model switch required")
+    return (1 + 2 * len(axes) + int(response)) * 640
 
 
 def choose_window_rescue(
@@ -61,6 +63,7 @@ def choose_window_rescue(
 
 class OutcomeForecastKickPlayer(SharedRoboNaldoPlayer):
     candidate_axes = PITCH_AXES
+    response_enabled = False
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -71,7 +74,9 @@ class OutcomeForecastKickPlayer(SharedRoboNaldoPlayer):
             self,
             expected_policy_type=type(self.policy),
             expected_model_hash=compiled_model_hash(self.world.model),
-            native_step_budget=candidate_native_budget(self.candidate_axes),
+            native_step_budget=candidate_native_budget(
+                self.candidate_axes, response=self.response_enabled
+            ),
         )
         self.forecaster = self.predictor
         self.decided = self.foot_seen = self.nonfoot_seen = False
@@ -144,6 +149,53 @@ class OutcomeForecastKickPlayer(SharedRoboNaldoPlayer):
                     candidates.append(
                         (f"axis-{axis}-{sign:+.0f}", target, history, predicted, outcome)
                     )
+        response_report = None
+        if (
+            self.response_enabled
+            and not baseline["window_pass"]
+            and choose_window_rescue(candidates) == 0
+        ):
+            from rosclaw_soccer.rsi.contact_response_model import propose_contact_response
+
+            proposal, response_report = propose_contact_response(
+                nominal,
+                self.world.model.jnt_range[self.layout.joints].astype(np.float64),
+                baseline,
+                [(c[1], c[4]) for c in candidates[1:]],
+            )
+            if proposal is not None:
+                changed_axes = tuple(int(i) for i in np.flatnonzero(abs(proposal - nominal) > 1e-7))
+                retained = nominal.copy()
+                retained[list(changed_axes)] = proposal[list(changed_axes)]
+                encoded = (
+                    encode_modified_target(
+                        self.policy, retained, self.mapping, modified_indices=changed_axes
+                    )
+                    if changed_axes
+                    else None
+                )
+                if encoded is not None:
+                    target, history = encoded
+                    ids = np.flatnonzero(target != nominal)
+                    limits = self.world.model.jnt_range[self.layout.joints]
+                    if (
+                        len(ids)
+                        and abs(target - nominal).max() <= 0.030001
+                        and (target[ids] >= limits[ids, 0]).all()
+                        and (target[ids] <= limits[ids, 1]).all()
+                    ):
+                        predicted = self.predictor.forecast(
+                            controls=horizon, first_target=target, first_action_history=history
+                        )
+                        outcome = predicted_touch_window(
+                            predicted,
+                            ball_address=self.layout.bq,
+                            root_address=self.layout.rq,
+                            start_control=frame,
+                        )
+                        candidates.append(
+                            ("native-response-coordinated", target, history, predicted, outcome)
+                        )
         chosen = choose_window_rescue(candidates)
         name, target, chosen_history, prediction, outcome = candidates[chosen]
         self.candidate_predictions = [(c[0], c[3]) for c in candidates]
@@ -158,6 +210,7 @@ class OutcomeForecastKickPlayer(SharedRoboNaldoPlayer):
                 changed=chosen != 0,
                 actual_prefix_has_no_foot_or_nonfoot_contact=True,
                 requested_delta_rad=(target - nominal).tolist(),
+                response_model=response_report,
             )
         )
         if chosen:

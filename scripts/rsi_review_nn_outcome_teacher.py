@@ -22,9 +22,11 @@ def main():
         raise ValueError("unused readback output and exact closed pilot required")
     report = json.loads(cp.read_text())
     mode = report.get("interface", "nn-outcome")
-    if mode not in ("nn-outcome", "nn-outcome-full-leg"):
+    if mode not in ("nn-outcome", "nn-outcome-full-leg", "nn-outcome-response"):
         raise ValueError("declared NN-outcome protocol required")
-    per_world_cap = 16000 if mode == "nn-outcome-full-leg" else 8320
+    per_world_cap = (
+        16640 if mode == "nn-outcome-response" else 16000 if mode == "nn-outcome-full-leg" else 8320
+    )
     pins = dict(report["input_file_hashes"])
     pins[str(cp)] = a.pilot_hash
     if "declaration_hash" in report:
@@ -56,6 +58,7 @@ def main():
     import numpy as np
 
     from rosclaw_soccer.rsi.ball_surface_tasks import measure_ball_surfaces
+    from rosclaw_soccer.rsi.contact_response_model import propose_contact_response
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.outcome_forecast_kick_player import choose_window_rescue
     from rosclaw_soccer.rsi.predicted_touch_window import predicted_touch_window
@@ -127,6 +130,23 @@ def main():
                     raise ValueError("parent future NN targets differ from actual B")
         if events:
             event = events[0]
+            if mode == "nn-outcome-response":
+                probes_only = [c for c in candidates if c[0] != "native-response-coordinated"]
+                proposal, model_report = None, None
+                if not probes_only[0][4]["window_pass"] and choose_window_rescue(probes_only) == 0:
+                    proposal, model_report = propose_contact_response(
+                        probes_only[0][1],
+                        model.jnt_range[layout.joints].astype(np.float64),
+                        probes_only[0][4],
+                        [(c[1], c[4]) for c in probes_only[1:]],
+                    )
+                if hash_json(model_report) != hash_json(event.get("response_model")):
+                    raise ValueError("local native response fit does not reproduce recorded model")
+                coordinated = [c for c in candidates if c[0] == "native-response-coordinated"]
+                if len(coordinated) > 1 or (coordinated and proposal is None):
+                    raise ValueError("coordinated candidate lacks its fitted source proposal")
+                if coordinated and not np.allclose(coordinated[0][1], proposal, atol=1e-6, rtol=0):
+                    raise ValueError("coordinated target differs from local data-driven model")
             if hash_json(readback) != hash_json(event["candidate_windows"]):
                 raise ValueError("candidate window math differs")
             chosen = choose_window_rescue(candidates)
