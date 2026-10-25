@@ -17,11 +17,16 @@ def main():
     p.add_argument("--synergy-model-hash")
     p.add_argument("--whole-joint-reference", action="store_true")
     p.add_argument("--aim-goal-y", type=float)
+    p.add_argument("--executed-synergy", action="store_true")
     a = p.parse_args()
     if a.pre_proposal_96 and a.pre_proposal_128:
         raise ValueError("one explicit forecast qualification protocol required")
     pre_proposal = a.pre_proposal_96 or a.pre_proposal_128
     aim_command = a.aim_goal_y is not None
+    if a.executed_synergy and (
+        not a.pre_proposal_128 or a.synergy_model is None or a.whole_joint_reference or aim_command
+    ):
+        raise ValueError("separate128 executed-target qualification and fitted subspace required")
     if aim_command and (
         not a.pre_proposal_128
         or a.synergy_model is not None
@@ -62,6 +67,8 @@ def main():
             raise ValueError("executed public motion subspace required")
         if feedback_complement and not a.pre_proposal_128:
             raise ValueError("new feedback complement requires explicit128 qualification")
+        if feedback_complement and a.executed_synergy:
+            raise ValueError("executed-target study uses only the original qualified subspace")
         for key, value in synergy_model["input_file_hashes"].items():
             if key in pins and pins[key] != value:
                 raise ValueError("conflicting motion model source/asset binding")
@@ -97,6 +104,10 @@ def main():
     from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
 
     from rosclaw_soccer.rsi.aim_goal_command import AimGoalCommand, condition_aim_goal
+    from rosclaw_soccer.rsi.executed_target_synergy import (
+        ExecutedTargetSynergy,
+        apply_executed_target_synergy,
+    )
     from rosclaw_soccer.rsi.experimental_velocity_evidence import admit_heading_evidence
     from rosclaw_soccer.rsi.motion_synergy_reference import (
         MotionSynergyPlan,
@@ -141,7 +152,11 @@ def main():
     types = _load_robonaldo(one("/policy/robonaldo/FreeKick.py").parents[2])
     instances = []
     scheduled_frames = (80, 100, 150, 220)
-    frames = (reference["entry_control"], *scheduled_frames) if aim_command else scheduled_frames
+    frames = (
+        (reference["entry_control"], *scheduled_frames)
+        if aim_command or a.executed_synergy
+        else scheduled_frames
+    )
     if len(set(frames)) != len(frames):
         raise ValueError("distinct declared measured-entry and scheduled probes required")
     horizon = 128 if a.pre_proposal_128 else 96 if a.pre_proposal_96 else 64
@@ -167,6 +182,9 @@ def main():
                 native_step_budget=forecast_budget,
             )
             self.predictions = []
+            self.target_plan = None
+            self.target_edits = []
+            self.original_reference = None
             instances.append(self)
 
         def install_measured_entry(self, samples, *, reference_frame):
@@ -180,7 +198,27 @@ def main():
                 )
                 condition_aim_goal(self.policy, command)
                 self.goal = self.policy.target_pos_w.copy()
-            if basis_isaac is not None:
+            if a.executed_synergy:
+                self.original_reference = {
+                    k: getattr(self.policy, k).copy()
+                    for k in (
+                        "motion_joint_pos",
+                        "motion_joint_vel",
+                        "motion_body_pos",
+                        "motion_body_quat",
+                    )
+                }
+                self.target_plan = ExecutedTargetSynergy(
+                    self.world.control_steps,
+                    tuple(tuple(float(x) for x in r) for r in basis_hg),
+                    ((0.01, 0.0, 0.0, 0.0, 0.0, 0.0), (-0.01, 0.0, 0.0, 0.0, 0.0, 0.0)),
+                )
+                self.predictions.append(
+                    self.predictor.forecast(
+                        controls=horizon, before_proposal=True, target_plan=self.target_plan
+                    )
+                )
+            elif basis_isaac is not None:
                 plan = MotionSynergyPlan(
                     reference_frame,
                     tuple(tuple(float(x) for x in r) for r in basis_isaac),
@@ -201,9 +239,14 @@ def main():
         def propose(self):
             if pre_proposal and self.world.control_steps in scheduled_frames:
                 self.predictions.append(
-                    self.predictor.forecast(controls=horizon, before_proposal=True)
+                    self.predictor.forecast(
+                        controls=horizon, before_proposal=True, target_plan=self.target_plan
+                    )
                 )
             target, receipt = super().propose()
+            if self.target_plan is not None:
+                target, edit = apply_executed_target_synergy(self, self.target_plan)
+                self.target_edits.append(edit)
             if not pre_proposal and self.world.control_steps in frames:
                 self.predictions.append(self.predictor.forecast(controls=horizon))
             return target, receipt
@@ -218,7 +261,9 @@ def main():
             probes=frames,
             controls_per_probe=horizon,
             before_proposal=pre_proposal,
-            reference_conditioning="whole_joint_reference_nonzero"
+            reference_conditioning="OFF_original_arrays"
+            if a.executed_synergy
+            else "whole_joint_reference_nonzero"
             if a.whole_joint_reference
             else "feedback_complement_nonzero"
             if feedback_complement
@@ -233,6 +278,7 @@ def main():
             and not a.whole_joint_reference
             and not aim_command,
             command_goal_conditioning="entry_nonzero_world_aim" if aim_command else "OFF",
+            executed_target_conditioning=a.executed_synergy,
             task_scoring_goal_world_point=[8.0, 0.0, 0.11],
             desired_command_world_point=[8.0, a.aim_goal_y, 0.11]
             if aim_command
@@ -260,6 +306,16 @@ def main():
         raise ValueError("all preregistered NN forecast boundaries required")
     if aim_command and not probe.predictions[0]["aim_command_conditioned"]:
         raise ValueError("entry forecast must apply the nonzero command on an unchanged donor")
+    if a.executed_synergy and (
+        not probe.predictions[0]["executed_target_plan"]
+        or not any(e["applied"] for e in probe.target_edits)
+        or any(e["reference_modified"] for e in probe.target_edits)
+        or any(
+            not np.array_equal(value, getattr(probe.policy, key))
+            for key, value in probe.original_reference.items()
+        )
+    ):
+        raise ValueError("entry-conditioned actually executed multiframe target edits required")
     for predicted in probe.predictions:
         start = predicted["donor_control_frame"]
         if predicted["controls"] != horizon or predicted["body_failed"]:
@@ -299,7 +355,9 @@ def main():
         a.output / "complete.json",
         dict(
             status=(
-                "G1_AIM_GOAL_COMMAND_NN_FUTURES_EXACT"
+                "G1_EXECUTED_TARGET_SYNERGY_NN_FUTURES_EXACT"
+                if a.executed_synergy
+                else "G1_AIM_GOAL_COMMAND_NN_FUTURES_EXACT"
                 if aim_command
                 else "G1_WHOLE_JOINT_REFERENCE_NN_FUTURES_EXACT"
                 if a.whole_joint_reference
@@ -310,7 +368,9 @@ def main():
                 else "G1_SYNERGY_REFERENCE_NN_FUTURES_EXACT"
             ),
             before_proposal=pre_proposal,
-            reference_conditioning="whole_joint_reference_nonzero"
+            reference_conditioning="OFF_original_arrays"
+            if a.executed_synergy
+            else "whole_joint_reference_nonzero"
             if a.whole_joint_reference
             else "feedback_complement_nonzero"
             if feedback_complement
@@ -319,6 +379,12 @@ def main():
             else "OFF_original_arrays",
             source_head=a.expected_head,
             command_goal_conditioning="entry_nonzero_world_aim" if aim_command else "OFF",
+            executed_target_conditioning=a.executed_synergy,
+            executed_target_edits=probe.target_edits,
+            reference_arrays_unchanged_by_target_plan=bool(a.executed_synergy),
+            future_target_semantics="original_NN_plus_executed_target_plan"
+            if a.executed_synergy
+            else "original_NN",
             task_scoring_goal_world_point=[8.0, 0.0, 0.11],
             desired_command_world_point=[8.0, a.aim_goal_y, 0.11]
             if aim_command

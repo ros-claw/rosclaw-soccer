@@ -85,6 +85,8 @@ class SharedRoboNaldoPlayer:
         self.proposals = 0
         self.commits = 0
         self.measured_entry_receipt: str | None = None
+        self._forecast_control_origin = 0
+        self._target_edit_boundary: int | None = None
         owners[prefix] = identities
         self._observe()
         policy.target_pos_w = self.goal.copy()
