@@ -277,6 +277,7 @@ def main():
                 raise ValueError("exact confined physical teacher-parent arrays required")
             pins[str(path)] = row["artifact"]["hash"]
     approach_config = None
+    surface_mode = False
     if a.experimental_approach_config is not None:
         if (
             a.experimental_approach_config.is_symlink()
@@ -285,10 +286,27 @@ def main():
             raise ValueError("exact separately declared experimental approach config required")
         pins[str(a.experimental_approach_config)] = a.experimental_approach_config_hash
         approach_config = json.loads(a.experimental_approach_config.read_text())
+        surface_mode = (
+            approach_config.get("schema")
+            == "soccer.native_single_finisher_experimental_approach.v2"
+        )
+        allowed_fields = {
+            "schema",
+            "point_root",
+            "point_hash",
+            "reference_source",
+            "reference_hash",
+        }
+        if surface_mode:
+            allowed_fields.add("surface_aware_contact_tracking")
         if (
-            set(approach_config)
-            != {"schema", "point_root", "point_hash", "reference_source", "reference_hash"}
-            or approach_config["schema"] != "soccer.native_single_finisher_experimental_approach.v1"
+            set(approach_config) != allowed_fields
+            or approach_config["schema"]
+            not in (
+                "soccer.native_single_finisher_experimental_approach.v1",
+                "soccer.native_single_finisher_experimental_approach.v2",
+            )
+            or (surface_mode and approach_config["surface_aware_contact_tracking"] is not True)
         ):
             raise ValueError("fixed single-finisher experimental approach contract required")
         point_root = Path(approach_config["point_root"])
@@ -366,6 +384,10 @@ def main():
         SharedNativeMotorWorld,
     )
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
+    from rosclaw_soccer.rsi.surface_foot_interception import (
+        foot_surface_points,
+        surface_foot_interception_command,
+    )
     from rosclaw_soccer.sim.contracts import hash_json
 
     if approach_config is not None:
@@ -416,7 +438,9 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="native8_single_player_accelerated_approach_contact.v10"
+            protocol="native8_single_player_surface_aware_approach_contact.v11"
+            if surface_mode
+            else "native8_single_player_accelerated_approach_contact.v10"
             if approach_config is not None
             else "native8_single_player_foot_contact_teacher.v9"
             if teacher_config is not None
@@ -440,6 +464,8 @@ def main():
             experimental_approach_config=approach_config,
             experimental_approach_config_hash=a.experimental_approach_config_hash,
             approach_nominal_teacher_history_is_own_previous_proposal=approach_config is not None,
+            surface_aware_contact_tracking=surface_mode,
+            contact_body_force_trace_is_thresholded_above_one_newton=approach_config is not None,
             approach_experimental_speed_norm_mps=2.0 if approach_config is not None else None,
             approach_slew_per_body_component_per_control=0.08
             if approach_config is not None
@@ -728,6 +754,20 @@ def main():
                 )
                 if approach_config is not None:
                     controls.update({"approach_" + k: [] for k in approach_keys})
+                    controls["approach_contact_body_force_gt1"] = []
+                if surface_mode:
+                    controls.update(
+                        {
+                            "approach_surface_" + k: []
+                            for k in (
+                                "active",
+                                "selected_foot",
+                                "point",
+                                "target",
+                                "degenerate_ray",
+                            )
+                        }
+                    )
                 for frame in range(horizon):
                     if a.foot_track_course:
                         metric.qpos[:] = d.qpos
@@ -742,6 +782,13 @@ def main():
                     role_observations, role_actor_commands = [], []
                     residual_values = {key: [] for key in residual_keys}
                     approach_values = {key: [] for key in approach_keys}
+                    surface_trace = dict(
+                        active=False,
+                        selected_foot=-1,
+                        point=np.zeros(3),
+                        target=np.zeros(3),
+                        degenerate_ray=False,
+                    )
                     if (
                         residual_policy is not None
                         and arm == "role-command-residual"
@@ -812,16 +859,31 @@ def main():
                             and frame >= 50
                             and np.linalg.norm(ball_xy - q[:2]) < 1.0
                         ):
-                            command, _ = foot_tracking_command(
-                                q[:2],
-                                yaw,
-                                metric.xpos[feet[prefix], :2].copy(),
-                                ball_xy,
-                                d.qvel[lo.bv : lo.bv + 2].copy(),
-                                previous_nominal_world_commands[agent_index]
-                                if approach_config is not None
-                                else previous_world_commands[agent_index],
-                            )
+                            if (
+                                surface_mode
+                                and prefix == "red_finisher/"
+                                and arm != "role-foot-clearance"
+                            ):
+                                command, surface_trace = surface_foot_interception_command(
+                                    yaw=yaw,
+                                    surfaces=foot_surface_points(m, metric, lo),
+                                    ball_position=d.qpos[lo.bq : lo.bq + 3].copy(),
+                                    ball_velocity_xy=d.qvel[lo.bv : lo.bv + 2].copy(),
+                                    previous_nominal_world_command=previous_nominal_world_commands[
+                                        agent_index
+                                    ],
+                                )
+                            else:
+                                command, _ = foot_tracking_command(
+                                    q[:2],
+                                    yaw,
+                                    metric.xpos[feet[prefix], :2].copy(),
+                                    ball_xy,
+                                    d.qvel[lo.bv : lo.bv + 2].copy(),
+                                    previous_nominal_world_commands[agent_index]
+                                    if approach_config is not None
+                                    else previous_world_commands[agent_index],
+                                )
                         if command_policy is not None:
                             observation = role_command_observation(
                                 d,
@@ -1025,8 +1087,27 @@ def main():
                     if approach_config is not None:
                         for key in approach_keys:
                             controls["approach_" + key].append(approach_values[key])
+                    if surface_mode:
+                        for key, value in surface_trace.items():
+                            controls["approach_surface_" + key].append(np.asarray(value).copy())
                     step = w.advance(targets)
                     charged += 10
+                    if approach_config is not None:
+                        by_body = np.zeros(m.nbody)
+                        for body_forces in w.last_ball_contact_bodies.values():
+                            for name, force in body_forces.items():
+                                by_body[m.body(name).id] = force
+                        reconstructed = np.zeros((8, 3))
+                        for body, (owner, part) in w.contact_owners.items():
+                            reconstructed[owner, part] = max(
+                                reconstructed[owner, part], by_body[body]
+                            )
+                        actual = step["ball_forces"].max(axis=0)
+                        if not np.array_equal(reconstructed, np.where(actual > 1, actual, 0)):
+                            raise ValueError(
+                                "thresholded per-body physical contact provenance differs"
+                            )
+                        controls["approach_contact_body_force_gt1"].append(by_body)
                     for key in raw:
                         raw[key].append(step[key])
                     metric.qpos[:] = d.qpos
@@ -1353,6 +1434,9 @@ def main():
                     teacher_parent_identity=teacher_parent_identity,
                     experimental_approach_authority=approach_authority,
                     gait_profile_hashes={p: str(s.contract_hash) for p, s in streams.items()},
+                    contact_body_names=[m.body(i).name for i in range(m.nbody)]
+                    if approach_config is not None
+                    else None,
                     teacher_active_controls=int(arrays["teacher_active"].sum())
                     if contact_teacher is not None
                     else 0,
