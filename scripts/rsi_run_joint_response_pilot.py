@@ -23,10 +23,15 @@ def main():
     p.add_argument("--target-qualification", type=Path)
     p.add_argument("--target-qualification-hash")
     p.add_argument("--target-feasible-axes", action="store_true")
+    p.add_argument("--motor-memory", type=Path)
+    p.add_argument("--motor-memory-hash")
     a = p.parse_args()
+    memory = a.motor_memory is not None
+    if memory != (a.motor_memory_hash is not None):
+        raise ValueError("explicit memory artifact and exact hash required together")
     if a.target_feasible_axes and not a.executed_target_search:
         raise ValueError("explicit executed-target study required for per-axis feasibility")
-    if sum((a.aim_command_search, a.sequential_restoration, a.executed_target_search)) > 1:
+    if sum((a.aim_command_search, a.sequential_restoration, a.executed_target_search, memory)) > 1:
         raise ValueError("one explicit teacher mechanism per pilot required")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -113,6 +118,15 @@ def main():
     from scripts.rsi_teacher_physics_context import load_teacher_context
 
     context = load_teacher_context(pins, a.backbone_model)
+    memory_options = ()
+    memory_report = None
+    if memory:
+        from scripts.rsi_build_partial_motor_memory import admit_memory
+
+        memory_options, memory_report = admit_memory(
+            a.motor_memory, a.motor_memory_hash, pins, context, a.backbone_model
+        )
+        check_pins(pins)
     import numpy as np
 
     from rosclaw_soccer.rsi.aim_command_kick_player import (
@@ -120,12 +134,15 @@ def main():
         declared_aim_commands,
     )
     from rosclaw_soccer.rsi.executed_synergy_kick_player import ExecutedSynergyKickPlayer
+    from rosclaw_soccer.rsi.partial_memory_kick_player import PartialMemoryKickPlayer
     from rosclaw_soccer.rsi.synergy_forecast_kick_player import SynergyForecastKickPlayer
     from rosclaw_soccer.rsi.walk_kick_teacher_episode import evaluate_episode
 
     a.output.mkdir(parents=True)
     candidate_cap = (
-        73
+        39
+        if memory
+        else 73
         if a.executed_target_search
         else 57
         if a.aim_command_search
@@ -137,10 +154,18 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="soccer.full_nn_joint_task_response_six_state_pilot.v1",
+            protocol="soccer.partial_motor_memory_source_retrieval.v1"
+            if memory
+            else "soccer.full_nn_joint_task_response_six_state_pilot.v1",
+            partial_motor_memory=memory,
+            motor_memory_hash=a.motor_memory_hash,
+            memory_runtime_options=memory_report["runtime_options"] if memory else None,
+            memory_source_states_are_consumed=memory,
             aim_command_search=a.aim_command_search,
             executed_target_search=a.executed_target_search,
-            executed_target_projection_mode="per_axis" if a.target_feasible_axes else "whole_tick",
+            executed_target_projection_mode="per_axis"
+            if a.target_feasible_axes or memory
+            else "whole_tick",
             target_qualification_hash=a.target_qualification_hash,
             aim_command_world_points=[list(c.world_point) for c in declared_aim_commands()]
             if a.aim_command_search
@@ -161,17 +186,21 @@ def main():
             failure_indices=[2, 8, 22, 27],
             old_candidate_ceiling=37,
             new_candidate_ceiling=candidate_cap,
-            new_probe_axes=6 if a.executed_target_search else 29,
-            new_probe_signs=None if a.executed_target_search else [-1, 1],
-            probe_reference_rad=None if a.executed_target_search else 0.03,
-            proposal_l1_trust_rad=None if a.executed_target_search else 0.06,
-            proposal_axis_trust_rad=0.06 if a.executed_target_search else 0.03,
-            temporal_lobe="two24interval_lobes"
+            new_probe_axes=None if memory else 6 if a.executed_target_search else 29,
+            new_probe_signs=None if a.executed_target_search or memory else [-1, 1],
+            probe_reference_rad=None if a.executed_target_search or memory else 0.03,
+            proposal_l1_trust_rad=None if a.executed_target_search or memory else 0.06,
+            proposal_axis_trust_rad=0.06 if a.executed_target_search or memory else 0.03,
+            temporal_lobe="typed_frozen_memory_options"
+            if memory
+            else "two24interval_lobes"
             if a.executed_target_search
             else "first24intervals_only",
-            second_lobe_coefficients_zero=not a.executed_target_search,
+            second_lobe_coefficients_zero=not (a.executed_target_search or memory),
             old_success_branch_must_not_search_new_actions=True,
-            new_research_direction="actual_HG29_target_authority_not_reference_input"
+            new_research_direction="frozen_partial_options_current_body_retrieval"
+            if memory
+            else "actual_HG29_target_authority_not_reference_input"
             if a.executed_target_search
             else "task_conditioned_full_NN_physics_response_not_success_PCA",
             parent_nn_weights_and_PD_unchanged=True,
@@ -193,7 +222,9 @@ def main():
             instances = []
 
             class Controlled(
-                ExecutedSynergyKickPlayer
+                PartialMemoryKickPlayer
+                if memory and arm == "C"
+                else ExecutedSynergyKickPlayer
                 if a.executed_target_search and arm == "C"
                 else AimCommandKickPlayer
                 if a.aim_command_search and arm == "C"
@@ -202,15 +233,22 @@ def main():
                 basis_hg = context["basis"]
                 forecast_controls = 128
                 joint_task_response_enabled = (
-                    arm == "C" and not a.aim_command_search and not a.executed_target_search
+                    arm == "C"
+                    and not a.aim_command_search
+                    and not a.executed_target_search
+                    and not memory
                 )
                 joint_response_iterations = 4 if a.sequential_restoration and arm == "C" else 1
-                target_projection_mode = "per_axis" if a.target_feasible_axes else "whole_tick"
+                target_projection_mode = (
+                    "per_axis" if a.target_feasible_axes or memory else "whole_tick"
+                )
                 observed_instances = instances
 
                 def __init__(self, *args, **kwargs):
                     super().__init__(*args, **kwargs)
                     self.observed_instances.append(self)
+
+            Controlled.memory_options = memory_options
 
             row, arrays = evaluate_episode(
                 model=context["model"],
@@ -274,7 +312,7 @@ def main():
                         requested_controls=forecast["requested_controls"],
                         **(
                             dict(target_edits=forecast["executed_target_edits"])
-                            if a.executed_target_search
+                            if a.executed_target_search or memory
                             else {}
                         ),
                     )
@@ -293,7 +331,7 @@ def main():
                 desired_command_world_point=ctrl.goal.tolist(),
                 **(
                     dict(actual_target_edits=getattr(ctrl, "target_edits", []))
-                    if a.executed_target_search
+                    if a.executed_target_search or memory
                     else {}
                 ),
             )
@@ -332,7 +370,9 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="FULL_NN_EXECUTED_TARGET_PILOT_COMPLETE"
+            status="FULL_NN_PARTIAL_MEMORY_RETRIEVAL_COMPLETE"
+            if memory
+            else "FULL_NN_EXECUTED_TARGET_PILOT_COMPLETE"
             if a.executed_target_search
             else "FULL_NN_AIM_COMMAND_PILOT_COMPLETE"
             if a.aim_command_search
@@ -350,6 +390,7 @@ def main():
             independently_audited=False,
             neural_optimizer_updates=0,
             physical_teacher_qualified=False,
+            memory_retrieval_is_not_independent_generalization=memory,
             hardware_authorized=False,
             promotion_authorized=False,
             goal_complete=False,

@@ -68,6 +68,7 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
         self.hg_to_isaac = tuple(int(i) for i in mapping)
         if type(self.extra_candidate_ceiling) is not int or self.extra_candidate_ceiling not in (
             0,
+            2,
             20,
             36,
         ):
@@ -336,6 +337,9 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
             self.plan_applied = True
             self.selected_prediction = prediction
         self.candidate_predictions = [(c[0], c[2]) for c in candidates]
+        if self.extra_candidate_ceiling == 2:
+            from rosclaw_soccer.rsi.partial_motor_memory import encode_motor_option
+
         self.events.append(
             dict(
                 frame=frame,
@@ -352,6 +356,15 @@ class SynergyForecastKickPlayer(SharedRoboNaldoPlayer):
                         coefficients=None
                         if c[1] is None or isinstance(c[1], AimGoalCommand)
                         else c[1].coefficients,
+                        **(
+                            dict(
+                                memory_option=encode_motor_option(c[1])
+                                if isinstance(c[1], (AimGoalCommand, ExecutedTargetSynergy))
+                                else None
+                            )
+                            if self.extra_candidate_ceiling == 2
+                            else {}
+                        ),
                         **(
                             dict(
                                 aim_world_point=list(c[1].world_point)

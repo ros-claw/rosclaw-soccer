@@ -10,6 +10,8 @@ import rosclaw_soccer.rsi.synergy_forecast_kick_player as synergy
 import rosclaw_soccer.rsi.synergy_response_model as response_model
 from rosclaw_soccer.rsi.aim_command_kick_player import AimCommandKickPlayer
 from rosclaw_soccer.rsi.aim_goal_command import AimGoalCommand
+from rosclaw_soccer.rsi.partial_memory_kick_player import PartialMemoryKickPlayer
+from rosclaw_soccer.rsi.partial_motor_memory import decode_motor_options
 from scripts.rsi_review_motion_timing_teacher import (
     verify_stable_plastic_search,
     verify_synergy_search,
@@ -36,13 +38,18 @@ from scripts.rsi_review_motion_timing_teacher import (
         ("aim-retains", 37),
         ("executed", 73),
         ("executed-retains", 37),
+        ("memory-aim", 39),
+        ("memory-target", 39),
+        ("memory-retains", 37),
     ],
 )
 def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
     monkeypatch, mode, expected_calls, projection
 ):
     p = object.__new__(
-        executed_controller.ExecutedSynergyKickPlayer
+        PartialMemoryKickPlayer
+        if mode.startswith("memory")
+        else executed_controller.ExecutedSynergyKickPlayer
         if mode.startswith("executed")
         else AimCommandKickPlayer
         if mode.startswith("aim")
@@ -59,6 +66,17 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
     p.target_projection_mode = projection
     p.basis_isaac = tuple(tuple(float(i == j) for j in range(29)) for i in range(6))
     p.basis_hg = np.eye(6, 29, dtype=np.float64)
+    p.memory_options = decode_motor_options(
+        [
+            dict(kind="aim_command", world_point=[8.0, -2.0, 0.11]),
+            dict(
+                kind="executed_target_synergy",
+                coefficients=[[0.01] * 6, [-0.01] * 6],
+                projection_mode="per_axis",
+            ),
+        ],
+        p.basis_hg,
+    )
     p.synergy_response_enabled = mode == "response"
     p.forecast_controls = (
         128
@@ -76,6 +94,9 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
             "aim-retains",
             "executed",
             "executed-retains",
+            "memory-aim",
+            "memory-target",
+            "memory-retains",
         )
         else 96
     )
@@ -113,6 +134,7 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
                 "sequential-retains",
                 "aim-retains",
                 "executed-retains",
+                "memory-retains",
             )
             and reference_plan is not None
             and reference_plan.coefficients[0][0] > 0
@@ -122,6 +144,8 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
         passes = passes or (mode in ("joint", "sequential") and len(calls) > 37)
         passes = passes or (mode == "aim" and len(calls) > 37)
         passes = passes or (mode == "executed" and len(calls) > 37)
+        passes = passes or (mode == "memory-aim" and len(calls) == 38)
+        passes = passes or (mode == "memory-target" and len(calls) == 39)
         if not passes:
             r["qpos"][:, 0] *= 0.1
         return r
@@ -162,7 +186,19 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
     audit_choice = verify_synergy_search(
         event["candidate_windows"][:37], [0.0] * min(37, expected_calls), event["generations"]
     )
-    if mode == "executed":
+    if mode == "memory-aim":
+        assert event["selected"] == "memory-00" and event["selected_basis"] == "aim-command"
+        assert not p.target_edits
+        assert event["candidate_windows"][37]["memory_option"]["kind"] == "aim_command"
+    elif mode == "memory-target":
+        assert event["selected"] == "memory-01" and event["selected_basis"] == "executed-target"
+        assert p.executed_target_plan.start_control == 100
+        assert p.target_edits == [{"applied": True}]
+        assert event["candidate_windows"][38]["memory_option"]["projection_mode"] == "per_axis"
+    elif mode == "memory-retains":
+        assert audit_choice > 0 and not p.target_edits
+        assert event["additional_candidate_search"] is None
+    elif mode == "executed":
         assert audit_choice == 0 and event["selected"].startswith("target-")
         assert event["selected_basis"] == "executed-target"
         assert not event["original_actual_target_authority_unchanged"]
@@ -207,6 +243,8 @@ def test_cem_is_bounded_repeatable_and_adopts_only_qualified_reference(
             "aim",
             "aim-retains",
             "executed-retains",
+            "memory-aim",
+            "memory-retains",
         )
     )
     if mode in ("stable", "plastic", "stable-parent"):

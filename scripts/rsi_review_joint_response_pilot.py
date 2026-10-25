@@ -140,6 +140,7 @@ def main():
         p.add_argument("--" + k, type=Path, required=True)
     p.add_argument("--pilot-hash", required=True)
     p.add_argument("--expected-head", required=True)
+    p.add_argument("--motor-memory", type=Path)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -155,20 +156,32 @@ def main():
     sequential = dec.get("sequential_restoration", False)
     aim = dec.get("aim_command_search", False)
     executed = dec.get("executed_target_search", False)
+    memory = dec.get("partial_motor_memory", False)
     projection = dec.get("executed_target_projection_mode", "whole_tick")
+    if memory and projection != "per_axis":
+        raise ValueError("memory target requires its qualified per-axis interface")
     if executed and projection not in ("whole_tick", "per_axis"):
         raise ValueError("explicit executed-target projection contract required")
     if (
-        any(type(v) is not bool for v in (sequential, aim, executed))
-        or sum((sequential, aim, executed)) > 1
+        any(type(v) is not bool for v in (sequential, aim, executed, memory))
+        or sum((sequential, aim, executed, memory)) > 1
     ):
         raise ValueError("explicit boolean response protocol required")
-    candidate_cap = 73 if executed else 57 if aim else 273 if sequential else 96
+    candidate_cap = 39 if memory else 73 if executed else 57 if aim else 273 if sequential else 96
     forecast_cap = 6 * (37 + candidate_cap) * 1280
+    if memory and (
+        dec["protocol"] != "soccer.partial_motor_memory_source_retrieval.v1"
+        or dec["new_candidate_ceiling"] != 39
+        or dec["new_probe_axes"] is not None
+        or dec["task_scoring_goal_world_point"] != [8.0, 0.0, 0.11]
+    ):
+        raise ValueError("bounded two-option source retrieval, not new parameter search required")
     if (
         report["status"]
         != (
-            "FULL_NN_EXECUTED_TARGET_PILOT_COMPLETE"
+            "FULL_NN_PARTIAL_MEMORY_RETRIEVAL_COMPLETE"
+            if memory
+            else "FULL_NN_EXECUTED_TARGET_PILOT_COMPLETE"
             if executed
             else "FULL_NN_AIM_COMMAND_PILOT_COMPLETE"
             if aim
@@ -202,21 +215,38 @@ def main():
     from scripts.rsi_teacher_physics_context import load_teacher_context
 
     context = load_teacher_context(pins, a.backbone_model)
+    memory_options = ()
+    if memory:
+        from scripts.rsi_build_partial_motor_memory import admit_memory
+
+        if a.motor_memory is None or pins.get(str(a.motor_memory)) != dec["motor_memory_hash"]:
+            raise ValueError("explicit exact partial memory bound by physical producer required")
+        memory_options, mr = admit_memory(
+            a.motor_memory, dec["motor_memory_hash"], pins, context, a.backbone_model
+        )
+        if (
+            dec["memory_runtime_options"] != mr["runtime_options"]
+            or dec["memory_source_states_are_consumed"] is not True
+        ):
+            raise ValueError("same two options and consumed source retrieval scope required")
+        check_pins(pins)
     import numpy as np
 
     from rosclaw_soccer.rsi.aim_command_kick_player import declared_aim_commands
+    from rosclaw_soccer.rsi.aim_goal_command import AimGoalCommand
     from rosclaw_soccer.rsi.executed_target_synergy import ExecutedTargetSynergy
     from rosclaw_soccer.rsi.joint_task_response import (
         propose_joint_task_response,
         response_features,
     )
+    from rosclaw_soccer.rsi.partial_motor_memory import encode_motor_option
     from rosclaw_soccer.rsi.predicted_touch_window import predicted_touch_window
     from rosclaw_soccer.rsi.walk_kick_teacher_audit import relabel_arrays
     from rosclaw_soccer.sim.contracts import hash_json
 
     lo = context["layout"]
     codec = None
-    if executed:
+    if executed or memory:
         from importlib import import_module
 
         import yaml
@@ -234,7 +264,7 @@ def main():
             action_lo,
             action_hi,
         )
-        if any(
+        if executed and any(
             dec.get(k) != v
             for k, v in dict(
                 new_candidate_ceiling=73,
@@ -373,6 +403,11 @@ def main():
                         outcome=window,
                         coefficients=event["candidate_windows"][j]["coefficients"],
                         **(
+                            dict(memory_option=event["candidate_windows"][j]["memory_option"])
+                            if memory and arm == "C"
+                            else {}
+                        ),
+                        **(
                             dict(aim_world_point=event["candidate_windows"][j]["aim_world_point"])
                             if aim and arm == "C"
                             else {}
@@ -381,8 +416,24 @@ def main():
                 )
                 peaks.append(float(pred["ball_forces"][:, 0, 2].max()))
                 forecasts.append(pred)
-                if executed:
-                    if arm == "C" and j >= 37:
+                if executed or memory:
+                    if (
+                        memory
+                        and arm == "C"
+                        and j >= 37
+                        and type(memory_options[j - 37]) is AimGoalCommand
+                    ):
+                        if f["target_edits"]:
+                            raise ValueError("aim memory cannot secretly modify actual targets")
+                    elif arm == "C" and j >= 37:
+                        if memory:
+                            remembered = memory_options[j - 37]
+                            if type(remembered) is not ExecutedTargetSynergy:
+                                raise ValueError("explicit target memory type required")
+                            if windows[-1]["coefficients"] != [
+                                list(r) for r in remembered.coefficients
+                            ]:
+                                raise ValueError("frozen memory target coefficients differ")
                         plan = ExecutedTargetSynergy(
                             frame,
                             tuple(tuple(float(x) for x in r) for r in context["basis"]),
@@ -411,6 +462,31 @@ def main():
                 expected = 1 if windows[0]["outcome"]["window_pass"] else 37
                 if len(windows) != expected or event["joint_task_response"] is not None:
                     raise ValueError("old qualified branch must prohibit new search")
+            elif memory:
+                if len(windows) != 39 or event["joint_task_response"] is not None:
+                    raise ValueError("exact two frozen memory candidates required")
+                if any(w["memory_option"] is not None for w in windows[:37]):
+                    raise ValueError("old reference search cannot hide runtime memory options")
+                for j, option in enumerate(memory_options, 37):
+                    if windows[j]["name"] != f"memory-{j - 37:02d}" or windows[j][
+                        "memory_option"
+                    ] != encode_motor_option(option):
+                        raise ValueError("memory descriptors differ from frozen actual successes")
+                expected_report = dict(
+                    schema="soccer.two_partial_motor_memory_preview.v1",
+                    candidate_count=2,
+                    runtime_options=[encode_motor_option(o) for o in memory_options],
+                    source_case_ids_used_at_runtime=False,
+                    source_outcomes_used_at_runtime=False,
+                    new_parameter_search=False,
+                    task_exam_modified=False,
+                    neural_optimizer_updates=0,
+                    hardware_authorized=False,
+                )
+                if hash_json(event["additional_candidate_search"]) != hash_json(expected_report):
+                    raise ValueError(
+                        "memory source labels or extra parameter search entered runtime"
+                    )
             elif executed:
                 if len(windows) != 73 or event["joint_task_response"] is not None:
                     raise ValueError(
@@ -519,13 +595,21 @@ def main():
 
             eligible = [j for j, w in enumerate(windows) if j and w["outcome"]["window_pass"]]
             chosen = max(eligible, key=rank) if eligible else 0
+            memory_aim = (
+                memory and chosen >= 37 and type(memory_options[chosen - 37]) is AimGoalCommand
+            )
+            memory_target = (
+                memory
+                and chosen >= 37
+                and type(memory_options[chosen - 37]) is ExecutedTargetSynergy
+            )
             expected_basis = (
                 "parent"
                 if not chosen
                 else "executed-target"
-                if executed and chosen >= 37
+                if (executed and chosen >= 37) or memory_target
                 else "aim-command"
-                if aim and chosen >= 37
+                if (aim and chosen >= 37) or memory_aim
                 else "joint-reference"
                 if chosen >= 37
                 else "backbone"
@@ -538,14 +622,16 @@ def main():
                 raise ValueError("physically eligible selection differs")
             if (
                 chosen
-                and not (aim and chosen >= 37)
+                and not ((aim and chosen >= 37) or memory_aim)
                 and event["installation"]["coefficients"] != windows[chosen]["coefficients"]
             ):
                 raise ValueError("installed reference coefficients differ")
-            if aim:
+            if aim or memory:
                 expected_command = (
-                    aim_grid[chosen - 37].target()
-                    if chosen >= 37
+                    memory_options[chosen - 37].target()
+                    if memory_aim
+                    else aim_grid[chosen - 37].target()
+                    if aim and chosen >= 37
                     else np.array([8.0, 0.0, 0.11], np.float32)
                 )
                 if (
@@ -555,7 +641,7 @@ def main():
                     raise ValueError(
                         "task goal and actually selected desired command were conflated"
                     )
-                if chosen >= 37 and (
+                if ((aim and chosen >= 37) or memory_aim) and (
                     event["installation"]["command_world_point"] != expected_command.tolist()
                     or any(
                         event["installation"][k]
@@ -568,10 +654,11 @@ def main():
                     )
                 ):
                     raise ValueError("installed aim command modified measurements/history/task")
-            if executed:
-                if event["original_actual_target_authority_unchanged"] != (chosen < 37):
+            if executed or memory:
+                target_chosen = (executed and chosen >= 37) or memory_target
+                if event["original_actual_target_authority_unchanged"] != (not target_chosen):
                     raise ValueError("actual target authority was mislabeled as unchanged NN")
-                if chosen >= 37:
+                if target_chosen:
                     installation = event["installation"]
                     if installation["start_control"] != row["entry_control"] or any(
                         installation[k]
@@ -601,7 +688,7 @@ def main():
                     )
                 elif row["actual_target_edits"]:
                     raise ValueError("passing old branch must preserve complete old control path")
-            if chosen >= 37 and not aim and not executed:
+            if chosen >= 37 and not aim and not executed and not memory:
                 installation = event["installation"]
                 if installation["hg_to_isaac"] != [int(j) for j in context["types"][3]] or any(
                     b["start_frame"] != row["admitted_reference_phase"]
@@ -660,13 +747,16 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="FULL_NN_EXECUTED_TARGET_RAW_AND_PHYSICAL_EXAM_VERIFIED"
+            status="FULL_NN_PARTIAL_MEMORY_RAW_AND_RETRIEVAL_VERIFIED"
+            if memory
+            else "FULL_NN_EXECUTED_TARGET_RAW_AND_PHYSICAL_EXAM_VERIFIED"
             if executed
             else "FULL_NN_AIM_COMMAND_RAW_AND_PHYSICAL_EXAM_VERIFIED"
             if aim
             else "FULL_NN_JOINT_TASK_RESPONSE_RAW_AND_PHYSICAL_EXAM_VERIFIED",
             aim_command_search=aim,
             executed_target_search=executed,
+            partial_motor_memory=memory,
             executed_target_projection_mode=projection if executed else None,
             sequential_restoration=sequential,
             source_head=a.expected_head,
@@ -678,9 +768,15 @@ def main():
             actual_native_steps=native,
             forecast_requested_native_steps=charged,
             forecast_integrated_native_steps=integrated,
-            qualified_for_expansion=len(rescues) >= 2
+            qualified_for_expansion=not memory
+            and len(rescues) >= 2
             and not regressions
             and all(r["C_healthy"] for r in results),
+            source_memory_retrieval_reproduced=memory
+            and len(rescues) >= 2
+            and not regressions
+            and all(r["C_healthy"] for r in results),
+            memory_retrieval_is_not_independent_generalization=memory,
             new_physical_steps=0,
             neural_optimizer_updates=0,
             hardware_authorized=False,
