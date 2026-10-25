@@ -7,6 +7,7 @@ from rosclaw_soccer.rsi.walk_kick_teacher_plan import (
     candidate_parameters,
     elite_candidates,
     outcome_rank,
+    search_bounds,
     teacher_courses,
     uniform_candidates,
 )
@@ -71,3 +72,16 @@ def test_true_safety_and_retention_dominate_scalar_reward():
     assert outcome_rank(healthy_failure) > outcome_rank(row(False, True, True, 100))
     assert outcome_rank(healthy_failure) > outcome_rank(row(True, False, True, 100))
     assert outcome_rank(row(True, True, True, 1)) > outcome_rank(row(True, True, False, 100))
+
+
+def test_experimental_domain_is_explicit_and_does_not_mutate_old_search():
+    original = uniform_candidates(42)
+    fast = uniform_candidates(42, experimental_fast=True)
+    assert (fast[:, 0] >= 1).all() and (fast[:, 0] <= 2).all()
+    np.testing.assert_array_equal(original, uniform_candidates(42))
+    assert search_bounds()[0].tolist() == [0.5, 1.0]
+    with pytest.raises(ValueError):
+        candidate_parameters(fast[0])
+    assert candidate_parameters(fast[0], experimental_fast=True)["speed_mps"] > 1
+    second = elite_candidates(fast, tuple((i,) for i in range(8)), seed=43, experimental_fast=True)
+    assert (second[:, 0] >= 1).all() and (second[:, 0] <= 2).all()

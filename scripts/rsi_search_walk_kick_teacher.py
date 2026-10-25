@@ -12,7 +12,11 @@ def main():
     for key in ("source-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
     p.add_argument("--shard", type=int, choices=range(4), required=True)
+    p.add_argument("--experimental-approach-config", type=Path)
+    p.add_argument("--experimental-approach-config-hash")
     a = p.parse_args()
+    if (a.experimental_approach_config is None) != (a.experimental_approach_config_hash is None):
+        p.error("explicit experimental config and hash must be provided together")
     from rosclaw_soccer.rsi.walk_kick_teacher_plan import teacher_courses
     from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
     from scripts.rsi_atomic_artifacts import write_once
@@ -35,6 +39,19 @@ def main():
         raise ValueError("closed five-case original asset lineage required")
     pins = authenticated_case_pins(a.source, source)
     pins[str(path)] = a.source_hash
+    fast_assets = {}
+    fast = a.experimental_approach_config is not None
+    if fast:
+        from rosclaw_soccer.rsi.experimental_velocity_evidence import admit_heading_evidence
+
+        fast_assets, fast_pins = admit_heading_evidence(
+            a.experimental_approach_config,
+            a.experimental_approach_config_hash,
+        )
+        for key, value in fast_pins.items():
+            if key in pins and pins[key] != value:
+                raise ValueError("conflicting measured locomotion ancestry")
+            pins[key] = value
     source_pins(pins)
     check_pins(pins)
 
@@ -52,10 +69,10 @@ def main():
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
     from rosclaw_soccer.rsi.walk_kick_teacher_episode import evaluate_episode
     from rosclaw_soccer.rsi.walk_kick_teacher_plan import (
-        BOUNDS,
         candidate_parameters,
         elite_candidates,
         outcome_rank,
+        search_bounds,
         uniform_candidates,
     )
 
@@ -68,6 +85,7 @@ def main():
         velocity_model_hash=pins[str(velocity_model)],
         velocity_config_hash=pins[str(velocity_config)],
     )
+    assets.update(fast_assets)
     types = _load_robonaldo(one("/policy/robonaldo/FreeKick.py").parents[2])
     model = mujoco.MjModel.from_xml_string(shared_native_scene(scene.read_text(), prefixes=("a/",)))
     baseline_parameters = dict(
@@ -80,7 +98,10 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="soccer.public16_walk_kick_teacher_cem.v1",
+            protocol="soccer.public16_walk_kick_teacher_fast_cem.v2"
+            if fast
+            else "soccer.public16_walk_kick_teacher_cem.v1",
+            experimental_fast_approach=fast,
             source_head=a.expected_head,
             input_file_hashes=pins,
             course_bank_hash=bank_hash,
@@ -90,7 +111,7 @@ def main():
             ],
             shard=a.shard,
             assigned_indices=list(range(a.shard, 16, 4)),
-            candidate_bounds=BOUNDS.tolist(),
+            candidate_bounds=search_bounds(experimental_fast=fast).tolist(),
             generations=2,
             candidates_per_generation=8,
             elites=2,
@@ -150,7 +171,7 @@ def main():
                 write_once(root / (name + ".json"), row)
                 return row
 
-            first = uniform_candidates(c.seed)
+            first = uniform_candidates(c.seed, experimental_fast=fast)
             write_once(
                 root / "generation-one-declaration.json",
                 dict(
@@ -163,12 +184,14 @@ def main():
             )
             base = evaluate("baseline", baseline_parameters)
             generation_one = [
-                evaluate(f"candidate-{i:02d}", candidate_parameters(x)) for i, x in enumerate(first)
+                evaluate(f"candidate-{i:02d}", candidate_parameters(x, experimental_fast=fast))
+                for i, x in enumerate(first)
             ]
             second = elite_candidates(
                 first,
                 tuple(outcome_rank(row) for row in generation_one),
                 seed=c.seed + 1000,
+                experimental_fast=fast,
             )
             write_once(
                 root / "generation-two-declaration.json",
@@ -183,7 +206,7 @@ def main():
                 ),
             )
             for i, x in enumerate(second, 8):
-                evaluate(f"candidate-{i:02d}", candidate_parameters(x))
+                evaluate(f"candidate-{i:02d}", candidate_parameters(x, experimental_fast=fast))
             # Include the measured baseline as a retention fallback, never
             # manufacture net growth by dropping an already successful parent.
             eligible = ["baseline", *[f"candidate-{i:02d}" for i in range(16)]]
@@ -226,6 +249,7 @@ def main():
             a.output / "complete.json",
             dict(
                 status="PUBLIC16_TEACHER_CEM_SHARD_MEASURED_NOT_TRAINED",
+                experimental_fast_approach=fast,
                 source_head=a.expected_head,
                 input_file_hashes=pins,
                 course_bank_hash=bank_hash,

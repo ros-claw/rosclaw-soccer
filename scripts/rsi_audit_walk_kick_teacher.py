@@ -40,12 +40,17 @@ def main():
     pins, summaries, seen = {}, [], set()
     model_layout = None
     total_steps = 0
+    experimental_fast = None
     for shard_index, (name, expected_hash) in enumerate(a.shard):
         root = Path(name)
         path = root / "complete.json"
         if path.is_symlink() or digest(path) != expected_hash:
             raise ValueError("exact completed shard required")
         shard = json.loads(path.read_text())
+        fast = shard.get("experimental_fast_approach", False)
+        if type(fast) is not bool or (experimental_fast is not None and fast != experimental_fast):
+            raise ValueError("one explicit velocity-domain protocol across all shards required")
+        experimental_fast = fast
         if (
             shard["status"] != "PUBLIC16_TEACHER_CEM_SHARD_MEASURED_NOT_TRAINED"
             or shard["course_bank_hash"] != bank_hash
@@ -98,6 +103,8 @@ def main():
                 if rp.is_symlink() or digest(rp) != summary["raw_record_hashes"][record_name]:
                     raise ValueError("exact original physical record required")
                 row = json.loads(rp.read_text())
+                if row.get("experimental_fast_approach", False) != fast:
+                    raise ValueError("record domain differs from campaign")
                 artifact = course_root / row["artifact"]["path"]
                 if (
                     artifact.parent.resolve() != course_root.resolve()
@@ -140,14 +147,17 @@ def main():
                 pins[str(rp)] = summary["raw_record_hashes"][record_name]
                 pins[str(artifact)] = row["artifact"]["hash"]
                 total_steps += row["native_steps"]
-            first = uniform_candidates(c.seed)
+            first = uniform_candidates(c.seed, experimental_fast=fast)
             second = elite_candidates(
                 first,
                 tuple(outcome_rank(rows[f"candidate-{i:02d}"]) for i in range(8)),
                 seed=c.seed + 1000,
+                experimental_fast=fast,
             )
             for i, vector in enumerate(np.concatenate((first, second))):
-                if rows[f"candidate-{i:02d}"]["parameters"] != candidate_parameters(vector):
+                if rows[f"candidate-{i:02d}"]["parameters"] != candidate_parameters(
+                    vector, experimental_fast=fast
+                ):
                     raise ValueError("search differs from frozen two-generation rule")
             selected = max(names[:17], key=lambda n: outcome_rank(rows[n]))
             if selected != summary["selected"]:
@@ -196,6 +206,7 @@ def main():
         a.output,
         dict(
             status="PUBLIC16_CEM_ALL304_RAW_LABELS_AND_REEXECUTION_AUTHENTICATED_NOT_PROMOTED",
+            experimental_fast_approach=experimental_fast,
             source_head=a.expected_head,
             input_file_hashes=pins,
             course_bank_hash=bank_hash,

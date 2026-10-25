@@ -27,14 +27,28 @@ def teacher_courses() -> tuple[FirstTouchCourse, ...]:
     return rows
 
 
-def uniform_candidates(seed: int) -> np.ndarray:
+def search_bounds(*, experimental_fast: bool = False) -> np.ndarray:
+    if type(experimental_fast) is not bool:
+        raise ValueError("explicit experimental domain switch required")
+    bounds = BOUNDS.copy()
+    if experimental_fast:
+        bounds[0] = (1.0, 2.0)
+    return bounds
+
+
+def uniform_candidates(seed: int, *, experimental_fast: bool = False) -> np.ndarray:
     if type(seed) is not int or not 0 <= seed < 2**32:
         raise ValueError("uint32 search seed required")
-    return np.random.default_rng(seed).uniform(BOUNDS[:, 0], BOUNDS[:, 1], size=(8, 4))
+    bounds = search_bounds(experimental_fast=experimental_fast)
+    return np.random.default_rng(seed).uniform(bounds[:, 0], bounds[:, 1], size=(8, 4))
 
 
 def elite_candidates(
-    first: np.ndarray, ranks: tuple[tuple[Any, ...], ...], *, seed: int
+    first: np.ndarray,
+    ranks: tuple[tuple[Any, ...], ...],
+    *,
+    seed: int,
+    experimental_fast: bool = False,
 ) -> np.ndarray:
     """Second and final CEM generation, two elites, bounded conditional normal.
 
@@ -42,11 +56,12 @@ def elite_candidates(
     This is privileged offline simulation search, not a deployment policy.
     """
     x = np.asarray(first)
+    bounds = search_bounds(experimental_fast=experimental_fast)
     if (
         x.shape != (8, 4)
         or not np.isfinite(x).all()
-        or (x < BOUNDS[:, 0]).any()
-        or (x > BOUNDS[:, 1]).any()
+        or (x < bounds[:, 0]).any()
+        or (x > bounds[:, 1]).any()
         or type(ranks) is not tuple
         or len(ranks) != 8
         or any(type(r) is not tuple or not r for r in ranks)
@@ -56,24 +71,25 @@ def elite_candidates(
         raise ValueError("complete first eight bounded candidates and ordered ranks required")
     indices = sorted(range(8), key=lambda i: ranks[i], reverse=True)[:2]
     mean = x[indices].mean(axis=0)
-    std = np.maximum(x[indices].std(axis=0), 0.15 * (BOUNDS[:, 1] - BOUNDS[:, 0]))
+    std = np.maximum(x[indices].std(axis=0), 0.15 * (bounds[:, 1] - bounds[:, 0]))
     rng = np.random.default_rng(seed)
     accepted = []
     for _ in range(10000):
         row = rng.normal(mean, std)
-        if np.all(row >= BOUNDS[:, 0]) and np.all(row <= BOUNDS[:, 1]):
+        if np.all(row >= bounds[:, 0]) and np.all(row <= bounds[:, 1]):
             accepted.append(row)
             if len(accepted) == 8:
                 return np.stack(accepted)
     raise ValueError("bounded conditional sampler exhausted before physical allocation")
 
 
-def candidate_parameters(row: np.ndarray) -> dict[str, Any]:
+def candidate_parameters(row: np.ndarray, *, experimental_fast: bool = False) -> dict[str, Any]:
     x = np.asarray(row)
+    bounds = search_bounds(experimental_fast=experimental_fast)
     if (
         x.shape != (4,)
         or not np.isfinite(x).all()
-        or ((x < BOUNDS[:, 0]).any() or (x > BOUNDS[:, 1]).any())
+        or ((x < bounds[:, 0]).any() or (x > bounds[:, 1]).any())
     ):
         raise ValueError("finite teacher parameter vector within preregistered bounds required")
     return dict(

@@ -35,13 +35,33 @@ def evaluate_episode(
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 
     state_type, output_type, policy_type, mapping = policy_types
-    stream = ContinuousVelocityStream(
-        assets["velocity_model"],
-        assets["velocity_config"],
+    fast = assets.get("experimental_fast", False)
+    if type(fast) is not bool:
+        raise ValueError("explicit experimental speed mode required")
+    stream_args: dict[str, Any] = dict(
         expected_model_hash=assets["velocity_model_hash"],
         expected_config_hash=assets["velocity_config_hash"],
         horizon_controls=360,
     )
+    stream: Any
+    if fast:
+        from rosclaw_soccer.providers.g1.experimental_velocity_envelope import (
+            ExperimentalVelocityEnvelopeStream,
+        )
+
+        stream = ExperimentalVelocityEnvelopeStream(
+            assets["velocity_model"],
+            assets["velocity_config"],
+            **stream_args,
+            reference_source=assets["reference_source"],
+            expected_reference_hash=assets["reference_hash"],
+        )
+    else:
+        stream = ContinuousVelocityStream(
+            assets["velocity_model"],
+            assets["velocity_config"],
+            **stream_args,
+        )
     d = mujoco.MjData(model)
     lo = NativeVelocityLayout(model, robot_prefix="a/", ball_body_name="soccer_ball")
     x, y, vx = course
@@ -59,6 +79,7 @@ def evaluate_episode(
     w = SharedNativeMotorWorld(model, d, players={"a/": vp}, ball_body_name="soccer_ball")
     raw: dict[str, list[np.ndarray]] = {k: [] for k in ("qpos", "qvel", "torque", "ball_forces")}
     targets, commands, ball_controls, body_controls = [], [], [], []
+    velocity_active = []
     history: deque[KickMeasuredSample] = deque(maxlen=5)
     previous = np.zeros(3, np.float32)
     kick, entry, phase, history_receipt = None, None, None, None
@@ -109,12 +130,16 @@ def evaluate_episode(
         yaw = float(np.arctan2(rot[1, 0], rot[0, 0]))
         wanted = np.array(
             [
-                np.clip(xy[0], -0.5, 1.0),
+                np.clip(xy[0], -0.5, 2.0 if fast else 1.0),
                 np.clip(xy[1], -0.5, 0.5),
                 np.clip(-2 * yaw, -1, 1),
             ],
             np.float32,
         )
+        if fast:
+            norm = float(np.linalg.norm(wanted[:2]))
+            if norm > 2:
+                wanted[:2] *= np.float32(2 / norm)
         command = previous + np.clip(wanted - previous, -0.05, 0.05)
         previous = command.copy()
         if kick is None:
@@ -131,6 +156,7 @@ def evaluate_episode(
             raw[key].append(result[key])
         targets.append(target.copy())
         commands.append(command.copy())
+        velocity_active.append(kick is None)
         # Explicit actual qpos addresses, never infer positions from array order.
         ball_controls.append(result["qpos"][-1, lo.bq : lo.bq + 3].copy())
         body_controls.append(result["qpos"][:, lo.rq + 2].copy())
@@ -142,6 +168,7 @@ def evaluate_episode(
         commands=np.stack(commands),
         ball_position_after_step_m=np.stack(ball_controls),
         pelvis_z_per_substep_m=np.stack(body_controls),
+        velocity_control_active=np.asarray(velocity_active, dtype=bool),
     )
     if w.control_steps >= 300:
         # All non-foot bodies are aggregated in measured force slot2. Empty
@@ -187,6 +214,7 @@ def evaluate_episode(
         ball_qpos_address=lo.bq,
         robot_qpos_address=lo.rq,
         optimizer_updates=0,
+        experimental_fast_approach=fast,
         physical_teacher_qualified=False,
     )
     return row, arrays
