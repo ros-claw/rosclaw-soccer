@@ -110,6 +110,7 @@ class SharedRoboNaldoPlayer:
             install_measured_kick_history,
         )
         from rosclaw_soccer.providers.g1.kick_warmstart import rebase_kick_reference
+        from rosclaw_soccer.rsi.shared_episode_clock import absolute_control_frame
 
         w, p = self.world, self.policy
         w._require_current_boundary()
@@ -128,7 +129,10 @@ class SharedRoboNaldoPlayer:
             # Install validates the ACTUAL five samples before buffer mutation;
             # unlike prepare_kick_handoff this never repeats today's state.
             receipt = install_measured_kick_history(
-                p, samples, frame=w.control_steps, time_sec=float(w.data.time)
+                p,
+                samples,
+                frame=absolute_control_frame(w, control_origin=self._forecast_control_origin),
+                time_sec=float(w.data.time),
             )
             rebase_kick_reference(p, entry_frame=reference_frame)
             p.time_step = int(p.WARMUP_STEPS) + reference_frame
