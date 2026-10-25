@@ -52,6 +52,16 @@ def main():
                 raise ValueError("conflicting motion model source/asset binding")
             pins[key] = value
         pins[str(a.synergy_model)] = a.synergy_model_hash
+        model_artifact = a.synergy_model.parent / synergy_model["artifact"]["path"]
+        expected_artifact = synergy_model["artifact"]["hash"]
+        if (
+            model_artifact.is_symlink()
+            or not model_artifact.resolve().is_relative_to(a.synergy_model.parent.resolve())
+            or digest(model_artifact) != expected_artifact
+            or (str(model_artifact) in pins and pins[str(model_artifact)] != expected_artifact)
+        ):
+            raise ValueError("confined exact fitted model artifact required before inference")
+        pins[str(model_artifact)] = expected_artifact
     if pins.get(str(a.reference_record)) != digest(a.reference_record):
         raise ValueError("explicit pinned original trajectory required")
     reference = json.loads(a.reference_record.read_text())
