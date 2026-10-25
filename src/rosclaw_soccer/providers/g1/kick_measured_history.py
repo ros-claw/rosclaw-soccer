@@ -81,6 +81,33 @@ class KickMeasuredSample:
             dtype=np.float64,
         )
 
+    @classmethod
+    def from_numeric_record(cls, row: np.ndarray) -> KickMeasuredSample:
+        """Decode the exact103-column trace without pickle or lossy integer casts."""
+        if (
+            type(row) is not np.ndarray
+            or row.shape != (103,)
+            or row.dtype != np.float64
+            or not np.isfinite(row).all()
+            or not 1 <= row[0] <= 2**53
+            or not 0 <= row[2] <= 2**53
+            or row[0] != int(row[0])
+            or row[2] != int(row[2])
+        ):
+            raise ValueError("finite lossless float64 measured103 trace record required")
+        return cls(
+            frame=int(row[0]),
+            time_sec=float(row[1]),
+            previous_target_frame=int(row[2]),
+            joint_position=tuple(map(float, row[3:32])),
+            joint_velocity=tuple(map(float, row[32:61])),
+            angular_velocity=tuple(map(float, row[61:64])),
+            pelvis_position=tuple(map(float, row[64:67])),
+            pelvis_quaternion=tuple(map(float, row[67:71])),
+            ball_position=tuple(map(float, row[71:74])),
+            previous_pd_target=tuple(map(float, row[74:103])),
+        )
+
 
 def _rotation(quaternion: tuple[float, ...]) -> np.ndarray:
     w, x, y, z = quaternion
