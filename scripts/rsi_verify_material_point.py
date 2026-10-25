@@ -7,7 +7,7 @@ from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for key in ("qualification", "output"):
+    for key in ("qualification", "reference-record", "output"):
         parser.add_argument("--" + key, type=Path, required=True)
     parser.add_argument("--qualification-hash", required=True)
     parser.add_argument("--expected-head", required=True)
@@ -48,7 +48,9 @@ def main():
         )
     )
     layout = NativeVelocityLayout(model, robot_prefix="a/", ball_body_name="soccer_ball")
-    reference = one("/course-09/onnx.json")
+    reference = args.reference_record
+    if pins.get(str(reference)) != digest(reference):
+        raise ValueError("explicit pinned physical reference required")
     record = json.loads(reference.read_text())
     artifact = reference.parent / record["artifact"]["path"]
     if pins.get(str(artifact)) != record["artifact"]["hash"]:
