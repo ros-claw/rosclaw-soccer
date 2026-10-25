@@ -13,7 +13,13 @@ def main():
         parser.add_argument("--" + key, type=Path, required=True)
     for key in ("champion-audit-hash", "contact-readback-hash", "expected-head"):
         parser.add_argument("--" + key, required=True)
+    parser.add_argument("--mode", choices=("pilot", "baseline-diagnostic"), default="pilot")
     a = parser.parse_args()
+    indices = (0,) if a.mode == "baseline-diagnostic" else INDICES
+    arms = ("B",) if a.mode == "baseline-diagnostic" else ("B", "C")
+    world_ceiling = len(indices) * len(arms)
+    native_ceiling = world_ceiling * 3600
+    forecast_ceiling = world_ceiling * 37 * 1280
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
@@ -68,7 +74,7 @@ def main():
     records, codec_errors = {}, {}
     # Qualify every known baseline target's representation BEFORE new physics.
     # Candidate prefix is required exact; post-exit targets use raw velocity action.
-    for index in INDICES:
+    for index in indices:
         reference = champion["results"][index]["arms"]["C"]
         path = a.champion_root / reference["record"]
         if pins.get(str(path)) != reference["hash"] or digest(path) != reference["hash"]:
@@ -96,13 +102,14 @@ def main():
             schema="soccer.observed_neural_exit_pilot.v1",
             source_head=a.expected_head,
             input_file_hashes=pins,
-            course_indices=list(INDICES),
+            course_indices=list(indices),
+            mode=a.mode,
             old_success_controls=[0, 30],
             late_recontact_state=1,
             same_control_nonfoot_negative_control=2,
-            actual_world_ceiling=8,
-            actual_native_step_ceiling=28800,
-            forecast_requested_native_step_ceiling=378880,
+            actual_world_ceiling=world_ceiling,
+            actual_native_step_ceiling=native_ceiling,
+            forecast_requested_native_step_ceiling=forecast_ceiling,
             codec_preflight_errors_rad=codec_errors,
             trigger="completed_prior_control_foot_force_gt1N",
             exit_intent="zero_body_velocity_original_0.05_rate_limit",
@@ -114,14 +121,14 @@ def main():
         ),
     )
     results, worlds, native, forecast = [], 0, 0, 0
-    for index in INDICES:
+    for index in indices:
         old, old_raw_path = records[index]
         folder = a.output / f"course-{index:02d}"
         folder.mkdir()
         pair = {}
         baseline_arrays = None
         baseline_events = None
-        for arm in ("B", "C"):
+        for arm in arms:
             instances = []
 
             class Controlled(SynergyForecastKickPlayer):
@@ -134,7 +141,7 @@ def main():
 
             row, arrays = evaluate_episode(
                 model=context["model"],
-                assets=context["assets"],
+                assets=dict(context["assets"], experimental_fast=old["experimental_fast_approach"]),
                 policy_types=context["types"],
                 course=tuple(old["course"]),
                 parameters=old["parameters"],
@@ -148,6 +155,22 @@ def main():
             counters = controller.forecaster.counters() if controller else {}
             forecast += counters.get("attempted_native_steps", 0)
             events = controller.events if controller else []
+            # Persist the charged actual world BEFORE assertions. A rejected
+            # comparison must not discard its diagnostic physical trajectory.
+            artifact = folder / f"{arm}.npz"
+            np.savez_compressed(artifact, **arrays)
+            row.update(
+                course_index=index,
+                arm=arm,
+                artifact=dict(path=artifact.name, hash=digest(artifact)),
+                controller_events=events,
+                forecast_counters=counters,
+                old_planner_forecasts_do_not_model_new_exit=True,
+                physical_teacher_qualified=False,
+                hardware_authorized=False,
+                promotion_authorized=False,
+            )
+            write_once(folder / f"{arm}-executed-unvalidated.json", row)
             if arm == "B":
                 with np.load(old_raw_path, allow_pickle=False) as expected:
                     if set(expected.files) != set(arrays) or any(
@@ -165,21 +188,8 @@ def main():
                         raise ValueError("candidate prefix changed before observed exit: " + key)
                 if events != baseline_events:
                     raise ValueError("entry planner changed before post-contact intervention")
-            if worlds > 8 or native > 28800 or forecast > 378880:
+            if worlds > world_ceiling or native > native_ceiling or forecast > forecast_ceiling:
                 raise ValueError("pilot budget exceeded")
-            artifact = folder / f"{arm}.npz"
-            np.savez_compressed(artifact, **arrays)
-            row.update(
-                course_index=index,
-                arm=arm,
-                artifact=dict(path=artifact.name, hash=digest(artifact)),
-                controller_events=events,
-                forecast_counters=counters,
-                old_planner_forecasts_do_not_model_new_exit=True,
-                physical_teacher_qualified=False,
-                hardware_authorized=False,
-                promotion_authorized=False,
-            )
             record = folder / f"{arm}.json"
             write_once(record, row)
             pair[arm] = dict(
