@@ -16,6 +16,7 @@ def main():
         p.add_argument("--" + name, type=Path, required=True)
     for name in ("anchor-hash", "reference-hash", "core-expected-head", "expected-head"):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--heading-hold", action="store_true")
     a = p.parse_args()
     from scripts.rsi_active_core_source import pin_active_core
     from scripts.rsi_atomic_artifacts import write_once
@@ -85,7 +86,9 @@ def main():
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="native_one_body_experimental_velocity_envelope.v1",
+            protocol="native_one_body_experimental_velocity_heading_hold.v2"
+            if a.heading_hold
+            else "native_one_body_experimental_velocity_envelope.v1",
             source_head=a.expected_head,
             courses=courses,
             horizon_controls=600,
@@ -93,6 +96,8 @@ def main():
             physics_hz=500,
             warmup_controls=50,
             maximum_command_change_per_control=0.05,
+            heading_feedback_gain=2.0 if a.heading_hold else 0.0,
+            heading_reference_rad=0.0,
             maximum_worlds=16,
             maximum_native_steps=96000,
             assessment_last_controls=250,
@@ -160,11 +165,18 @@ def main():
                     }
                     command = np.zeros(3, np.float32)
                     for frame in range(600):
+                        q, v = lo.canonical(d)
                         destination = np.zeros(3) if frame < 50 else np.array(requested)
+                        if a.heading_hold and frame >= 50:
+                            qw, qx, qy, qz = q[3:7]
+                            measured_yaw = math.atan2(
+                                2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz)
+                            )
+                            error = math.atan2(math.sin(-measured_yaw), math.cos(-measured_yaw))
+                            destination[2] = np.clip(2 * error, -1, 1)
                         command = (
                             command.astype(np.float64) + np.clip(destination - command, -0.05, 0.05)
                         ).astype(np.float32)
-                        q, v = lo.canonical(d)
                         target = stream.propose(
                             q, v, lo.angular_velocity_body(d), command, frame=frame
                         )
