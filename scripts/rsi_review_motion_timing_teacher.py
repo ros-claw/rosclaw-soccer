@@ -11,6 +11,7 @@ def main():
         p.add_argument("--" + key, type=Path, required=True)
     p.add_argument("--pilot-hash", required=True)
     p.add_argument("--expected-head", required=True)
+    p.add_argument("--shard-root", type=Path, nargs=4, required=True)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -93,13 +94,15 @@ def main():
             worlds += 1
             pair[arm], arrays[arm] = row, raw
         b, c = pair["B"], pair["C"]
-        old_records = [
-            Path(k) for k in pins if k.endswith(f"/course-{result['course_index']:02d}/onnx.json")
-        ]
-        if len(old_records) != 1:
-            raise ValueError("one pinned historical original record required")
-        old_record = json.loads(old_records[0].read_text())
-        old_path = old_records[0].parent / old_record["artifact"]["path"]
+        old_record_path = (
+            a.shard_root[result["course_index"] % 4]
+            / f"course-{result['course_index']:02d}"
+            / "onnx.json"
+        )
+        if pins.get(str(old_record_path)) != digest(old_record_path):
+            raise ValueError("explicit pinned historical original record required")
+        old_record = json.loads(old_record_path.read_text())
+        old_path = old_record_path.parent / old_record["artifact"]["path"]
         if digest(old_path) != old_record["artifact"]["hash"]:
             raise ValueError("historical original trajectory changed")
         pins[str(old_path)] = old_record["artifact"]["hash"]
