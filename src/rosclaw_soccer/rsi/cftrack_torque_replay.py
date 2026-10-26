@@ -31,7 +31,7 @@ def replay_torque_trial(
         or layout.model is not model
         or type(plan) is not CFtrackTorqueIntentPlan
         or type(controls) is not int
-        or not 1 <= controls <= 160
+        or not 1 <= controls <= 300
         or data.time != 0
     ):
         raise ValueError("bounded cold native SIM replay required")

@@ -13,14 +13,16 @@ from rosclaw_soccer.rsi.shared_native_torque_layer import SharedNativeTorqueLaye
 from rosclaw_soccer.rsi.shared_omnicontact_player import SharedOmniContactPlayer
 
 
-def complete_torque_trial(run: dict[str, Any]) -> bool:
+def complete_torque_trial(run: dict[str, Any], *, controls: int = 160) -> bool:
     """Require the entire planned controller/physics/feedback chain, not a prefix."""
+    if type(controls) is not int or not 1 <= controls <= 300:
+        raise ValueError("bounded declared control horizon required")
     return (
-        run.get("controls") == 160
-        and run.get("native_steps") == 1600
-        and run.get("neural_calls") == 160
-        and run.get("layer_commands") == 1600
-        and run.get("layer_feedback") == 1600
+        run.get("controls") == controls
+        and run.get("native_steps") == controls * 10
+        and run.get("neural_calls") == controls
+        and run.get("layer_commands") == controls * 10
+        and run.get("layer_feedback") == controls * 10
         and run.get("incomplete_control_native_steps") == 0
         and run.get("runtime_failure") is None
         and run.get("body_failed") is False
@@ -28,14 +30,17 @@ def complete_torque_trial(run: dict[str, Any]) -> bool:
 
 
 class TorqueTrialCapture:
-    def __init__(self, session: Any):
+    def __init__(self, session: Any, *, maximum_controls: int = 160):
+        if type(maximum_controls) is not int or not 1 <= maximum_controls <= 300:
+            raise ValueError("bounded declared NN horizon required")
         self.session = session
+        self.maximum_controls = maximum_controls
         self.observations: list[np.ndarray] = []
         self.actions: list[np.ndarray] = []
 
     def run(self, outputs: Any, inputs: Any) -> Any:
         if (
-            len(self.observations) >= 160
+            len(self.observations) >= self.maximum_controls
             or inputs["obs"].shape != (1, 1244)
             or not np.isfinite(inputs["obs"]).all()
             or not np.array_equal(inputs["time_step"], np.zeros((1, 1), np.float32))
@@ -48,13 +53,15 @@ class TorqueTrialCapture:
 
 
 def run_cold_torque_trial(
-    player: SharedOmniContactPlayer, plan: CFtrackTorqueIntentPlan
+    player: SharedOmniContactPlayer, plan: CFtrackTorqueIntentPlan, *, controls: int = 160
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     w = player.world
     w._require_current_boundary()
     if (
         type(player) is not SharedOmniContactPlayer
         or type(plan) is not CFtrackTorqueIntentPlan
+        or type(controls) is not int
+        or not 1 <= controls <= 300
         or w.native_steps != 0
         or w.control_steps != 0
         or player.policy.counter_step != 0
@@ -73,11 +80,11 @@ def run_cold_torque_trial(
         policy,
         target_y_m=0.0,
         target_z_m=0.11,
-        horizon_controls=160,
+        horizon_controls=controls,
         expected_parent_policy_hash=plan.parent_policy_hash,
     )
     original = player.policy.ort_session
-    capture = TorqueTrialCapture(original)
+    capture = TorqueTrialCapture(original, maximum_controls=controls)
     player.policy.ort_session = capture
     initial_qpos, initial_qvel = w.data.qpos.copy(), w.data.qvel.copy()
     rows = []
@@ -85,7 +92,7 @@ def run_cold_torque_trial(
     decoded = []
     failure = None
     try:
-        for _ in range(160):
+        for _ in range(controls):
             target, measured = player.propose()
             row = w.advance({player.prefix: target}, torque_layers={player.prefix: layer})
             rows.append(row)

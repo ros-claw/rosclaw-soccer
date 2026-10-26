@@ -55,7 +55,8 @@ def test_capture_does_not_call_nn_beyond_budget_or_with_invalid_input():
         capture.run(None, inputs)
 
 
-def test_cold_trial_records_real_native_feedback_with_fresh_fixture(tmp_path):
+@pytest.mark.parametrize("controls", [160, 300])
+def test_cold_trial_records_real_native_feedback_with_fresh_fixture(tmp_path, controls):
     import mujoco
     from test_shared_cftrack_forecast import Policy, setup
     from test_shared_native_motor_world import source_xml
@@ -96,11 +97,11 @@ def test_cold_trial_records_real_native_feedback_with_fresh_fixture(tmp_path):
         0, 24, tuple(fractions), hash_json(player.layout.profile()), cftrack_state_hash(policy)
     )
     original_session = policy.ort_session
-    raw, report = run_cold_torque_trial(player, plan)
-    assert complete_torque_trial(report), report
+    raw, report = run_cold_torque_trial(player, plan, controls=controls)
+    assert complete_torque_trial(report, controls=controls), report
     assert report["actual_changed_torque_entries"] > 0
-    assert raw["qpos"].shape == (1600, model.nq)
-    assert raw["neural_obs"].shape == (160, 1, 1244)
+    assert raw["qpos"].shape == (10 * controls, model.nq)
+    assert raw["neural_obs"].shape == (controls, 1, 1244)
     assert policy.ort_session is original_session
     replay_data = mujoco.MjData(model)
     replay_data.qpos[:] = raw["initial_qpos"]
@@ -115,8 +116,9 @@ def test_cold_trial_records_real_native_feedback_with_fresh_fixture(tmp_path):
         kp=world.parameters["a/"].stiffness,
         kd=world.parameters["a/"].damping,
         effort=world.parameters["a/"].effort,
+        controls=controls,
     )
-    assert verified["values_exact"] and verified["native_steps"] == 1600
+    assert verified["values_exact"] and verified["native_steps"] == 10 * controls
     broken = dict(raw, parent_torque=raw["parent_torque"].copy())
     broken["parent_torque"][0, 0] += 1
     replay_data = mujoco.MjData(model)
@@ -133,4 +135,5 @@ def test_cold_trial_records_real_native_feedback_with_fresh_fixture(tmp_path):
             kp=world.parameters["a/"].stiffness,
             kd=world.parameters["a/"].damping,
             effort=world.parameters["a/"].effort,
+            controls=controls,
         )
