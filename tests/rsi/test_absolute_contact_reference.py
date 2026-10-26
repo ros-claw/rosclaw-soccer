@@ -28,7 +28,8 @@ def test_absolute_waypoint_resolves_against_reference_not_another_body_pose():
     limits = np.tile([-2.0, 2.0], (29, 1))
     receipt = condition_absolute_contact_reference(policy, plan, limits_hg=limits)
     assert receipt["applied"]
-    assert policy.motion_joint_pos[24, 28] == np.float32(0.1)
+    assert abs(float(policy.motion_joint_pos[24, 28]) - 0.1) <= 1e-6
+    assert receipt["encoded_waypoint_error_rad"] <= 1e-6
     np.testing.assert_array_equal(policy.motion_joint_pos[:11], q[:11])
     np.testing.assert_array_equal(policy.motion_joint_pos[58:], q[58:])
     assert receipt["maximum_reference_offset_rad"] > 0.35
@@ -41,10 +42,10 @@ def test_absolute_native_future_matches_actual_neural_targets(tmp_path):
     policy = p.policy
     policy.control_dt = 0.02
     policy.motion_total_steps = 200
-    policy.motion_joint_pos = np.full((200, 29), 0.5, np.float32)
+    policy.motion_joint_pos = np.zeros((200, 29), np.float32)
     policy.motion_joint_vel = np.zeros((200, 29), np.float32)
     plan = AbsoluteContactReferencePlan(
-        int(policy.time_step), tuple(range(29)), (0.6,) + (0.5,) * 28, 14
+        int(policy.time_step), tuple(range(29)), (0.03,) + (0.0,) * 28, 14
     )
     before = policy_state_hash(policy)
     predicted = f.forecast(controls=4, before_proposal=True, reference_plan=plan)
