@@ -52,12 +52,50 @@ def lateral_stage_waypoint(
     )
 
 
-def condition_staged_lateral_intercept(player: SharedOmniContactPlayer) -> dict[str, Any]:
-    from policy.omnicontact.CFgen_meta1_loco import (  # type: ignore[import-not-found]
+def extend_stage_reference(
+    prefix: dict[str, np.ndarray], *, stage_controls: int, hold_controls: int
+) -> dict[str, np.ndarray]:
+    """Repeat the final waypoint reference, never a physical action or state."""
+    if (
+        type(prefix) is not dict
+        or not prefix
+        or type(stage_controls) is not int
+        or type(hold_controls) is not int
+        or not 2 <= stage_controls <= 100
+        or not 0 <= hold_controls <= 20
+        or stage_controls + hold_controls > 100
+        or any(
+            type(value) is not np.ndarray
+            or value.ndim < 1
+            or value.shape[0] < stage_controls
+            or value.dtype.kind not in "fiub"
+            or not np.isfinite(value).all()
+            for value in prefix.values()
+        )
+        or len({value.shape[0] for value in prefix.values()}) != 1
+    ):
+        raise ValueError("complete compatible bounded stage-reference arrays required")
+    return {
+        key: np.concatenate(
+            (
+                value[:stage_controls],
+                np.repeat(value[stage_controls - 1 : stage_controls], hold_controls, axis=0),
+                value[stage_controls:],
+            ),
+            axis=0,
+        )
+        for key, value in prefix.items()
+    }
+
+
+def condition_staged_lateral_intercept(
+    player: SharedOmniContactPlayer, *, hold_controls: int = 0
+) -> dict[str, Any]:
+    from policy.omnicontact.CFgen_meta1_loco import (
         DEFAULT_JOINT_POS_MJ,
         _append_loco_walk,
     )
-    from policy.omnicontact.CFgen_reference import (  # type: ignore[import-not-found]
+    from policy.omnicontact.CFgen_reference import (
         plan_cfgen_reference,
     )
 
@@ -77,6 +115,8 @@ def condition_staged_lateral_intercept(player: SharedOmniContactPlayer) -> dict[
         or p.async_stage_thread is not None
         or np.any(p.obs_history_buffer)
         or np.any(p.action)
+        or type(hold_controls) is not int
+        or not 0 <= hold_controls <= 20
     ):
         raise ValueError("unexecuted private CFgen SIM policy required")
     s = p.state_cmd
@@ -88,6 +128,17 @@ def condition_staged_lateral_intercept(player: SharedOmniContactPlayer) -> dict[
         raise ValueError("actual observed initial ball required")
     velocity = w.data.qvel[player.layout.bv : player.layout.bv + 3].copy()
     prediction, forecast = predict_initial_intercept(ball, velocity, np.asarray(p.goal_pos))
+    if hold_controls:
+        delayed_horizon = float(forecast["predicted_horizon_s"]) + hold_controls * 0.02
+        prediction = ball.astype(np.float64, copy=True) + velocity * delayed_horizon
+        if delayed_horizon > 2.0 or np.linalg.norm(prediction - ball) > 0.3:
+            raise ValueError("held reference requires bounded delayed ball prediction")
+        forecast = dict(
+            forecast,
+            predicted_intercept_position=prediction.tolist(),
+            predicted_horizon_s=delayed_horizon,
+            additional_reference_hold_controls=hold_controls,
+        )
     waypoint, geometry = lateral_stage_waypoint(
         np.asarray(s.base_pos), np.asarray(s.base_quat), prediction, np.asarray(p.goal_pos)
     )
@@ -133,6 +184,11 @@ def condition_staged_lateral_intercept(player: SharedOmniContactPlayer) -> dict[
             object_quat=s.obj_quat.copy(),
         )
         prefix = builder.finalize()
+        if hold_controls:
+            prefix = extend_stage_reference(
+                prefix, stage_controls=stage_controls, hold_controls=hold_controls
+            )
+        stage_controls += hold_controls
         replacement = {}
         for key, value in prefix.items():
             old = getattr(p, key)
@@ -177,6 +233,7 @@ def condition_staged_lateral_intercept(player: SharedOmniContactPlayer) -> dict[
         geometry=geometry,
         stage_controls=stage_controls,
         stage_reference_step_m=0.005,
+        reference_hold_controls=hold_controls,
         original_swing_and_recovery_suffix_exact=True,
         original_reference_hash=original_reference_hash,
         staged_reference_hash=new_reference_hash,

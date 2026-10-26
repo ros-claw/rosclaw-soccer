@@ -1,7 +1,10 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.cftrack_staged_lateral_reference import lateral_stage_waypoint
+from rosclaw_soccer.rsi.cftrack_staged_lateral_reference import (
+    extend_stage_reference,
+    lateral_stage_waypoint,
+)
 
 
 @pytest.mark.parametrize("side", [-1.0, 1.0])
@@ -29,3 +32,34 @@ def test_stage_is_only_available_for_bounded_direct_guard_failures(ball):
             ball,
             np.array([5.0, 0.0, 0.11]),
         )
+
+
+def test_stage_hold_repeats_reference_only_and_preserves_tail():
+    prefix = {
+        "ref_base_pos": np.arange(15, dtype=np.float32).reshape(5, 3),
+        "ref_phase": np.array([12, 12, 12, 13, 14], dtype=np.int64),
+    }
+    old = {key: value.copy() for key, value in prefix.items()}
+    result = extend_stage_reference(prefix, stage_controls=3, hold_controls=2)
+    np.testing.assert_array_equal(
+        result["ref_base_pos"][3:5], np.repeat(old["ref_base_pos"][2:3], 2, axis=0)
+    )
+    np.testing.assert_array_equal(result["ref_base_pos"][5:], old["ref_base_pos"][3:])
+    np.testing.assert_array_equal(result["ref_phase"], [12, 12, 12, 12, 12, 13, 14])
+    for key in old:
+        np.testing.assert_array_equal(prefix[key], old[key])
+
+
+@pytest.mark.parametrize("hold", [-1, 21, True])
+def test_invalid_hold_fails_closed(hold):
+    with pytest.raises(ValueError):
+        extend_stage_reference({"ref": np.ones((4, 3))}, stage_controls=2, hold_controls=hold)
+
+
+def test_stage_hold_rejects_incompatible_or_nonfinite_arrays():
+    with pytest.raises(ValueError):
+        extend_stage_reference(
+            {"a": np.ones((4, 3)), "b": np.ones((5,))}, stage_controls=2, hold_controls=1
+        )
+    with pytest.raises(ValueError):
+        extend_stage_reference({"a": np.array([[np.nan], [0]])}, stage_controls=2, hold_controls=1)
