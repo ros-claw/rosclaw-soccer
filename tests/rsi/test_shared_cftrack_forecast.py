@@ -44,6 +44,8 @@ class Policy(BasePolicy):
         self.obs_history_buffer[-1, :29] = self.action
         obs = np.zeros((1, 1244), np.float32)
         obs[0, :29] = self.state_cmd.q + 0.2 * self.action
+        if hasattr(self, "ref_right_ankle_future_pos"):
+            obs[0, :3] += 0.01 * self.ref_right_ankle_future_pos[self.counter_step]
         self.action = self.ort_session.run(
             None, {"obs": obs, "time_step": np.zeros((1, 1), np.float32)}
         )[0][0]

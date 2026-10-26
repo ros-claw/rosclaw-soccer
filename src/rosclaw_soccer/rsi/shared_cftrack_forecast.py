@@ -4,6 +4,10 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.rsi.cftrack_contact_reference import (
+    CFtrackContactPlan,
+    condition_cftrack_contact_reference,
+)
 from rosclaw_soccer.rsi.omnicontact_policy_copy import cftrack_state_hash, copy_cftrack_policy
 from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
 from rosclaw_soccer.rsi.shared_omnicontact_player import SharedOmniContactPlayer
@@ -55,7 +59,9 @@ class SharedCFtrackForecaster:
             maximum_native_steps=self.budget,
         )
 
-    def forecast(self, *, controls: int) -> dict[str, Any]:
+    def forecast(
+        self, *, controls: int, contact_plan: CFtrackContactPlan | None = None
+    ) -> dict[str, Any]:
         import mujoco
 
         source, donor = self.player, self.player.world
@@ -75,6 +81,9 @@ class SharedCFtrackForecaster:
             )
         before = cftrack_state_hash(source.policy)
         policy = copy_cftrack_policy(source.policy)
+        receipt = None
+        if contact_plan is not None:
+            receipt = condition_cftrack_contact_reference(policy, contact_plan)
         # Charge the entire request BEFORE physical allocation, never refund
         # failed/early-terminated work into an unbounded retry loop.
         self.attempted_steps += controls * 10
@@ -142,5 +151,6 @@ class SharedCFtrackForecaster:
             donor_body_unchanged=True,
             private_fk_data=True,
             enter_or_history_reset_called=False,
+            reference_conditioning=receipt,
             hardware_authorized=False,
         )
