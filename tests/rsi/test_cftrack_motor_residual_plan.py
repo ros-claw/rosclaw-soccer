@@ -3,7 +3,10 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.cftrack_motor_residual_plan import CFtrackMotorResidualPlan
+from rosclaw_soccer.rsi.cftrack_motor_residual_plan import (
+    CFtrackMotorResidualPlan,
+    MotorTargetRejected,
+)
 
 
 def plan():
@@ -58,9 +61,14 @@ def test_limit_violation_rejects_without_modifying_caller_target():
     original = np.zeros(29)
     original[8] = -0.95
     before = original.copy()
-    with pytest.raises(ValueError, match="no clipping"):
+    with pytest.raises(MotorTargetRejected, match="no clipping") as rejected:
         p.apply(original, counter=70, limits_hg=np.tile([-1.0, 1.0], (29, 1)))
     np.testing.assert_array_equal(original, before)
+    packet = rejected.value.target_rejection
+    assert packet["counter"] == 70 and packet["violating_hg_indices"] == [8]
+    assert packet["target_was_not_executed"]
+    np.testing.assert_array_equal(packet["nn_decoded_target"], before)
+    assert packet["proposed_target"][8] < -1
 
 
 def test_installation_requires_exact_donor_hash_and_control_boundary():

@@ -8,7 +8,10 @@ from rosclaw_soccer.rsi.cftrack_contact_reference import (
     CFtrackContactPlan,
     condition_cftrack_contact_reference,
 )
-from rosclaw_soccer.rsi.cftrack_motor_residual_plan import CFtrackMotorResidualPlan
+from rosclaw_soccer.rsi.cftrack_motor_residual_plan import (
+    CFtrackMotorResidualPlan,
+    MotorTargetRejected,
+)
 from rosclaw_soccer.rsi.omnicontact_policy_copy import cftrack_state_hash, copy_cftrack_policy
 from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
 from rosclaw_soccer.rsi.shared_omnicontact_player import SharedOmniContactPlayer
@@ -122,7 +125,7 @@ class SharedCFtrackForecaster:
             id(policy.policy_output),
         )
         rows, targets, decoded = [], [], []
-        failure = None
+        failure: dict[str, Any] | None = None
         try:
             if motor_plan is not None:
                 ghost.install_motor_plan(motor_plan)
@@ -146,6 +149,8 @@ class SharedCFtrackForecaster:
             # Preserve already integrated private evidence, including a first
             # proposal failure. An error is never a qualified empty future.
             failure = dict(type=type(error).__name__, message=str(error))
+            if type(error) is MotorTargetRejected:
+                failure["target_rejection"] = error.target_rejection
         finally:
             self.integrated_steps += owned.native_steps
             donor._require_current_boundary()

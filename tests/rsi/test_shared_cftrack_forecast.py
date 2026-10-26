@@ -217,6 +217,9 @@ def test_rejected_post_nn_motor_target_counts_nn_but_never_integrates_that_targe
     future = f.forecast(controls=4, motor_plan=motor_plan(p, amount=0.15, peak=4))
     assert future["controls"] == 1 and future["native_steps"] == 10
     assert "no clipping" in future["runtime_failure"]["message"]
+    packet = future["runtime_failure"]["target_rejection"]
+    assert packet["counter"] == 1 and packet["violating_hg_indices"] == [8]
+    assert packet["target_was_not_executed"]
     assert f.counters()["future_nn_calls"] == 2 and f.counters()["attempted_native_steps"] == 40
     assert p.world.native_steps == 0 and cftrack_state_hash(p.policy) == before
 

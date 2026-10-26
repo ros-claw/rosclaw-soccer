@@ -13,6 +13,35 @@ import numpy as np
 from rosclaw_soccer.rsi.contact_reference_plan import _c2_offsets
 
 
+class MotorTargetRejected(ValueError):
+    """Preserve the unexecuted NN proposal that violated physical joint bounds."""
+
+    def __init__(
+        self,
+        *,
+        counter: int,
+        target: np.ndarray,
+        proposed: np.ndarray,
+        offset: np.ndarray,
+        limits: np.ndarray,
+        violating: np.ndarray,
+    ) -> None:
+        indices = np.flatnonzero(violating).tolist()
+        super().__init__(
+            f"modified motor target outside physical joint limits at control {counter}, "
+            f"HG {indices}; no clipping"
+        )
+        self.target_rejection = dict(
+            counter=counter,
+            violating_hg_indices=indices,
+            nn_decoded_target=target.tolist(),
+            proposed_target=proposed.tolist(),
+            motor_offset=offset.tolist(),
+            physical_limits_hg=limits.tolist(),
+            target_was_not_executed=True,
+        )
+
+
 @dataclass(frozen=True)
 class CFtrackMotorResidualPlan:
     origin_counter: int
@@ -73,9 +102,16 @@ class CFtrackMotorResidualPlan:
         result[modified] += offset[modified]
         # Zero branch must preserve the original NN, even if an unchanged
         # original coordinate is beyond a joint range. Never silently clip it.
-        if (
-            np.any(modified & ((result < limits_hg[:, 0]) | (result > limits_hg[:, 1])))
-            or not np.isfinite(result).all()
-        ):
-            raise ValueError("modified motor target outside physical joint limits; no clipping")
+        if not np.isfinite(result).all():
+            raise ValueError("nonfinite modified motor target; no execution")
+        violating = modified & ((result < limits_hg[:, 0]) | (result > limits_hg[:, 1]))
+        if violating.any():
+            raise MotorTargetRejected(
+                counter=counter,
+                target=target,
+                proposed=result,
+                offset=offset,
+                limits=limits_hg,
+                violating=violating,
+            )
         return result
