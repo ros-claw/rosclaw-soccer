@@ -48,3 +48,45 @@ def test_executed_template_cannot_be_reset_or_reused_for_cold_trials(tmp_path):
         cold_cftrack_trial(template, ball_xy=(1.0, 0.0))
     assert template.world.native_steps == 10
     np.testing.assert_array_equal(template.world.data.qpos, q)
+
+
+@pytest.mark.parametrize("velocity", [(0.1, 0.0, 0.0), (0.0, -0.1, 0.0)])
+def test_declared_ball_velocity_is_set_before_cold_world_without_resetting_donor(
+    tmp_path, velocity
+):
+    template, _ = setup(tmp_path, cold=True)
+    before = cftrack_state_hash(template.policy)
+    spin = (-velocity[1] / 0.11, velocity[0] / 0.11, 0.0)
+    trial = cold_cftrack_trial(
+        template, ball_xy=(1.0, 0.0), ball_velocity=velocity, ball_angular_velocity=spin
+    )
+    np.testing.assert_array_equal(
+        trial.world.data.qvel[trial.layout.bv : trial.layout.bv + 3], velocity
+    )
+    np.testing.assert_array_equal(
+        trial.world.data.qvel[trial.layout.bv + 3 : trial.layout.bv + 6], spin
+    )
+    np.testing.assert_array_equal(trial.world.data.qvel[trial.layout.rv : trial.layout.rv + 6], 0.0)
+    np.testing.assert_array_equal(trial.world.data.qvel[trial.layout.vi], 0.0)
+    assert trial.world.native_steps == template.world.native_steps == 0
+    assert cftrack_state_hash(template.policy) == before
+
+
+@pytest.mark.parametrize(
+    "velocity",
+    [(0.6, 0.0, 0.0), (0.4, 0.4, 0.0), (0.0, float("nan"), 0.0), [0.1, 0.0, 0.0], (True, 0.0, 0.0)],
+)
+def test_invalid_ball_velocity_rejected_before_new_world(tmp_path, velocity):
+    template, _ = setup(tmp_path, cold=True)
+    before = cftrack_state_hash(template.policy)
+    with pytest.raises(ValueError, match="ball linear velocity"):
+        cold_cftrack_trial(template, ball_xy=(1.0, 0.0), ball_velocity=velocity)
+    assert template.world.native_steps == 0
+    assert cftrack_state_hash(template.policy) == before
+
+
+def test_invalid_ball_spin_rejected_before_new_world(tmp_path):
+    template, _ = setup(tmp_path, cold=True)
+    with pytest.raises(ValueError, match="angular velocity"):
+        cold_cftrack_trial(template, ball_xy=(1.0, 0.0), ball_angular_velocity=(11.0, 0.0, 0.0))
+    assert template.world.native_steps == 0

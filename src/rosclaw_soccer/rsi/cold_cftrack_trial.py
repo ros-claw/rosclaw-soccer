@@ -22,12 +22,38 @@ def validate_cold_ball_xy(ball_xy: tuple[float, float]) -> None:
         raise ValueError("explicit bounded float XY declaration required before new world clock")
 
 
+def validate_cold_ball_velocity(ball_velocity: tuple[float, float, float]) -> None:
+    if (
+        type(ball_velocity) is not tuple
+        or len(ball_velocity) != 3
+        or any(type(v) is not float or not np.isfinite(v) for v in ball_velocity)
+        or np.linalg.norm(ball_velocity) > 0.5
+    ):
+        raise ValueError("explicit finite ball linear velocity within 0.5m/s required")
+
+
+def validate_cold_ball_angular_velocity(ball_angular_velocity: tuple[float, float, float]) -> None:
+    if (
+        type(ball_angular_velocity) is not tuple
+        or len(ball_angular_velocity) != 3
+        or any(type(v) is not float or not np.isfinite(v) for v in ball_angular_velocity)
+        or np.linalg.norm(ball_angular_velocity) > 10.0
+    ):
+        raise ValueError("explicit finite ball angular velocity within 10rad/s required")
+
+
 def cold_cftrack_trial(
-    template: SharedOmniContactPlayer, *, ball_xy: tuple[float, float]
+    template: SharedOmniContactPlayer,
+    *,
+    ball_xy: tuple[float, float],
+    ball_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    ball_angular_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0),
 ) -> SharedOmniContactPlayer:
     import mujoco
 
     validate_cold_ball_xy(ball_xy)
+    validate_cold_ball_velocity(ball_velocity)
+    validate_cold_ball_angular_velocity(ball_angular_velocity)
     w = template.world
     w._require_current_boundary()
     if (
@@ -51,6 +77,8 @@ def cold_cftrack_trial(
     data.qpos[:] = w.data.qpos
     data.qvel[:] = w.data.qvel
     data.qpos[template.layout.bq : template.layout.bq + 2] = ball_xy
+    data.qvel[template.layout.bv : template.layout.bv + 3] = ball_velocity
+    data.qvel[template.layout.bv + 3 : template.layout.bv + 6] = ball_angular_velocity
     mujoco.mj_forward(w.model, data)
     world = SharedNativeMotorWorld(
         w.model, data, players=w.parameters, ball_body_name=w.model.body(w.ball).name
