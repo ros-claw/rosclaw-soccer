@@ -11,6 +11,7 @@ def main():
     p.add_argument("--source", type=Path, required=True)
     p.add_argument("--source-hash", required=True)
     p.add_argument("--measured-bridge", action="store_true")
+    p.add_argument("--predicted-bridge", action="store_true")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -28,18 +29,25 @@ def main():
     ):
         raise ValueError("unused output, exact closed source and isolated imports required")
     source = json.loads(complete.read_text())
+    if a.measured_bridge and a.predicted_bridge:
+        raise ValueError("one explicit source type required")
+    bridge_mode = a.measured_bridge or a.predicted_bridge
     if (
         source["status"]
         != (
-            "CFTRACK_MEASURED_BRIDGE_H300_PAIRED_NOT_PROMOTED"
+            "CFTRACK_PREDICTIVE_BALL_H300_PAIRED_NOT_PROMOTED"
+            if a.predicted_bridge
+            else "CFTRACK_MEASURED_BRIDGE_H300_PAIRED_NOT_PROMOTED"
             if a.measured_bridge
             else "CFTRACK_PRIVATE_FUTURES_REPLAYED_ACTUALLY_NOT_PROMOTED"
         )
-        or source["native_steps"] != (7140 if a.measured_bridge else 6780)
-        or source["cftrack_neural_calls"] != (600 if a.measured_bridge else 400)
+        or source["native_steps"] != (7140 if bridge_mode else 6780)
+        or source["cftrack_neural_calls"] != (600 if bridge_mode else 400)
         or [(r["entry_control"], r["actual_execution"]["arm"]) for r in source["records"]]
         != (
-            [(57, "parent"), (57, "measured_bridge")]
+            [(57, "static_bridge"), (57, "predictive_bridge")]
+            if a.predicted_bridge
+            else [(57, "parent"), (57, "measured_bridge")]
             if a.measured_bridge
             else [
                 (57, "measured_history"),
@@ -75,11 +83,19 @@ def main():
     ]
     if not (len(scenes) == len(histories) == len(forecast_reports) == len(external_files) == 1):
         raise ValueError("unique scene, measured history, forecast and policy required")
-    if a.measured_bridge and len(bridge_artifacts) != 1:
+    if bridge_mode and len(bridge_artifacts) != 1:
         raise ValueError("unique certified measured bridge required")
+    static_reports = [
+        Path(x)
+        for x in pins
+        if x.endswith("/rsi-cftrack-measured-bridge-h300-20261027/complete.json")
+    ]
+    if a.predicted_bridge and len(static_reports) != 1:
+        raise ValueError("one exact static bridge baseline report required")
     forecast = json.loads(forecast_reports[0].read_text())
     if forecast["status"] != "CFTRACK_MEASURED_HISTORY_PRIVATE_FUTURES_RECORDED_NOT_PROMOTED":
         raise ValueError("qualified corresponding private futures required")
+    static_source = json.loads(static_reports[0].read_text()) if a.predicted_bridge else None
     import mujoco
     import numpy as np
     from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
@@ -122,7 +138,7 @@ def main():
             source_head=a.expected_head,
             source_hash=a.source_hash,
             input_file_hashes=pins,
-            maximum_nn_calls=600 if a.measured_bridge else 400,
+            maximum_nn_calls=600 if bridge_mode else 400,
             native_steps=0,
             original_fk_and_neural_codec_shared=True,
             initial_ball_cache_from_prior_native_substep=True,
@@ -142,7 +158,7 @@ def main():
             actual = {k: f[k].copy() for k in f.files}
         if prefix["qpos"].shape != (entry * 10, model.nq):
             raise ValueError("complete source physical prefix required")
-        forecast_arm = "measured_history" if a.measured_bridge else arm
+        forecast_arm = "measured_history" if bridge_mode else arm
         matches = [
             f
             for r in forecast["records"]
@@ -159,7 +175,35 @@ def main():
             or digest(forecast_path) != matches[0]["artifact"]["hash"]
         ):
             raise ValueError("exact corresponding private future artifact required")
-        if not a.measured_bridge or arm == "parent":
+        if a.predicted_bridge and arm == "static_bridge":
+            static_records = [
+                r
+                for r in static_source["records"]
+                if r["actual_execution"]["arm"] == "measured_bridge"
+            ]
+            if len(static_records) != 1:
+                raise ValueError("one prior actual static bridge required")
+            item = static_records[0]["actual_execution"]["artifact"]
+            static_path = static_reports[0].parent / item["path"]
+            if (
+                static_path.is_symlink()
+                or static_path.parent != static_reports[0].parent
+                or digest(static_path) != item["hash"]
+            ):
+                raise ValueError("exact actual static baseline required")
+            with np.load(static_path, allow_pickle=False) as f:
+                for key in (
+                    "qpos",
+                    "qvel",
+                    "torque",
+                    "ball_forces",
+                    "joint_targets",
+                    "neural_obs",
+                    "neural_actions",
+                ):
+                    if not np.array_equal(f[key], actual[key]):
+                        raise ValueError(f"static baseline array mismatch {key}")
+        if not bridge_mode or arm == "parent":
             with np.load(forecast_path, allow_pickle=False) as f:
                 for key in ("qpos", "qvel", "torque", "ball_forces", "joint_targets"):
                     length = 100 if key == "joint_targets" else 1000
@@ -195,7 +239,7 @@ def main():
         player = SharedOmniContactPlayer(
             world, "a/", policy, expected_policy_type=OmniContact, goal=np.array([5.0, 0.0, 0.11])
         )
-        if arm == "measured_history" or a.measured_bridge:
+        if arm == "measured_history" or bridge_mode:
             h = saved_history[f"entry{entry}_observations"]
             policy.obs_history_buffer[1:] = h[:4]
             policy.action = h[4, 79:108].copy()
@@ -203,18 +247,20 @@ def main():
         elif arm != "zero_history":
             raise ValueError("declared actual history arm required")
         bridge_receipt = None
-        if a.measured_bridge and arm == "measured_bridge":
+        if (a.measured_bridge and arm == "measured_bridge") or a.predicted_bridge:
             with np.load(bridge_artifacts[0], allow_pickle=False) as f:
                 bridge_receipt = condition_measured_bridge_reference(
                     player,
                     f["candidate_root"].copy(),
                     f["candidate_joint"].copy(),
                     expected_model_hash=compiled_model_hash(model),
+                    ball_prediction_horizon_s=1.74 if arm == "predictive_bridge" else None,
                 )
             if bridge_receipt != row["bridge_reference_receipt"]:
                 raise ValueError("independently rebuilt measured reference differs")
-        horizon = 300 if a.measured_bridge else 100
+        horizon = 300 if bridge_mode else 100
         original_phase = policy.ref_phase.copy()
+        original_object_reference = policy.ref_object_pos.copy()
         count = verify_cftrack_trace(
             policy, data, lo, actual, controls=horizon, initial_cached_qpos=prefix["qpos"][-2]
         )
@@ -225,12 +271,11 @@ def main():
             entry_control=entry,
             arm=arm,
             neural_calls=count,
-            actual_vs_private_arrays_exact=not a.measured_bridge or arm == "parent",
+            actual_vs_private_arrays_exact=not bridge_mode or arm == "parent",
             initial_cached_ball_from_prior_substep=True,
-            measured_history_is_scratch_reconstruction=arm == "measured_history"
-            or a.measured_bridge,
+            measured_history_is_scratch_reconstruction=arm == "measured_history" or bridge_mode,
         )
-        if a.measured_bridge:
+        if bridge_mode:
             q_all = np.concatenate([prefix["qpos"], actual["qpos"]])[:3000]
             f_all = np.concatenate([prefix["ball_forces"], actual["ball_forces"]])[:3000]
             force = np.zeros((300, 1, 6), np.float64)
@@ -258,6 +303,64 @@ def main():
                 first_contact_reference_phase=phase,
                 bridge_reference_receipt=bridge_receipt,
             )
+        if a.predicted_bridge:
+            ball_geoms = np.flatnonzero(model.geom_bodyid == lo.ball)
+            if len(ball_geoms) != 1:
+                raise ValueError("one canonical ball collision geometry required")
+            foot_geoms = [
+                [model.geom(f"a/{side}_foot{i}_collision").id for i in range(1, 8)]
+                for side in ("left", "right")
+            ]
+            scratch = mujoco.MjData(model)
+            phases, gaps, object_error = [], [], []
+            for step in range(300):
+                scratch.qpos[:] = actual["qpos"][step * 10 + 9]
+                scratch.qvel[:] = actual["qvel"][step * 10 + 9]
+                mujoco.mj_forward(model, scratch)
+                phase_index = min(step, len(original_phase) - 1)
+                phases.append(int(original_phase[phase_index]))
+                gaps.append(
+                    [
+                        min(
+                            float(
+                                mujoco.mj_geomDistance(
+                                    model, scratch, int(ball_geoms[0]), geom, 2.0, None
+                                )
+                            )
+                            for geom in foot
+                        )
+                        for foot in foot_geoms
+                    ]
+                )
+                object_error.append(
+                    scratch.qpos[lo.bq : lo.bq + 3] - original_object_reference[phase_index]
+                )
+            phases, gaps, object_error = (
+                np.asarray(phases),
+                np.asarray(gaps),
+                np.stack(object_error),
+            )
+            diagnostic_path = a.output / f"entry{entry}-{arm}-contact-geometry.npz"
+            np.savez_compressed(
+                diagnostic_path, phase=phases, foot_gap_m=gaps, ball_minus_reference_m=object_error
+            )
+            phase14 = phases == 14
+            evidence.update(
+                frame_end_minimum_ball_foot_gap_m=float(np.min(gaps)),
+                frame_end_minimum_gap_phase14_m=(
+                    float(np.min(gaps[phase14])) if phase14.any() else None
+                ),
+                phase14_sampled_controls=int(np.count_nonzero(phase14)),
+                phase14_max_ball_reference_error_m=(
+                    float(np.max(np.linalg.norm(object_error[phase14], axis=1)))
+                    if phase14.any()
+                    else None
+                ),
+                frame_end_geometry_not_substep_contact_proof=True,
+                contact_geometry_artifact=dict(
+                    path=diagnostic_path.name, hash=digest(diagnostic_path)
+                ),
+            )
         write_once(a.output / f"entry{entry}-{arm}.json", evidence)
         rows.append(evidence)
     check_pins(pins)
@@ -266,7 +369,9 @@ def main():
         a.output / "complete.json",
         dict(
             status=(
-                "ACTUAL_CFTRACK_BRIDGE_H300_NN_READBACK_EXACT_NOT_PROMOTED"
+                "ACTUAL_CFTRACK_PREDICTIVE_H300_NN_READBACK_EXACT_NOT_PROMOTED"
+                if a.predicted_bridge
+                else "ACTUAL_CFTRACK_BRIDGE_H300_NN_READBACK_EXACT_NOT_PROMOTED"
                 if a.measured_bridge
                 else "ACTUAL_CFTRACK_FUTURES_NN_READBACK_EXACT_NOT_PROMOTED"
             ),
