@@ -18,6 +18,8 @@ def main():
     p.add_argument("--live-review-hash", required=True)
     p.add_argument("--private-forecast-proof", type=Path)
     p.add_argument("--private-forecast-proof-hash")
+    p.add_argument("--execute-forecast-proof", type=Path)
+    p.add_argument("--execute-forecast-proof-hash")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -38,8 +40,13 @@ def main():
         raise ValueError("unused output and exact isolated source lineage required")
     source, history, prior = (json.loads(x.read_text()) for x in (complete, hist, live))
     forecast_enabled = a.private_forecast_proof is not None
+    execute_enabled = a.execute_forecast_proof is not None
     if forecast_enabled != (a.private_forecast_proof_hash is not None):
         raise ValueError("private forecast requires both prior installation proof and hash")
+    if execute_enabled != (a.execute_forecast_proof_hash is not None) or (
+        execute_enabled and forecast_enabled
+    ):
+        raise ValueError("actual replay requires one exact forecast proof and no forecast mode")
     if forecast_enabled:
         if (
             a.private_forecast_proof.is_symlink()
@@ -55,6 +62,47 @@ def main():
             or [row["entry_control"] for row in proof["records"]] != [57, 82]
         ):
             raise ValueError("exact matching qualified two-boundary history install required")
+    forecast_artifacts = {}
+    if execute_enabled:
+        if (
+            a.execute_forecast_proof.is_symlink()
+            or digest(a.execute_forecast_proof) != a.execute_forecast_proof_hash
+        ):
+            raise ValueError("exact earlier private future report required")
+        future_proof = json.loads(a.execute_forecast_proof.read_text())
+        if (
+            future_proof["status"]
+            != "CFTRACK_MEASURED_HISTORY_PRIVATE_FUTURES_RECORDED_NOT_PROMOTED"
+            or future_proof["source_hash"] != a.source_hash
+            or future_proof["history_hash"] != a.history_hash
+            or future_proof["live_review_hash"] != a.live_review_hash
+            or [row["entry_control"] for row in future_proof["records"]] != [57, 82]
+        ):
+            raise ValueError("matching qualified two-boundary private futures required")
+        for row in future_proof["records"]:
+            for arm in row["private_forecasts"]:
+                path = a.execute_forecast_proof.parent / arm["artifact"]["path"]
+                key = (row["entry_control"], arm["arm"])
+                if (
+                    key in forecast_artifacts
+                    or path.is_symlink()
+                    or path.parent != a.execute_forecast_proof.parent
+                    or digest(path) != arm["artifact"]["hash"]
+                    or arm["controls"] != 100
+                    or arm["native_steps"] != 1000
+                    or arm["runtime_failure"] is not None
+                ):
+                    raise ValueError(
+                        "four complete exact confined private future artifacts required"
+                    )
+                forecast_artifacts[key] = (path, arm["artifact"]["hash"])
+        if set(forecast_artifacts) != {
+            (57, "measured_history"),
+            (57, "zero_history"),
+            (82, "measured_history"),
+            (82, "zero_history"),
+        }:
+            raise ValueError("all four declared private futures required")
     if (
         source["status"] != "WARM_LEFT_SETTLING_MEASURED_NOT_KICK"
         or history["status"] != "MEASURED_CFTRACK_HISTORY_CANDIDATES_NOT_INSTALLED"
@@ -90,6 +138,9 @@ def main():
     )
     if forecast_enabled:
         pins[str(a.private_forecast_proof)] = a.private_forecast_proof_hash
+    if execute_enabled:
+        pins[str(a.execute_forecast_proof)] = a.execute_forecast_proof_hash
+        pins.update({str(path): digest_value for path, digest_value in forecast_artifacts.values()})
     source_pins(pins)
     check_pins(pins)
     scenes = [Path(x) for x in pins if x.endswith("/cached-standard/declared-scene.xml")]
@@ -146,17 +197,19 @@ def main():
             source_head=a.expected_head,
             input_file_hashes=pins,
             entry_controls=[57, 82],
-            maximum_velocity_calls=139,
-            maximum_native_steps=1390,
-            cftrack_neural_calls_max=400 if forecast_enabled else 0,
+            maximum_velocity_calls=278 if execute_enabled else 139,
+            maximum_native_steps=6780 if execute_enabled else 1390,
+            cftrack_neural_calls_max=400 if (forecast_enabled or execute_enabled) else 0,
             private_forecast_native_step_budget=4000 if forecast_enabled else 0,
             private_forecast_horizon_controls=100 if forecast_enabled else 0,
             private_forecast_proof_hash=a.private_forecast_proof_hash,
             private_cold_vs_measured_history=forecast_enabled,
+            execute_forecast_proof_hash=a.execute_forecast_proof_hash,
+            actual_forecast_replay=execute_enabled,
             no_body_or_ball_reset=True,
             software_pd_switch_explicit=True,
             cftrack_reference_not_qualified=True,
-            no_kick=True,
+            task_success_not_assumed=True,
             hardware_authorized=False,
         ),
     )
@@ -182,7 +235,18 @@ def main():
         )
 
     atexit.register(retain_partial)
-    for entry in (57, 82):
+    actual_cftrack_calls = 0
+    specs = (
+        [
+            (57, "measured_history"),
+            (57, "zero_history"),
+            (82, "measured_history"),
+            (82, "zero_history"),
+        ]
+        if execute_enabled
+        else [(57, None), (82, None)]
+    )
+    for entry, actual_arm in specs:
         stream = ContinuousVelocityStream(
             models[0],
             configs[0],
@@ -268,7 +332,8 @@ def main():
             or not np.array_equal(cached_ball[1], data.xquat[lo.ball])
         ):
             raise ValueError("gain switch or history install modified physical state or ball cache")
-        trace_path = a.output / f"entry{entry}.npz"
+        suffix = f"-{actual_arm}" if execute_enabled else ""
+        trace_path = a.output / f"entry{entry}{suffix}.npz"
         np.savez_compressed(trace_path, **{k: np.concatenate(v) for k, v in partial_raw.items()})
         private_forecasts = []
         if forecast_enabled:
@@ -334,6 +399,68 @@ def main():
             actual_after = snapshot(data)
             if any(not np.array_equal(before[k], actual_after[k]) for k in before):
                 raise ValueError("private futures changed actual physical state")
+        actual_execution = None
+        if execute_enabled:
+            if actual_arm == "zero_history":
+                policy.obs_history_buffer.fill(0)
+                policy.action.fill(0)
+            prior_path, _ = forecast_artifacts[(entry, actual_arm)]
+            with np.load(prior_path, allow_pickle=False) as f:
+                predicted = {k: f[k].copy() for k in f.files}
+            session = policy.ort_session
+            saved_obs, saved_actions = [], []
+
+            class Capture:
+                def __init__(self, onnx_session, obs, actions):
+                    self.session, self.obs, self.actions = onnx_session, obs, actions
+
+                def run(self, outputs, inputs):
+                    result = self.session.run(outputs, inputs)
+                    self.obs.append(inputs["obs"].copy())
+                    self.actions.append(result[0].copy())
+                    return result
+
+            policy.ort_session = Capture(session, saved_obs, saved_actions)
+            real_rows, real_targets, contacts = [], [], []
+            for step in range(100):
+                target, _ = player.propose()
+                row = world.advance({"a/": target})
+                for key in partial_raw:
+                    partial_raw[key].append(row[key])
+                counts["controls"] += 1
+                counts["native_steps"] += len(row["qpos"])
+                actual_cftrack_calls += 1
+                real_rows.append(row)
+                real_targets.append(target.copy())
+                contacts.append(dict(world.last_ball_contact_bodies["a/"]))
+                if not np.array_equal(target, predicted["joint_targets"][step]) or any(
+                    not np.array_equal(row[k], predicted[k][step * 10 : (step + 1) * 10])
+                    for k in partial_raw
+                ):
+                    raise ValueError(
+                        "actual future differs from private forecast at "
+                        f"{entry}/{actual_arm}/{step}"
+                    )
+                player.commit()
+                if world.failed:
+                    raise ValueError(f"actual future failed at {entry}/{actual_arm}/{step}")
+            future_path = a.output / f"entry{entry}-{actual_arm}-actual.npz"
+            np.savez_compressed(
+                future_path,
+                **{key: np.concatenate([row[key] for row in real_rows]) for key in partial_raw},
+                joint_targets=np.stack(real_targets),
+                neural_obs=np.stack(saved_obs),
+                neural_actions=np.stack(saved_actions),
+            )
+            actual_execution = dict(
+                arm=actual_arm,
+                controls=len(real_rows),
+                native_steps=sum(len(row["qpos"]) for row in real_rows),
+                forecast_arrays_exact=True,
+                ball_contact_bodies_by_control=contacts,
+                artifact=dict(path=future_path.name, hash=digest(future_path)),
+            )
+            write_once(a.output / f"entry{entry}-{actual_arm}-actual.json", actual_execution)
         results.append(
             dict(
                 entry_control=entry,
@@ -343,6 +470,7 @@ def main():
                 pd_switch_physics_unchanged=switch["physics_unchanged"],
                 history_receipt=receipt,
                 private_forecasts=private_forecasts,
+                actual_execution=actual_execution,
                 artifact=dict(path=trace_path.name, hash=digest(trace_path)),
             )
         )
@@ -352,7 +480,9 @@ def main():
         a.output / "complete.json",
         dict(
             status=(
-                "CFTRACK_MEASURED_HISTORY_PRIVATE_FUTURES_RECORDED_NOT_PROMOTED"
+                "CFTRACK_PRIVATE_FUTURES_REPLAYED_ACTUALLY_NOT_PROMOTED"
+                if execute_enabled
+                else "CFTRACK_MEASURED_HISTORY_PRIVATE_FUTURES_RECORDED_NOT_PROMOTED"
                 if forecast_enabled
                 else "LIVE_CFTRACK_HISTORY_INSTALLED_NOT_EXECUTED"
             ),
@@ -363,8 +493,8 @@ def main():
             input_file_hashes=pins,
             records=results,
             **counts,
-            velocity_neural_calls=139,
-            cftrack_neural_calls=forecast_nn_calls,
+            velocity_neural_calls=278 if execute_enabled else 139,
+            cftrack_neural_calls=actual_cftrack_calls if execute_enabled else forecast_nn_calls,
             private_forecast_native_steps=forecast_native_steps,
             task_reference_qualified=False,
             hardware_authorized=False,
