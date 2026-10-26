@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 from test_shared_native_motor_world import source_xml
 
+from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.reference_support_ik import fit_reference_support_pose
 from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
 from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
@@ -83,4 +84,41 @@ def test_support_fit_can_require_bounded_stance_ankle_xy():
     with pytest.raises(ValueError):
         fit_reference_support_pose(
             model, root, joints, np.array([True, True]), expected_model_hash="sha256:" + "0" * 64
+        )
+
+
+def test_explicit_support_anchor_is_not_replaced_by_current_ankle_location():
+    model = _model()
+    root = np.array([0, 0, 0.7, 1, 0, 0, 0], dtype=np.float64)
+    joints = np.zeros(29, dtype=np.float64)
+    layout = NativeVelocityLayout(model, robot_prefix="a/", ball_body_name="soccer_ball")
+    data = mujoco.MjData(model)
+    data.qpos[layout.rq : layout.rq + 7] = root
+    data.qpos[layout.qi] = joints
+    mujoco.mj_kinematics(model, data)
+    ankles = np.stack(
+        [data.xpos[model.body(f"a/{s}_ankle_roll_link").id, :2] for s in ("left", "right")]
+    )
+    anchors = ankles.copy()
+    anchors[0, 0] += 1.0
+    result = fit_reference_support_pose(
+        model,
+        root,
+        joints,
+        np.array([True, False]),
+        expected_model_hash=compiled_model_hash(model),
+        max_ankle_xy_change_m=0.02,
+        ankle_target_xy=anchors,
+    )
+    assert result["explicit_ankle_anchor"] is True
+    assert result["maximum_claimed_ankle_anchor_error_m"] > 0.02
+    assert result["reference_geometry_feasible"] is False
+    with pytest.raises(ValueError):
+        fit_reference_support_pose(
+            model,
+            root,
+            joints,
+            np.array([True, False]),
+            expected_model_hash=compiled_model_hash(model),
+            ankle_target_xy=anchors,
         )

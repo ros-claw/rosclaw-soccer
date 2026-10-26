@@ -17,6 +17,7 @@ def fit_reference_support_pose(
     expected_model_hash: str,
     maximum_evaluations: int = 2000,
     max_ankle_xy_change_m: float | None = None,
+    ankle_target_xy: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Locally fit labeled feet to floor, retaining pose and physical joint bounds.
 
@@ -49,6 +50,16 @@ def fit_reference_support_pose(
                 type(max_ankle_xy_change_m) is not float
                 or not np.isfinite(max_ankle_xy_change_m)
                 or not 0 < max_ankle_xy_change_m <= 0.02
+            )
+        )
+        or (
+            ankle_target_xy is not None
+            and (
+                max_ankle_xy_change_m is None
+                or type(ankle_target_xy) is not np.ndarray
+                or ankle_target_xy.shape != (2, 2)
+                or ankle_target_xy.dtype.kind != "f"
+                or not np.isfinite(ankle_target_xy).all()
             )
         )
     ):
@@ -119,7 +130,7 @@ def fit_reference_support_pose(
             raise ValueError("bounded reference IK evaluation budget exhausted")
         gap = geometry(x)
         xy_residual = (
-            100 * (data.xpos[ankle_ids, :2] - initial_ankles)[claimed_contacts].reshape(-1)
+            100 * (data.xpos[ankle_ids, :2] - target_ankles)[claimed_contacts].reshape(-1)
             if max_ankle_xy_change_m is not None
             else np.empty(0)
         )
@@ -130,12 +141,20 @@ def fit_reference_support_pose(
 
     before = geometry(np.zeros(13))
     initial_ankles = data.xpos[ankle_ids, :2].copy()
+    target_ankles = (
+        initial_ankles if ankle_target_xy is None else ankle_target_xy.astype(np.float64, copy=True)
+    )
     result = least_squares(
         residual, np.zeros(13), bounds=(lower, upper), max_nfev=100, ftol=1e-9, xtol=1e-9, gtol=1e-9
     )
     after = geometry(result.x)
     ankle_change = (
         np.linalg.norm(data.xpos[ankle_ids, :2] - initial_ankles, axis=1)
+        if max_ankle_xy_change_m is not None
+        else np.empty(0)
+    )
+    anchor_error = (
+        np.linalg.norm(data.xpos[ankle_ids, :2] - target_ankles, axis=1)
         if max_ankle_xy_change_m is not None
         else np.empty(0)
     )
@@ -150,12 +169,12 @@ def fit_reference_support_pose(
         and candidate_root[2] >= 0.65
         and (
             max_ankle_xy_change_m is None
-            or np.max(ankle_change[claimed_contacts]) <= max_ankle_xy_change_m
+            or np.max(anchor_error[claimed_contacts]) <= max_ankle_xy_change_m
         )
         and np.isfinite(candidate_q).all()
         and data.time == 0
     )
-    return dict(
+    record = dict(
         root_pose_wxyz=candidate_root,
         joints_hg29=candidate_q,
         original_foot_gaps_m=before,
@@ -182,3 +201,9 @@ def fit_reference_support_pose(
         physical_execution_qualified=False,
         hardware_authorized=False,
     )
+    if ankle_target_xy is not None:
+        record["maximum_claimed_ankle_anchor_error_m"] = float(
+            np.max(anchor_error[claimed_contacts])
+        )
+        record["explicit_ankle_anchor"] = True
+    return record
