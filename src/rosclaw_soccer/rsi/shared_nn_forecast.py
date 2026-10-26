@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 
 from rosclaw_soccer.rsi.aim_goal_command import AimGoalCommand, condition_aim_goal
+from rosclaw_soccer.rsi.ball_clearance_control import BallClearanceController, BallClearancePlan
 from rosclaw_soccer.rsi.executed_target_synergy import (
     ExecutedTargetSynergy,
     apply_executed_target_synergy,
@@ -210,6 +211,7 @@ class SharedNNForecaster:
         | None = None,
         aim_goal: AimGoalCommand | None = None,
         target_plan: ExecutedTargetSynergy | None = None,
+        clearance_plan: BallClearancePlan | None = None,
     ) -> dict[str, Any]:
         import mujoco
 
@@ -254,6 +256,14 @@ class SharedNNForecaster:
             raise ValueError("separate explicit pre-proposal executed-target plan required")
         if target_plan is not None:
             target_plan.offsets()  # Validate immutable data before allocating physics.
+        if clearance_plan is not None:
+            if (
+                type(clearance_plan) is not BallClearancePlan
+                or not before_proposal
+                or any(p is not None for p in (reference_plan, aim_goal, target_plan))
+            ):
+                raise ValueError("separate pre-proposal SIM clearance feedback required")
+            clearance_plan.validate()
         charge = controls * 10
         if self.attempted_steps + charge > self.budget:
             raise RuntimeError("closed-loop forecast budget exhausted; no automatic extension")
@@ -337,6 +347,9 @@ class SharedNNForecaster:
         if not before_proposal:
             ghost.pending = target.copy()
         records, targets, ticks, target_edits = [], [], [], []
+        clearance = (
+            None if clearance_plan is None else BallClearanceController(ghost, clearance_plan)
+        )
         try:
             for step in range(controls):
                 if step or before_proposal:
@@ -344,6 +357,9 @@ class SharedNNForecaster:
                     self.future_nn_calls += 1
                     if target_plan is not None:
                         target, edit = apply_executed_target_synergy(ghost, target_plan)
+                        target_edits.append(edit)
+                    if clearance is not None:
+                        target, edit = clearance.apply()
                         target_edits.append(edit)
                 result = owned.advance({source.prefix: target})
                 ghost.commit()
@@ -380,6 +396,7 @@ class SharedNNForecaster:
             aim_command_conditioned=goal_applied,
             executed_target_plan=target_plan is not None,
             executed_target_edits=target_edits,
+            **({"measured_clearance_feedback": True} if clearance is not None else {}),
             prediction_is_not_actual_execution=True,
             promotion_authorized=False,
             hardware_authorized=False,

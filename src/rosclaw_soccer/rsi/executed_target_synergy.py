@@ -81,6 +81,37 @@ def apply_executed_target_synergy(
         neural_weights_modified=False,
         hardware_authorized=False,
     )
+    return _encode_pending_offset(player, delta, receipt, projection_mode=plan.projection_mode)
+
+
+def _encode_pending_offset(
+    player: SharedRoboNaldoPlayer,
+    delta: np.ndarray,
+    receipt: dict[str, Any],
+    *,
+    projection_mode: str,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Shared exact codec for explicit SIM target proposals, never body mutation."""
+    world, policy = player.world, player.policy
+    world._require_current_boundary()
+    if (
+        player.failed
+        or getattr(player, "retired", False)
+        or player.pending is None
+        or player.boundary != world.control_steps
+        or policy.runtime_mode != "sim"
+        or policy.use_body_frame_ball
+        or policy.time_step <= policy.WARMUP_STEPS
+        or getattr(player, "_target_edit_boundary", None) == world.control_steps
+        or type(delta) is not np.ndarray
+        or delta.shape != (29,)
+        or delta.dtype != np.float64
+        or not np.isfinite(delta).all()
+        or abs(delta).max() > 0.060001
+        or projection_mode not in ("whole_tick", "per_axis")
+    ):
+        raise ValueError("bounded finite HG29 offset at one healthy SIM NN boundary required")
+    nominal = player.pending.copy()
     # A failed encoder check cannot be retried as another edit on this proposal.
     # This is software state on the adapter, not on the copied pure policy.
     player._target_edit_boundary = world.control_steps
@@ -119,7 +150,7 @@ def apply_executed_target_synergy(
     changed = delta != 0
     lo = np.maximum(action_lo[mapping], (limits[:, 0] - default) / scale)
     hi = np.minimum(action_hi[mapping], (limits[:, 1] - default) / scale)
-    if plan.projection_mode == "per_axis":
+    if projection_mode == "per_axis":
         # Intersect *before* projecting. Some original NN targets are outside
         # joint limits farther than the residual trust budget. Those axes have
         # no legal changed target: keep the original target EXACTLY, rather
@@ -132,7 +163,7 @@ def apply_executed_target_synergy(
     low, high = lo.astype(np.float32), hi.astype(np.float32)
     low = np.where(low < lo, np.nextafter(low, np.float32(np.inf)), low)
     high = np.where(high > hi, np.nextafter(high, np.float32(-np.inf)), high)
-    if plan.projection_mode == "per_axis":
+    if projection_mode == "per_axis":
         blocked = changed & (low > high)
         changed = changed & ~blocked
         receipt["blocked_hg_axes"] = np.flatnonzero(blocked).tolist()
@@ -149,7 +180,7 @@ def apply_executed_target_synergy(
         high[changed],
     )
     target = (default + scale * desired).astype(np.float64)
-    if plan.projection_mode == "per_axis":
+    if projection_mode == "per_axis":
         numerical_bad = changed & (
             (abs(target - nominal) > 0.060001) | (target < limits[:, 0]) | (target > limits[:, 1])
         )

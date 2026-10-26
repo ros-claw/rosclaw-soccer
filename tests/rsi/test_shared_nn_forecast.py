@@ -53,7 +53,7 @@ class ForecastPolicy:
         self.time_step += 1
 
 
-def setup(tmp_path, budget=80):
+def setup(tmp_path, budget=80, fixture_xml=None):
     matrix = np.zeros((547, 29), np.float32)
     matrix[:29] = np.eye(29, dtype=np.float32)
     graph = helper.make_graph(
@@ -72,7 +72,7 @@ def setup(tmp_path, budget=80):
     proto = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)], ir_version=10)
     session = ort.InferenceSession(proto.SerializeToString(), providers=["CPUExecutionProvider"])
     xml = shared_native_scene(
-        source_xml()
+        (source_xml() if fixture_xml is None else fixture_xml)
         .replace('name="link0"', 'name="torso_link"')
         .replace("<joint name=", '<joint limited="true" range="-2 2" name='),
         prefixes=("a/",),
