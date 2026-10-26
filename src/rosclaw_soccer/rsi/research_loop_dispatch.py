@@ -5,8 +5,8 @@ from typing import Any
 
 def dispatch_state(campaigns: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """Require agent work after termination, not a claim that a timer is training."""
-    if not campaigns or len(campaigns) > 128:
-        raise ValueError("bounded nonempty campaign map required")
+    if type(campaigns) is not dict or len(campaigns) > 128:
+        raise ValueError("bounded campaign map required")
     live, review, ready = [], [], []
     for unit, observation in sorted(campaigns.items()):
         phase = observation.get("phase")
@@ -17,7 +17,9 @@ def dispatch_state(campaigns: dict[str, dict[str, Any]]) -> dict[str, Any]:
         else:
             # Includes hangs, malformed observations, failed and unloaded jobs.
             review.append(unit)
-    if review:
+    if not campaigns:
+        state, action = "AGENT_SUCCESSOR_REQUIRED", "DECLARE_NEXT_EVIDENCE_BACKED_STAGE"
+    elif review:
         state, action = "AGENT_REVIEW_REQUIRED", "DIAGNOSE_PRESERVE_NO_BLIND_RETRY"
     elif ready:
         state, action = "AGENT_SUCCESSOR_REQUIRED", "AUTHENTICATE_RESULTS_DECLARE_NEXT_STAGE"
@@ -30,7 +32,7 @@ def dispatch_state(campaigns: dict[str, dict[str, Any]]) -> dict[str, Any]:
         review_units=review,
         readback_units=ready,
         no_live_declared_work=not live,
-        agent_attention_required=bool(review or ready),
+        agent_attention_required=not campaigns or bool(review or ready),
         agent_wakeup_provided=False,
         scientific_successor_automated=False,
         physics_retry_authorized=False,

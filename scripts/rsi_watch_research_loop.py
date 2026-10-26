@@ -33,9 +33,9 @@ def resume_campaigns(path: Path):
         or pointer.get("schema") != "soccer.agent.resume_pointer.v1"
         or pointer.get("goal_status") != "active"
         or type(pointer.get("observation_campaigns")) is not list
-        or not 1 <= len(pointer["observation_campaigns"]) <= 128
+        or len(pointer["observation_campaigns"]) > 128
     ):
-        raise ValueError("active resume pointer with explicit bounded observed jobs required")
+        raise ValueError("active resume pointer with explicit bounded observed job list required")
     campaigns = []
     for row in pointer["observation_campaigns"]:
         if (

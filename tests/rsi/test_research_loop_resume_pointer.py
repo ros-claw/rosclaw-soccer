@@ -62,7 +62,6 @@ def test_pointer_refresh_observes_successor_without_resetting_idle(tmp_path, mon
     [
         dict(schema="other"),
         dict(goal_status="complete"),
-        dict(observation_campaigns=[]),
         dict(observation_campaigns=[dict(unit="bad.service; touch x", root="/code/evidence")]),
         dict(observation_campaigns=[dict(unit="--help.service", root="/code/evidence")]),
         dict(observation_campaigns=[dict(unit="a.service", root="../evidence")]),
@@ -89,3 +88,21 @@ def test_bounded_ordinary_file(tmp_path):
     link.symlink_to(path)
     with pytest.raises(ValueError):
         watcher.resume_campaigns(link)
+
+
+def test_empty_queue_is_observable_as_idle_without_resetting_deadline(tmp_path, monkeypatch):
+    path, output = tmp_path / "next.json", tmp_path / "observer.json"
+    path.write_text(json.dumps(pointer(tmp_path, [])))
+    monkeypatch.setattr(
+        "sys.argv", ["watch", "--resume-pointer", str(path), "--output", str(output)]
+    )
+    monkeypatch.setattr(watcher.time, "time", lambda: 100)
+    watcher.main()
+    monkeypatch.setattr(watcher.time, "time", lambda: 401)
+    watcher.main()
+    report = json.loads(output.read_text())
+    assert report["campaigns"] == {}
+    assert report["dispatch"]["state"] == "AGENT_SUCCESSOR_REQUIRED"
+    assert report["continuity"]["no_live_since_unix"] == 100
+    assert report["continuity"]["successor_overdue"]
+    assert not report["agent_wakeup_provided_by_this_script"]

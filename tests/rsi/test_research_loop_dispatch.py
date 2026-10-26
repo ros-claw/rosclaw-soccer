@@ -27,7 +27,16 @@ def test_live_worker_is_not_goal_success():
     assert not result["scientific_successor_automated"]
 
 
-@pytest.mark.parametrize("campaigns", [{}, {str(i): {} for i in range(129)}])
+def test_empty_declared_queue_requires_successor():
+    result = dispatch_state({})
+    assert result["state"] == "AGENT_SUCCESSOR_REQUIRED"
+    assert result["no_live_declared_work"]
+    assert result["agent_attention_required"]
+    assert not result["agent_wakeup_provided"]
+    assert not result["scientific_successor_automated"]
+
+
+@pytest.mark.parametrize("campaigns", [None, [], {str(i): {} for i in range(129)}])
 def test_bounded_queue(campaigns):
     with pytest.raises(ValueError):
         dispatch_state(campaigns)
