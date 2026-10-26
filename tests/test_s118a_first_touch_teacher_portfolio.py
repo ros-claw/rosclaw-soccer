@@ -137,3 +137,26 @@ def test_motiondecode_audit_rejects_shifted_selected_reference_in_retention(tmp_
         portfolio.audit_motiondecode_football(
             root, selected_per_category_and_foot=1, minimum_total_clips=7
         )
+
+
+def test_motiondecode_audit_records_each_retention_screen(tmp_path: Path) -> None:
+    root = _dataset(tmp_path)
+    train = next((root / "extracted_s118" / "3.3.3.Football" / "3.3.3.1.Short_Pass").glob("*.csv"))
+    for index in range(10000):
+        retention = train.parent / f"translated_{index:05d}.csv"
+        if portfolio._split_for_path(retention.relative_to(root).as_posix()) == "retention":  # noqa: SLF001
+            break
+    else:
+        pytest.fail("could not construct retention fixture")
+    values = np.loadtxt(train, delimiter=",", skiprows=1)
+    values[:, 0] += 5
+    np.savetxt(retention, values, delimiter=",", header=",".join(_header()), comments="")
+    report = portfolio.audit_motiondecode_football(
+        root, selected_per_category_and_foot=1, minimum_total_clips=7
+    )
+    assert report["retention_clips_anchor_screened"] == 1
+    screen = report["retention_anchor_screen_results"][0]
+    assert screen["held_out_clip"] == retention.relative_to(root).as_posix()
+    assert screen["source_hash"].startswith("sha256:")
+    assert screen["source_independence_proven"] is False
+    assert report["near_duplicate_cross_split_checked"] is False

@@ -288,7 +288,7 @@ def audit_motiondecode_football(
             raise ValueError("selected MotionDecode reference changed during split screening")
         train_references[teacher.relative_path] = values
     guard = MotionAnchorGuard(train_references)
-    retention_screened = 0
+    retention_screen_results: list[dict[str, Any]] = []
     for clip in clips:
         if clip.split != "retention":
             continue
@@ -299,8 +299,8 @@ def audit_motiondecode_football(
             or _hash_file(path) != clip.source_hash
         ):
             raise ValueError("retention MotionDecode reference changed during split screening")
-        guard.inspect(clip.relative_path, values)
-        retention_screened += 1
+        screen = guard.inspect(clip.relative_path, values)
+        retention_screen_results.append({**screen, "source_hash": clip.source_hash})
 
     category_counts = {
         category: sum(clip.category == category for clip in clips)
@@ -329,7 +329,8 @@ def audit_motiondecode_football(
         "exact_content_cross_split_checked": True,
         "near_duplicate_cross_split_checked": False,
         "selected_train_to_retention_anchor_screened": True,
-        "retention_clips_anchor_screened": retention_screened,
+        "retention_clips_anchor_screened": len(retention_screen_results),
+        "retention_anchor_screen_results": retention_screen_results,
         "anchor_screen_is_incomplete": True,
         "source_independence_proven": False,
         "retention_metrics_accessed": False,
