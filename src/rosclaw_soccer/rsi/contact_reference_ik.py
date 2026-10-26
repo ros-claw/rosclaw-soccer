@@ -61,12 +61,15 @@ def solve_contact_reference_pose(
     status = "ITERATION_BUDGET_EXHAUSTED"
 
     def measurements() -> tuple[np.ndarray, np.ndarray, list[dict[str, Any]], dict[str, float]]:
+        nonlocal local_point
         mujoco.mj_kinematics(model, scratch)
         mujoco.mj_comPos(model, scratch)
-        foot_point = (
-            scratch.xpos[active_body] + scratch.xmat[active_body].reshape(3, 3) @ local_point
-        )
         rows = measure_ball_surfaces(model, scratch, layout)["surfaces"]
+        # A foot rotation can change the leading collision primitive. Select
+        # the closest witness over the whole current foot group at each FK
+        # update; a once-fixed point is not a nonpenetration certificate.
+        local_point = rows[active + "_foot"]["local_point"].copy()
+        foot_point = rows[active + "_foot"]["world_point"].copy()
         rotation = scratch.xmat[support_body].reshape(3, 3)
         relative = support_rotation @ rotation.T
         rotation_error = 0.5 * np.array(
@@ -91,7 +94,7 @@ def solve_contact_reference_pose(
 
     for iteration in range(16):
         foot_point, rotation_error, shins, metrics = measurements()
-        trace.append(dict(iteration=iteration, **metrics))
+        trace.append(dict(iteration=iteration, foot_witness_local=local_point.tolist(), **metrics))
         if (
             metrics["contact_point_error_m"] <= 0.005
             and metrics["support_position_error_m"] <= 0.005
