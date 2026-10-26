@@ -8,20 +8,25 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.rsi.absolute_contact_reference import AbsoluteContactReferencePlan
 from rosclaw_soccer.rsi.contact_reference_ik import first_contact_foot, solve_contact_reference_pose
 from rosclaw_soccer.rsi.contact_reference_plan import ContactReferencePlan
 from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
 
 
 def generate_contact_reference(
-    player: SharedRoboNaldoPlayer, forecaster: Any
-) -> tuple[ContactReferencePlan | None, dict[str, Any], dict[str, Any]]:
+    player: SharedRoboNaldoPlayer, forecaster: Any, *, absolute_waypoint: bool = False
+) -> tuple[
+    ContactReferencePlan | AbsoluteContactReferencePlan | None, dict[str, Any], dict[str, Any]
+]:
     import mujoco
 
     from rosclaw_soccer.rsi.shared_nn_forecast import SharedNNForecaster, policy_state_hash
 
     world = player.world
     world._require_current_boundary()
+    if type(absolute_waypoint) is not bool:
+        raise ValueError("explicit absolute-reference experiment switch required")
     if (
         type(forecaster) is not SharedNNForecaster
         or forecaster.player is not player
@@ -43,6 +48,7 @@ def generate_contact_reference(
         recorded_future_used=False,
         source_case_id_used=False,
         hardware_authorized=False,
+        absolute_waypoint=absolute_waypoint,
     )
     plan = None
     if parent["controls"] != 128 or parent["body_failed"]:
@@ -82,14 +88,23 @@ def generate_contact_reference(
                         for v in import_module(type(player.policy).__module__).MUJOCO_TO_ISAAC
                     )
                     delta = np.array(ik["reference_joints_hg"]) - seed.qpos[player.layout.qi]
-                    candidate = ContactReferencePlan(
-                        int(player.policy.time_step) - int(player.policy.WARMUP_STEPS),
-                        mapping,
-                        tuple(float(v) for v in delta),
-                        peak,
+                    start = int(player.policy.time_step) - int(player.policy.WARMUP_STEPS)
+                    candidate: ContactReferencePlan | AbsoluteContactReferencePlan
+                    candidate = (
+                        AbsoluteContactReferencePlan(
+                            start, mapping, tuple(float(v) for v in ik["reference_joints_hg"]), peak
+                        )
+                        if absolute_waypoint
+                        else ContactReferencePlan(
+                            start, mapping, tuple(float(v) for v in delta), peak
+                        )
                     )
                     try:
-                        pos, vel = candidate.offsets()
+                        pos, vel = (
+                            candidate.offsets(player.policy)
+                            if isinstance(candidate, AbsoluteContactReferencePlan)
+                            else candidate.offsets()
+                        )
                     except ValueError as error:
                         report.update(
                             status="ABSTAIN_REFERENCE_TRAJECTORY_LIMIT", reason=str(error)
@@ -99,7 +114,7 @@ def generate_contact_reference(
                         report.update(
                             status="REFERENCE_PROPOSED_NOT_PHYSICALLY_QUALIFIED",
                             start_frame=candidate.start_frame,
-                            delta_hg=candidate.delta_hg,
+                            delta_hg=tuple(float(v) for v in pos[peak, mapping]),
                             maximum_reference_offset_rad=float(abs(pos).max()),
                             maximum_additional_reference_velocity_rad_s=float(abs(vel).max()),
                         )

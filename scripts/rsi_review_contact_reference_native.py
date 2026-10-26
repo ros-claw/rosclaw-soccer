@@ -52,6 +52,10 @@ def main():
         install_measured_kick_history,
     )
     from rosclaw_soccer.providers.g1.kick_warmstart import rebase_kick_reference
+    from rosclaw_soccer.rsi.absolute_contact_reference import (
+        AbsoluteContactReferencePlan,
+        condition_absolute_contact_reference,
+    )
     from rosclaw_soccer.rsi.ball_surface_tasks import measure_ball_surfaces
     from rosclaw_soccer.rsi.contact_reference_ik import (
         first_contact_foot,
@@ -173,18 +177,27 @@ def main():
     if receipt != row["measured_history_receipt"]:
         raise ValueError("measured history receipt differs")
     delta = np.array(ik["reference_joints_hg"]) - seed.qpos[lo.qi]
-    plan = ContactReferencePlan(
-        row["admitted_reference_phase"],
-        tuple(int(v) for v in mapping),
-        tuple(float(v) for v in delta),
-        peak,
+    absolute = report.get("reference_contract") == "absolute_contact_waypoint_v1"
+    plan = (
+        AbsoluteContactReferencePlan(
+            row["admitted_reference_phase"],
+            tuple(int(v) for v in mapping),
+            tuple(float(v) for v in ik["reference_joints_hg"]),
+            peak,
+        )
+        if absolute
+        else ContactReferencePlan(
+            row["admitted_reference_phase"],
+            tuple(int(v) for v in mapping),
+            tuple(float(v) for v in delta),
+            peak,
+        )
     )
     old_reference_endpoint = (
         policy.motion_joint_pos[plan.start_frame + peak, mapping].astype(np.float64).copy()
     )
-    installed = condition_contact_reference(
-        policy, plan, limits_hg=model.jnt_range[lo.joints].astype(np.float64)
-    )
+    condition = condition_absolute_contact_reference if absolute else condition_contact_reference
+    installed = condition(policy, plan, limits_hg=model.jnt_range[lo.joints].astype(np.float64))
     if hash_json(installed) != hash_json(report["installation"]):
         raise ValueError("exact reference generation/conditioning receipt differs")
     endpoint = policy.motion_joint_pos[plan.start_frame + peak, mapping].astype(np.float64).copy()
@@ -208,6 +221,12 @@ def main():
     local = np.array(ik["contact_point_local"])
     measured_joint = actual["qpos"][(entry + peak) * 10 - 1, lo.qi]
     tracking = dict(
+        reference_endpoint_error_to_ik_leg12_max_rad=float(
+            abs(endpoint[:12] - np.array(ik["reference_joints_hg"])[:12]).max()
+        ),
+        nominal_reference_tracking_bias_leg12_max_rad=float(
+            abs(old_reference_endpoint[:12] - seed.qpos[lo.qi][:12]).max()
+        ),
         reference_endpoint_error_to_ik_max_rad=float(
             abs(endpoint - np.array(ik["reference_joints_hg"])).max()
         ),

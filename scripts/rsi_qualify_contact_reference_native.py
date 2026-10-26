@@ -11,6 +11,7 @@ def main():
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("composed-hash", "geometry-hash", "reference-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--absolute-reference-waypoint", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -63,6 +64,7 @@ def main():
     context["assets"]["experimental_fast"] = reference["experimental_fast_approach"]
     import numpy as np
 
+    from rosclaw_soccer.rsi.absolute_contact_reference import condition_absolute_contact_reference
     from rosclaw_soccer.rsi.contact_reference_generator import generate_contact_reference
     from rosclaw_soccer.rsi.contact_reference_plan import condition_contact_reference
     from rosclaw_soccer.rsi.shared_nn_forecast import SharedNNForecaster, copy_sim_policy
@@ -72,6 +74,11 @@ def main():
     from rosclaw_soccer.sim.contracts import hash_json
 
     a.output.mkdir()
+    condition = (
+        condition_absolute_contact_reference
+        if a.absolute_reference_waypoint
+        else condition_contact_reference
+    )
     write_once(
         a.output / "declaration.json",
         dict(
@@ -83,8 +90,9 @@ def main():
             forecast_native_step_ceiling=2560,
             future_nn_call_ceiling=256,
             original_constructor_warmups_source_bound=5,
-            reference_joint_offset_limit_rad=0.35,
-            additional_reference_velocity_limit_rad_s=4.0,
+            reference_joint_offset_limit_rad=None if a.absolute_reference_waypoint else 0.35,
+            absolute_reference_waypoint=a.absolute_reference_waypoint,
+            additional_reference_velocity_limit_rad_s=6.0 if a.absolute_reference_waypoint else 4.0,
             reference_duration_controls=48,
             actual_joint_or_torque_caps_modified=False,
             actual_reference_FORCED_ONLY_for_interface_qualification_if_valid=True,
@@ -119,22 +127,20 @@ def main():
 
         def install_measured_entry(self, samples, *, reference_frame):
             receipt = super().install_measured_entry(samples, reference_frame=reference_frame)
-            plan, self.generation, self.parent = generate_contact_reference(self, self.forecaster)
+            plan, self.generation, self.parent = generate_contact_reference(
+                self, self.forecaster, absolute_waypoint=a.absolute_reference_waypoint
+            )
             save_future("parent-future", self.parent)
             if plan is not None:
                 limits = self.world.model.jnt_range[self.layout.joints].astype(np.float64)
-                preview = condition_contact_reference(
-                    copy_sim_policy(self.policy), plan, limits_hg=limits
-                )
+                preview = condition(copy_sim_policy(self.policy), plan, limits_hg=limits)
                 self.installation = preview
                 if preview["applied"]:
                     self.future = self.forecaster.forecast(
                         controls=128, before_proposal=True, reference_plan=plan
                     )
                     save_future("contact-future", self.future)
-                    actual_install = condition_contact_reference(
-                        self.policy, plan, limits_hg=limits
-                    )
+                    actual_install = condition(self.policy, plan, limits_hg=limits)
                     if hash_json(actual_install) != hash_json(preview):
                         raise ValueError("prospective and actual reference installation differ")
             path = a.output / "before-actual-reference.json"
@@ -222,6 +228,9 @@ def main():
         a.output / "complete.json",
         dict(
             status=status,
+            reference_contract="absolute_contact_waypoint_v1"
+            if a.absolute_reference_waypoint
+            else "relative_actual_delta_v1",
             source_head=a.expected_head,
             input_file_hashes=pins,
             actual_worlds=1,

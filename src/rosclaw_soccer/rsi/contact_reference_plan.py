@@ -10,6 +10,23 @@ from typing import Any
 import numpy as np
 
 
+def _c2_offsets(
+    delta: np.ndarray, mapping: tuple[int, ...], peak: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Shared curve math only; authority validation belongs to each contract."""
+    indices = np.arange(49, dtype=np.float64)
+    up = indices <= peak
+    u = np.where(up, indices / peak, (indices - peak) / (48 - peak))
+    s = 10 * u**3 - 15 * u**4 + 6 * u**5
+    derivative = 30 * u**2 - 60 * u**3 + 30 * u**4
+    fraction = np.where(up, s, 1 - s)
+    rate = np.where(up, derivative / (peak * 0.02), -derivative / ((48 - peak) * 0.02))
+    pos, vel = np.zeros((49, 29)), np.zeros((49, 29))
+    pos[:, mapping] = fraction[:, None] * delta
+    vel[:, mapping] = rate[:, None] * delta
+    return pos, vel
+
+
 @dataclass(frozen=True)
 class ContactReferencePlan:
     start_frame: int
@@ -35,33 +52,13 @@ class ContactReferencePlan:
         delta = np.array(self.delta_hg, np.float64)
         if abs(delta).max() > 0.350001 or np.any(delta[12:]):
             raise ValueError("explicit leg-only .35rad reference authority required")
-        indices = np.arange(49, dtype=np.float64)
-        up = indices <= self.peak_control
-        u = np.where(
-            up,
-            indices / self.peak_control,
-            (indices - self.peak_control) / (48 - self.peak_control),
-        )
-        s = 10 * u**3 - 15 * u**4 + 6 * u**5
-        derivative = 30 * u**2 - 60 * u**3 + 30 * u**4
-        fraction = np.where(up, s, 1 - s)
-        rate = np.where(
-            up,
-            derivative / (self.peak_control * 0.02),
-            -derivative / ((48 - self.peak_control) * 0.02),
-        )
         # Include the analytic derivative maximum, not only sampled ticks.
         if (
             1.875 * abs(delta).max() / min(self.peak_control, 48 - self.peak_control) / 0.02
             > 4.0 + 1e-12
         ):
             raise ValueError("contact reference exceeds declared additional4rad/s velocity cap")
-        hg_pos = fraction[:, None] * delta
-        hg_vel = rate[:, None] * delta
-        pos, vel = np.zeros((49, 29)), np.zeros((49, 29))
-        pos[:, self.hg_to_isaac] = hg_pos
-        vel[:, self.hg_to_isaac] = hg_vel
-        return pos, vel
+        return _c2_offsets(delta, self.hg_to_isaac, self.peak_control)
 
 
 def condition_contact_reference(

@@ -14,6 +14,10 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.rsi.absolute_contact_reference import (
+    AbsoluteContactReferencePlan,
+    condition_absolute_contact_reference,
+)
 from rosclaw_soccer.rsi.aim_goal_command import AimGoalCommand, condition_aim_goal
 from rosclaw_soccer.rsi.ball_clearance_control import BallClearanceController, BallClearancePlan
 from rosclaw_soccer.rsi.contact_reference_plan import (
@@ -213,6 +217,7 @@ class SharedNNForecaster:
         | MotionSynergyPlan
         | WholeJointReferencePlan
         | ContactReferencePlan
+        | AbsoluteContactReferencePlan
         | None = None,
         aim_goal: AimGoalCommand | None = None,
         target_plan: ExecutedTargetSynergy | None = None,
@@ -288,6 +293,12 @@ class SharedNNForecaster:
                 ]
             elif type(reference_plan) is ContactReferencePlan:
                 reference_applied = condition_contact_reference(
+                    policy,
+                    reference_plan,
+                    limits_hg=donor.model.jnt_range[source.layout.joints].astype(np.float64),
+                )["applied"]
+            elif type(reference_plan) is AbsoluteContactReferencePlan:
+                reference_applied = condition_absolute_contact_reference(
                     policy,
                     reference_plan,
                     limits_hg=donor.model.jnt_range[source.layout.joints].astype(np.float64),
