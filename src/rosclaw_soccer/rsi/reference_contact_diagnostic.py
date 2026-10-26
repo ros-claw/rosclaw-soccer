@@ -9,6 +9,41 @@ from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
 
 
+def backward_material_xy_speed(
+    current_point: np.ndarray,
+    current_body_position: np.ndarray,
+    current_body_rotation: np.ndarray,
+    previous_body_position: np.ndarray,
+    previous_body_rotation: np.ndarray,
+    *,
+    fps: float,
+) -> float:
+    """Velocity of one current body-fixed point, not proof of floor contact."""
+    vectors = (current_point, current_body_position, previous_body_position)
+    rotations = (current_body_rotation, previous_body_rotation)
+    if (
+        any(
+            type(v) is not np.ndarray or v.shape != (3,) or not np.isfinite(v).all()
+            for v in vectors
+        )
+        or any(
+            type(r) is not np.ndarray
+            or r.shape != (3, 3)
+            or not np.isfinite(r).all()
+            or not np.allclose(r.T @ r, np.eye(3), atol=1e-7, rtol=0)
+            or not np.isclose(np.linalg.det(r), 1.0, atol=1e-7, rtol=0)
+            for r in rotations
+        )
+        or type(fps) is not float
+        or not np.isfinite(fps)
+        or not 1 <= fps <= 240
+    ):
+        raise ValueError("finite rigid transforms, point and frame rate required")
+    local_point = current_body_rotation.T @ (current_point - current_body_position)
+    previous_point = previous_body_position + previous_body_rotation @ local_point
+    return float(np.linalg.norm((current_point - previous_point)[:2]) * fps)
+
+
 def reference_ankle_positions(
     model: Any, fields: dict[str, np.ndarray], *, expected_model_hash: str
 ) -> np.ndarray:

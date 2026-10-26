@@ -3,11 +3,35 @@ import pytest
 from test_candidate_body23_comparison import _models
 
 from rosclaw_soccer.rsi.reference_contact_diagnostic import (
+    backward_material_xy_speed,
     contact_label_motion_diagnostic,
     provisional_prior_support,
     reference_ankle_positions,
 )
 from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
+
+
+def test_material_point_pivot_stays_fixed_while_body_center_moves():
+    point = np.array([0.0, 0.0, 0.0])
+    old_center = np.array([0.0, 0.0, 1.0])
+    angle = 0.2
+    rotation = np.array(
+        [[np.cos(angle), 0.0, np.sin(angle)], [0.0, 1.0, 0.0], [-np.sin(angle), 0.0, np.cos(angle)]]
+    )
+    new_center = rotation @ old_center
+    speed = backward_material_xy_speed(point, new_center, rotation, old_center, np.eye(3), fps=30.0)
+    assert speed == pytest.approx(0.0, abs=1e-12)
+    assert np.linalg.norm((new_center - old_center)[:2]) * 30.0 > 1.0
+
+
+def test_material_point_translation_and_invalid_transform():
+    point = np.array([0.1, 0.0, 0.0])
+    origin = np.zeros(3)
+    assert backward_material_xy_speed(
+        point, point, np.eye(3), origin, np.eye(3), fps=30.0
+    ) == pytest.approx(3.0)
+    with pytest.raises(ValueError):
+        backward_material_xy_speed(point, origin, np.zeros((3, 3)), origin, np.eye(3), fps=30.0)
 
 
 def test_reports_fast_claimed_support_without_relabeling():
