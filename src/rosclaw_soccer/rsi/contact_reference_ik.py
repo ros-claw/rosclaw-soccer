@@ -13,8 +13,31 @@ from rosclaw_soccer.physics.bounded_joint_tasks import LinearJointTask, solve_bo
 from rosclaw_soccer.rsi.ball_surface_tasks import measure_ball_surfaces
 
 
+def first_contact_foot(forces: np.ndarray) -> tuple[str, int] | None:
+    """First native foot witness, not the largest force later in its period."""
+    if (
+        type(forces) is not np.ndarray
+        or forces.ndim != 2
+        or forces.shape[1] != 2
+        or forces.dtype != np.float64
+        or not np.isfinite(forces).all()
+        or (forces < 0).any()
+    ):
+        raise ValueError("finite nonnegative two-foot native force trace required")
+    touched = np.flatnonzero((forces > 1).any(axis=1))
+    if not len(touched):
+        return None
+    index = int(touched[0])
+    return ("left", "right")[int(forces[index].argmax())], index
+
+
 def solve_contact_reference_pose(
-    model: Any, measured: Any, layout: Any, *, goal: np.ndarray
+    model: Any,
+    measured: Any,
+    layout: Any,
+    *,
+    goal: np.ndarray,
+    active_foot: str | None = None,
 ) -> dict[str, Any]:
     import mujoco
 
@@ -28,6 +51,12 @@ def solve_contact_reference_pose(
         raise ValueError("own typed FK model and finite world goal required")
     if not np.isfinite(measured.qpos).all() or not np.isfinite(measured.qvel).all():
         raise ValueError("finite actual seed required, no state repair")
+    if active_foot is not None and (
+        type(active_foot) is not str or active_foot not in ("left", "right")
+    ):
+        raise ValueError(
+            "explicit left/right contact foot or measured nearest-foot diagnostic required"
+        )
     scratch = mujoco.MjData(model)
     mujoco.mj_copyData(scratch, model, measured)
     mujoco.mj_kinematics(model, scratch)
@@ -47,7 +76,11 @@ def solve_contact_reference_pose(
     feet = [side for side in ("left", "right") if surfaces[side + "_foot"]["available"]]
     if len(feet) != 2:
         raise ValueError("two measured actual foot surfaces required")
-    active = min(feet, key=lambda side: surfaces[side + "_foot"]["gap_m"])
+    active = (
+        active_foot
+        if active_foot is not None
+        else min(feet, key=lambda side: surfaces[side + "_foot"]["gap_m"])
+    )
     support = "right" if active == "left" else "left"
     active_body = int(model.body(layout.robot_prefix + active + "_ankle_roll_link").id)
     support_body = int(model.body(layout.robot_prefix + support + "_ankle_roll_link").id)
@@ -178,6 +211,7 @@ def solve_contact_reference_pose(
         schema="soccer.contact_reference_geometry.v1",
         status=status,
         active_foot=active,
+        contact_foot_selection="explicit" if active_foot is not None else "nearest_measured",
         contact_point_local=local_point.tolist(),
         contact_goal_world=contact_goal.tolist(),
         nominal_joints_hg=original.tolist(),

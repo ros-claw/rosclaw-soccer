@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from test_shared_native_motor_world import source_xml
 
-from rosclaw_soccer.rsi.contact_reference_ik import solve_contact_reference_pose
+from rosclaw_soccer.rsi.contact_reference_ik import first_contact_foot, solve_contact_reference_pose
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
 
@@ -59,3 +59,24 @@ def test_malformed_goal_rejected_before_solver(goal):
     model, data, layout = fixture(0.12)
     with pytest.raises(ValueError):
         solve_contact_reference_pose(model, data, layout, goal=goal)
+
+
+def test_explicit_contact_foot_is_not_replaced_by_closer_other_foot():
+    model, data, layout = fixture(0.12)
+    result = solve_contact_reference_pose(
+        model, data, layout, goal=np.array([8.0, 0.0, 0.11]), active_foot="right"
+    )
+    assert result["active_foot"] == "right"
+    assert result["contact_foot_selection"] == "explicit"
+    with pytest.raises(ValueError, match="contact foot"):
+        solve_contact_reference_pose(
+            model, data, layout, goal=np.array([8.0, 0.0, 0.11]), active_foot="auto"
+        )
+
+
+def test_first_native_foot_is_not_largest_later_impact():
+    forces = np.array([[0.0, 0.0], [2.0, 0.0], [0.0, 40.0]])
+    assert first_contact_foot(forces) == ("left", 1)
+    assert first_contact_foot(np.zeros((10, 2))) is None
+    with pytest.raises(ValueError):
+        first_contact_foot(np.array([[np.nan, 0.0]]))
