@@ -21,6 +21,7 @@ def main():
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--direct-approach-reference", action="store_true")
     p.add_argument("--motion-reference", type=Path)
+    p.add_argument("--ankle-roll-reference", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -62,7 +63,7 @@ def main():
     if a.motion_reference is not None:
         from rosclaw_soccer.rsi.cftrack_motion_reference import load_cftrack_motion
 
-        if a.direct_approach_reference or a.motion_reference.is_symlink():
+        if a.direct_approach_reference or a.ankle_roll_reference or a.motion_reference.is_symlink():
             raise ValueError("whole-body motion and procedural conditioning are distinct protocols")
         motion_source = a.motion_reference.resolve()
         if str(motion_source) not in pins or not motion_source.is_relative_to(external):
@@ -118,6 +119,10 @@ def main():
             reference_joint_positions_are_not_executed_targets=True,
             initial_velocity="zero_author_reset_convention",
             direct_approach_reference=a.direct_approach_reference,
+            ankle_roll_reference=a.ankle_roll_reference,
+            ankle_tracking_error_frame="ankle_roll"
+            if motion is not None or a.ankle_roll_reference
+            else "ankle_pitch",
             intended_scope="interface_and_single_native_baseline_not_generalized_teacher",
             license_commercial_publicity_authorized=False,
             hardware_authorized=False,
@@ -215,6 +220,7 @@ def main():
     rows, targets, errors = [], [], []
     failure = None
     reference_conditioning = None
+    foot_frame_conditioning = None
     try:
         player = SharedOmniContactPlayer(
             world,
@@ -230,6 +236,14 @@ def main():
             reference_conditioning = condition_direct_kick_approach(policy)
             world._require_current_boundary()
             write_once(a.output / "before-actual-reference.json", reference_conditioning)
+        if a.ankle_roll_reference:
+            from rosclaw_soccer.rsi.cftrack_foot_frame_reference import (
+                condition_cftrack_roll_reference,
+            )
+
+            foot_frame_conditioning = condition_cftrack_roll_reference(policy)
+            world._require_current_boundary()
+            write_once(a.output / "before-actual-foot-frame.json", foot_frame_conditioning)
         for _ in range(600):
             target, _ = player.propose()
             row = world.advance({"a/": target})
@@ -244,7 +258,17 @@ def main():
                 [
                     float(
                         np.linalg.norm(
-                            scratch.xpos[model.body("a/" + side + "_ankle_pitch_link").id]
+                            scratch.xpos[
+                                model.body(
+                                    "a/"
+                                    + side
+                                    + (
+                                        "_ankle_roll_link"
+                                        if motion is not None or a.ankle_roll_reference
+                                        else "_ankle_pitch_link"
+                                    )
+                                ).id
+                            ]
                             - goal[:3]
                         )
                     )
@@ -289,6 +313,7 @@ def main():
             external_head=head,
             runtime_failure=failure,
             reference_conditioning=reference_conditioning,
+            foot_frame_conditioning=foot_frame_conditioning,
             reference_source="CFgen" if motion is None else "NPZmotion",
             motion_source=str(motion_source) if motion_source else None,
             controls=world.control_steps,

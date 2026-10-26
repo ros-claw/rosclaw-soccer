@@ -63,6 +63,7 @@ def main():
             str(motion_path) not in pins
             or not motion_path.is_relative_to(external)
             or report.get("reference_conditioning") is not None
+            or report.get("foot_frame_conditioning") is not None
         ):
             raise ValueError("pinned complete motion without procedural conditioning required")
         motion = load_cftrack_motion(motion_path)
@@ -167,6 +168,14 @@ def main():
         ):
             raise ValueError("current-state direct reference does not regenerate")
     original_session = policy.ort_session
+    if report.get("foot_frame_conditioning") is not None:
+        from rosclaw_soccer.rsi.cftrack_foot_frame_reference import condition_cftrack_roll_reference
+        from rosclaw_soccer.sim.contracts import hash_json
+
+        if hash_json(condition_cftrack_roll_reference(policy)) != hash_json(
+            report["foot_frame_conditioning"]
+        ):
+            raise ValueError("full-motion ankle frame binding does not regenerate")
     calls = []
 
     class VerifySession:
@@ -235,6 +244,7 @@ def main():
             qualification_hash=a.qualification_hash,
             actual_neural_readbacks=len(calls),
             reference_source=reference_source,
+            foot_frame_conditioning=report.get("foot_frame_conditioning"),
             motion_source=str(motion_path) if motion_path else None,
             new_initial_condition_not_an_old_exam_certificate=True,
             constructor_warmups=0,

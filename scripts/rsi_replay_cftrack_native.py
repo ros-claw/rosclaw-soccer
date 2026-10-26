@@ -49,6 +49,8 @@ def main():
     source_pins(pins)
     check_pins(pins)
     reference_source = report.get("reference_source", "CFgen")
+    if audit.get("foot_frame_conditioning") != report.get("foot_frame_conditioning"):
+        raise ValueError("producer and neural readback foot reference bindings disagree")
     motion = None
     if audit.get("reference_source", "CFgen") != reference_source:
         raise ValueError("producer and neural readback reference protocols disagree")
