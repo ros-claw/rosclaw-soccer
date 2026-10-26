@@ -1,0 +1,220 @@
+"""Rebuild actual kick NN observations from saved native states; no integration."""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--source", type=Path, required=True)
+    p.add_argument("--source-hash", required=True)
+    p.add_argument("--expected-head", required=True)
+    p.add_argument("--output", type=Path, required=True)
+    a = p.parse_args()
+    from scripts.rsi_atomic_artifacts import write_once
+    from scripts.rsi_native_context_recovery_common import check_pins, digest
+    from scripts.rsi_native_fresh_common import clean, source_pins
+
+    clean(a.expected_head)
+    complete = a.source / "complete.json"
+    if (
+        a.output.exists()
+        or complete.is_symlink()
+        or digest(complete) != a.source_hash
+        or any(n in sys.modules for n in ("common", "policy", "FSM"))
+    ):
+        raise ValueError("unused output, exact closed source and isolated imports required")
+    source = json.loads(complete.read_text())
+    if (
+        source["status"] != "CFTRACK_PRIVATE_FUTURES_REPLAYED_ACTUALLY_NOT_PROMOTED"
+        or source["native_steps"] != 6780
+        or source["cftrack_neural_calls"] != 400
+        or [(r["entry_control"], r["actual_execution"]["arm"]) for r in source["records"]]
+        != [
+            (57, "measured_history"),
+            (57, "zero_history"),
+            (82, "measured_history"),
+            (82, "zero_history"),
+        ]
+    ):
+        raise ValueError("complete four actual execution traces required")
+    pins = dict(source["input_file_hashes"])
+    pins[str(complete)] = a.source_hash
+    for row in source["records"]:
+        for item in (row["artifact"], row["actual_execution"]["artifact"]):
+            path = a.source / item["path"]
+            if path.is_symlink() or path.parent != a.source or digest(path) != item["hash"]:
+                raise ValueError("exact confined actual trace required")
+            pins[str(path)] = item["hash"]
+    source_pins(pins)
+    check_pins(pins)
+    scenes = [Path(x) for x in pins if x.endswith("/cached-standard/declared-scene.xml")]
+    histories = [
+        Path(x) for x in pins if x.endswith("/rsi-cftrack-measured-history-20261027/history.npz")
+    ]
+    forecast_reports = [
+        Path(x)
+        for x in pins
+        if x.endswith("/rsi-cftrack-history-private-future-20261027/complete.json")
+    ]
+    external_files = [Path(x) for x in pins if x.endswith("/policy/omnicontact/OmniContact.py")]
+    if not (len(scenes) == len(histories) == len(forecast_reports) == len(external_files) == 1):
+        raise ValueError("unique scene, measured history, forecast and policy required")
+    forecast = json.loads(forecast_reports[0].read_text())
+    if forecast["status"] != "CFTRACK_MEASURED_HISTORY_PRIVATE_FUTURES_RECORDED_NOT_PROMOTED":
+        raise ValueError("qualified corresponding private futures required")
+    import mujoco
+    import numpy as np
+    from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
+
+    from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+    from rosclaw_soccer.rsi.cftrack_trace_readback import verify_cftrack_trace
+    from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+    from rosclaw_soccer.rsi.shared_native_motor_world import (
+        NativePDParameters,
+        SharedNativeMotorWorld,
+    )
+    from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
+    from rosclaw_soccer.rsi.shared_omnicontact_player import SharedOmniContactPlayer
+    from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
+
+    model = mujoco.MjModel.from_xml_string(
+        shared_native_scene(scenes[0].read_text(), prefixes=("a/",))
+    )
+    if (
+        compiled_model_hash(model)
+        != "sha256:115bfd4a136b66903a54bc2807ec728cc2fa251d3e782f1906f352b45199568d"
+    ):
+        raise ValueError("exact canonical SIM body required")
+    lo = NativeVelocityLayout(model, robot_prefix="a/", ball_body_name="soccer_ball")
+    with np.load(histories[0], allow_pickle=False) as f:
+        saved_history = {k: f[k].copy() for k in f.files}
+    external = external_files[0].parents[2]
+    sys.path.insert(0, str(external))
+    from common.ctrlcomp import PolicyOutput, StateAndCmd
+    from policy.omnicontact.OmniContact import OmniContact
+
+    a.output.mkdir()
+    write_once(
+        a.output / "declaration.json",
+        dict(
+            source_head=a.expected_head,
+            source_hash=a.source_hash,
+            input_file_hashes=pins,
+            maximum_nn_calls=400,
+            native_steps=0,
+            original_fk_and_neural_codec_shared=True,
+            initial_ball_cache_from_prior_native_substep=True,
+            scratch_only=True,
+            no_new_scenarios=True,
+            hardware_authorized=False,
+        ),
+    )
+    rows, calls = [], 0
+    for row in source["records"]:
+        entry, arm = row["entry_control"], row["actual_execution"]["arm"]
+        with np.load(a.source / row["artifact"]["path"], allow_pickle=False) as f:
+            prefix = {k: f[k].copy() for k in f.files}
+        with np.load(
+            a.source / row["actual_execution"]["artifact"]["path"], allow_pickle=False
+        ) as f:
+            actual = {k: f[k].copy() for k in f.files}
+        if prefix["qpos"].shape != (entry * 10, model.nq):
+            raise ValueError("complete source physical prefix required")
+        matches = [
+            f
+            for r in forecast["records"]
+            if r["entry_control"] == entry
+            for f in r["private_forecasts"]
+            if f["arm"] == arm
+        ]
+        if len(matches) != 1:
+            raise ValueError("unique corresponding private future required")
+        forecast_path = forecast_reports[0].parent / matches[0]["artifact"]["path"]
+        if (
+            forecast_path.is_symlink()
+            or forecast_path.parent != forecast_reports[0].parent
+            or digest(forecast_path) != matches[0]["artifact"]["hash"]
+        ):
+            raise ValueError("exact corresponding private future artifact required")
+        with np.load(forecast_path, allow_pickle=False) as f:
+            for key in ("qpos", "qvel", "torque", "ball_forces", "joint_targets"):
+                if not np.array_equal(f[key], actual[key]):
+                    raise ValueError(f"actual/private array mismatch {entry}/{arm}/{key}")
+        data = mujoco.MjData(model)
+        data.qpos[:] = prefix["qpos"][-2]
+        mujoco.mj_kinematics(model, data)
+        mujoco.mj_comPos(model, data)
+        data.qpos[:], data.qvel[:] = prefix["qpos"][-1], prefix["qvel"][-1]
+        policy = OmniContact(
+            StateAndCmd(29),
+            PolicyOutput(29),
+            onnx_path=str(external / "policy/omnicontact/model/kick_50k.onnx"),
+        )
+        if tuple(policy.kinematics.joint_names) != tuple(G1_DDS_JOINT_NAMES):
+            raise ValueError("canonical external FK order required")
+        policy.task, policy.reference_source, policy.active_object_name = (
+            "kickball",
+            "CFgen",
+            "ball",
+        )
+        policy.box_dims = policy.ball_dims = np.full(3, 0.11, np.float32)
+        policy.bbox_scale = policy.box_dims * 2
+        policy.bbox_offsets_scaled = policy.bbox_offsets * policy.bbox_scale.reshape(1, 3)
+        order = policy.lab2mj
+        pd = NativePDParameters(
+            policy.kps_lab[order], policy.kds_lab[order], 0.85 * np.array(G1_HARD_TORQUE_LIMITS)
+        )
+        world = SharedNativeMotorWorld(
+            model, data, players={"a/": pd}, ball_body_name="soccer_ball"
+        )
+        player = SharedOmniContactPlayer(
+            world, "a/", policy, expected_policy_type=OmniContact, goal=np.array([5.0, 0.0, 0.11])
+        )
+        if arm == "measured_history":
+            h = saved_history[f"entry{entry}_observations"]
+            policy.obs_history_buffer[1:] = h[:4]
+            policy.action = h[4, 79:108].copy()
+        elif arm != "zero_history":
+            raise ValueError("declared actual history arm required")
+        count = verify_cftrack_trace(
+            policy, data, lo, actual, controls=100, initial_cached_qpos=prefix["qpos"][-2]
+        )
+        if count != 100 or data.time != 0 or world.native_steps != 0 or player.commits != 0:
+            raise ValueError("scratch network readback must not integrate or commit")
+        calls += count
+        evidence = dict(
+            entry_control=entry,
+            arm=arm,
+            neural_calls=count,
+            actual_vs_private_arrays_exact=True,
+            initial_cached_ball_from_prior_substep=True,
+            measured_history_is_scratch_reconstruction=arm == "measured_history",
+        )
+        write_once(a.output / f"entry{entry}-{arm}.json", evidence)
+        rows.append(evidence)
+    check_pins(pins)
+    clean(a.expected_head)
+    write_once(
+        a.output / "complete.json",
+        dict(
+            status="ACTUAL_CFTRACK_FUTURES_NN_READBACK_EXACT_NOT_PROMOTED",
+            source_head=a.expected_head,
+            source_hash=a.source_hash,
+            input_file_hashes=pins,
+            records=rows,
+            neural_calls=calls,
+            native_steps=0,
+            shared_source_fk_and_codec=True,
+            no_new_scenarios=True,
+            hardware_authorized=False,
+            promotion_authorized=False,
+            goal_complete=False,
+        ),
+    )
+
+
+if __name__ == "__main__":
+    main()
