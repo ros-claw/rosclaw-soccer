@@ -39,3 +39,21 @@ def test_bad_input_and_index_budget_fail_closed():
     bad[1, 0] = np.nan
     with pytest.raises(ValueError):
         guard.inspect("retention", bad)
+
+
+def test_explicit_xy_translation_invariance_detects_moved_duplicate():
+    train = np.arange(360, dtype=np.float64).reshape(120, 3) / 100
+    held = np.vstack([[-1.0, -1.0, -1.0], train.copy()])
+    held[1:, 0] += 4
+    held[1:, 1] -= 7
+    guard = MotionAnchorGuard({"train": train}, translation_columns=(0, 1))
+    with pytest.raises(ValueError, match="overlap across splits"):
+        guard.inspect("retention", held)
+
+
+def test_translation_columns_are_validated():
+    train = np.zeros((120, 3), dtype=np.float64)
+    with pytest.raises(ValueError):
+        MotionAnchorGuard({"train": train}, translation_columns=(0, 3))
+    with pytest.raises(ValueError):
+        MotionAnchorGuard({"train": train}, translation_columns=(0, 0))

@@ -287,7 +287,7 @@ def audit_motiondecode_football(
         ):
             raise ValueError("selected MotionDecode reference changed during split screening")
         train_references[teacher.relative_path] = values
-    guard = MotionAnchorGuard(train_references)
+    guard = MotionAnchorGuard(train_references, translation_columns=(0, 1))
     retention_screen_results: list[dict[str, Any]] = []
     for clip in clips:
         if clip.split != "retention":

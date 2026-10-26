@@ -18,6 +18,7 @@ class MotionAnchorGuard:
         window: int = 8,
         stride: int = 32,
         decimals: int = 5,
+        translation_columns: tuple[int, ...] = (),
         max_index_entries: int = 100000,
         max_anchor_hits: int = 100000,
         max_candidate_alignments: int = 10000,
@@ -32,6 +33,9 @@ class MotionAnchorGuard:
             or not 1 <= stride <= 1000
             or type(decimals) is not int
             or not 0 <= decimals <= 8
+            or type(translation_columns) is not tuple
+            or len(set(translation_columns)) != len(translation_columns)
+            or any(type(i) is not int or not 0 <= i < 256 for i in translation_columns)
             or any(
                 type(v) is not int or not 1 <= v <= 1000000
                 for v in (max_index_entries, max_anchor_hits, max_candidate_alignments)
@@ -39,6 +43,7 @@ class MotionAnchorGuard:
         ):
             raise ValueError("explicit bounded train clips and anchor budgets required")
         self.window, self.stride, self.decimals = window, stride, decimals
+        self.translation_columns = translation_columns
         self.max_anchor_hits, self.max_candidate_alignments = (
             max_anchor_hits,
             max_candidate_alignments,
@@ -64,6 +69,7 @@ class MotionAnchorGuard:
             or values.ndim != 2
             or not self.window <= len(values) <= 60000
             or not 1 <= values.shape[1] <= 256
+            or any(i >= values.shape[1] for i in self.translation_columns)
             or values.dtype.kind != "f"
             or not np.isfinite(values).all()
             or np.max(np.abs(values)) > 1e6
@@ -71,7 +77,11 @@ class MotionAnchorGuard:
             raise ValueError("finite bounded floating-point motion reference required")
 
     def _anchor(self, values: np.ndarray) -> bytes:
-        rounded = np.round(values, decimals=self.decimals)
+        normalized = values.astype(np.float64, copy=True)
+        if self.translation_columns:
+            columns = list(self.translation_columns)
+            normalized[:, columns] -= normalized[0, columns].copy()
+        rounded = np.round(normalized, decimals=self.decimals)
         rounded[rounded == 0] = 0.0  # Normalize negative zero before hashing.
         return hashlib.blake2b(rounded.astype("<f8", copy=False).tobytes(), digest_size=16).digest()
 
@@ -101,7 +111,11 @@ class MotionAnchorGuard:
             minimum = min(100, len(original), len(values))
             if n < minimum:
                 continue
-            error = np.abs(original[i : i + n] - values[j : j + n])
+            difference = original[i : i + n] - values[j : j + n]
+            if self.translation_columns:
+                columns = list(self.translation_columns)
+                difference[:, columns] -= difference[0, columns].copy()
+            error = np.abs(difference)
             fraction = float((error.max(axis=1) <= 1e-6).mean())
             if fraction >= 0.95:
                 raise ValueError(
@@ -115,6 +129,7 @@ class MotionAnchorGuard:
             candidate_alignments=len(candidates),
             detected_shared_segments=0,
             detection_method="rounded_exact_anchors_then_full_alignment",
+            translation_invariant_columns=self.translation_columns,
             possible_unanchored_near_duplicates_not_excluded=True,
             source_independence_proven=False,
         )

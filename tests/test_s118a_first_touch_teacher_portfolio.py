@@ -126,6 +126,7 @@ def test_motiondecode_audit_rejects_shifted_selected_reference_in_retention(tmp_
     else:
         pytest.fail("could not construct retention fixture")
     values = np.loadtxt(train, delimiter=",", skiprows=1)
+    values[:, :2] += [5, -3]
     np.savetxt(
         retention,
         np.vstack([values[0], values]),
@@ -149,7 +150,7 @@ def test_motiondecode_audit_records_each_retention_screen(tmp_path: Path) -> Non
     else:
         pytest.fail("could not construct retention fixture")
     values = np.loadtxt(train, delimiter=",", skiprows=1)
-    values[:, 0] += 5
+    values[:, 0] += np.arange(len(values)) * 0.01
     np.savetxt(retention, values, delimiter=",", header=",".join(_header()), comments="")
     report = portfolio.audit_motiondecode_football(
         root, selected_per_category_and_foot=1, minimum_total_clips=7
