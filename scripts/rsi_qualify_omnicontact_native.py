@@ -8,6 +8,7 @@ import argparse
 import json
 import subprocess
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 
@@ -22,6 +23,8 @@ def main():
     p.add_argument("--direct-approach-reference", action="store_true")
     p.add_argument("--motion-reference", type=Path)
     p.add_argument("--ankle-roll-reference", action="store_true")
+    p.add_argument("--motor-pilot", type=Path)
+    p.add_argument("--motor-pilot-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -47,6 +50,28 @@ def main():
     old = json.loads(a.body_source.read_text())
     pins = dict(old["input_file_hashes"])
     pins[str(a.body_source)] = a.body_source_hash
+    motor_plan = None
+    if (a.motor_pilot is None) != (a.motor_pilot_hash is None):
+        raise ValueError("motor nomination requires its explicit pinned hash")
+    if a.motor_pilot is not None:
+        from rosclaw_soccer.rsi.cftrack_motor_authority import selected_motor_plan
+
+        nomination = a.motor_pilot / "complete.json"
+        if (
+            not a.direct_approach_reference
+            or a.ankle_roll_reference
+            or a.motion_reference is not None
+            or nomination.is_symlink()
+            or digest(nomination) != a.motor_pilot_hash
+        ):
+            raise ValueError("exact closed direct-CFgen-only motor nomination required")
+        pilot = json.loads(nomination.read_text())
+        motor_plan = selected_motor_plan(pilot)
+        for path, commitment in pilot["input_file_hashes"].items():
+            if path in pins and pins[path] != commitment:
+                raise ValueError("nomination source commitments disagree")
+            pins[path] = commitment
+        pins[str(nomination)] = a.motor_pilot_hash
     # Every external source/asset is committed before import, not just the
     # selected ONNX. No external deploy_omnicontact runner is imported.
     for path in sorted(external.rglob("*")):
@@ -120,6 +145,8 @@ def main():
             initial_velocity="zero_author_reset_convention",
             direct_approach_reference=a.direct_approach_reference,
             ankle_roll_reference=a.ankle_roll_reference,
+            motor_plan=asdict(motor_plan) if motor_plan else None,
+            motor_nomination_hash=a.motor_pilot_hash,
             ankle_tracking_error_frame="ankle_roll"
             if motion is not None or a.ankle_roll_reference
             else "ankle_pitch",
@@ -216,8 +243,7 @@ def main():
             captured_actions.append(result[0].copy())
             return result
 
-    policy.ort_session = CaptureSession()
-    rows, targets, errors = [], [], []
+    rows, targets, errors, decoded = [], [], [], []
     failure = None
     reference_conditioning = None
     foot_frame_conditioning = None
@@ -244,11 +270,23 @@ def main():
             foot_frame_conditioning = condition_cftrack_roll_reference(policy)
             world._require_current_boundary()
             write_once(a.output / "before-actual-foot-frame.json", foot_frame_conditioning)
+        if motor_plan is not None:
+            player.install_motor_plan(motor_plan)
+            write_once(
+                a.output / "before-actual-motor.json",
+                dict(
+                    motor_plan=asdict(motor_plan),
+                    nomination_hash=a.motor_pilot_hash,
+                    hardware_authorized=False,
+                ),
+            )
+        policy.ort_session = CaptureSession()
         for _ in range(600):
-            target, _ = player.propose()
+            target, measured = player.propose()
             row = world.advance({"a/": target})
             rows.append(row)
             targets.append(target)
+            decoded.append(measured["nn_decoded_target"])
             player.commit()
             # FK on scratch to measure actual endpoint, never write world.
             scratch = mujoco.MjData(model)
@@ -293,6 +331,7 @@ def main():
     )
     arrays.update(
         joint_targets=np.array(targets),
+        nn_decoded_targets=np.array(decoded),
         neural_obs=np.array(captured_obs),
         neural_actions=np.array(captured_actions),
         ankle_error_m=np.array(errors),
@@ -314,6 +353,8 @@ def main():
             runtime_failure=failure,
             reference_conditioning=reference_conditioning,
             foot_frame_conditioning=foot_frame_conditioning,
+            motor_plan=asdict(motor_plan) if motor_plan else None,
+            motor_nomination_hash=a.motor_pilot_hash,
             reference_source="CFgen" if motion is None else "NPZmotion",
             motion_source=str(motion_source) if motion_source else None,
             controls=world.control_steps,

@@ -4,12 +4,65 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.rsi.cftrack_motor_residual_plan import CFtrackMotorResidualPlan
+
 MOTOR_AXES = (
     ("right_hip_yaw_joint", 8),
     ("right_hip_roll_joint", 7),
     ("right_ankle_roll_joint", 11),
     ("waist_yaw_joint", 12),
 )
+
+
+def selected_motor_plan(report: dict[str, Any]) -> CFtrackMotorResidualPlan:
+    """Decode one frozen pilot nomination, never a promotion or hardware permit."""
+    if (
+        report.get("status") != "CFTRACK_MOTOR_AUTHORITY_LOCAL_RESCUE"
+        or report.get("private_post60_is_not_full_h300_exam") is not True
+        or report.get("actual_native_steps") != 0
+        or report.get("neural_optimizer_updates") != 0
+    ):
+        raise ValueError("closed local-only motor pilot nomination required")
+    records = report.get("records")
+    expected = ["parent", *[f"arm-{i:02d}" for i in range(8)]]
+    if (
+        type(records) is not list
+        or len(records) != 9
+        or [r.get("name") for r in records] != expected
+        or report.get("selected_local_candidate") not in expected[1:]
+    ):
+        raise ValueError("complete declared nine-arm nomination required")
+    index = expected.index(report["selected_local_candidate"]) - 1
+    row = records[index + 1]
+    if (
+        row["metrics"].get("local_post60_conditions_met") is not True
+        or row["future"].get("controls") != 160
+        or row["future"].get("runtime_failure") is not None
+        or row["future"].get("body_failed") is not False
+    ):
+        raise ValueError("complete safe local nominee required")
+    raw = row["motor_plan"]
+    plan = CFtrackMotorResidualPlan(
+        raw["origin_counter"],
+        raw["start_control"],
+        raw["peak_control"],
+        tuple(raw["delta_hg"]),
+        raw["donor_policy_hash"],
+    )
+    plan.offsets()
+    first = records[0]["metrics"]["first_foot_control"]
+    expected_delta = [0.0] * 29
+    expected_delta[MOTOR_AXES[index // 2][1]] = 0.15 if index % 2 else -0.15
+    if (
+        type(first) is not int
+        or not 25 <= first <= 99
+        or plan.origin_counter != 0
+        or plan.start_control != first - 25
+        or plan.peak_control != 24
+        or plan.delta_hg != tuple(expected_delta)
+    ):
+        raise ValueError("nominee differs from predeclared motor axis/window")
+    return plan
 
 
 def summarize_motor_future(

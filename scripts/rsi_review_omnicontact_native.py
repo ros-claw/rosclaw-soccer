@@ -64,6 +64,7 @@ def main():
             or not motion_path.is_relative_to(external)
             or report.get("reference_conditioning") is not None
             or report.get("foot_frame_conditioning") is not None
+            or report.get("motor_plan") is not None
         ):
             raise ValueError("pinned complete motion without procedural conditioning required")
         motion = load_cftrack_motion(motion_path)
@@ -176,6 +177,30 @@ def main():
             report["foot_frame_conditioning"]
         ):
             raise ValueError("full-motion ankle frame binding does not regenerate")
+    motor_plan = None
+    if report.get("motor_plan") is not None:
+        from rosclaw_soccer.rsi.cftrack_motor_residual_plan import CFtrackMotorResidualPlan
+        from rosclaw_soccer.rsi.omnicontact_policy_copy import cftrack_state_hash
+
+        if (
+            reference_source != "CFgen"
+            or report.get("foot_frame_conditioning") is not None
+            or report.get("reference_conditioning") is None
+        ):
+            raise ValueError("motor audit requires the original direct-CFgen reference")
+        value = report["motor_plan"]
+        motor_plan = CFtrackMotorResidualPlan(
+            value["origin_counter"],
+            value["start_control"],
+            value["peak_control"],
+            tuple(value["delta_hg"]),
+            value["donor_policy_hash"],
+        )
+        motor_plan.require_donor(
+            policy_hash=cftrack_state_hash(policy), counter=policy.counter_step
+        )
+        if raw.get("nn_decoded_targets", np.empty(0)).shape != (600, 29):
+            raise ValueError("separately recorded original NN targets required")
     calls = []
 
     class VerifySession:
@@ -204,12 +229,22 @@ def main():
         view.world.control_steps = tick
         SharedOmniContactPlayer._observe(view)
         policy.run()
+        decoded = policy.policy_output.actions.astype(np.float64)
+        if "nn_decoded_targets" in raw and not np.array_equal(
+            decoded, raw["nn_decoded_targets"][tick]
+        ):
+            raise ValueError("original NN decoded target differs")
+        applied = (
+            motor_plan.apply(
+                decoded, counter=tick, limits_hg=model.jnt_range[lo.joints].astype(np.float64)
+            )
+            if motor_plan is not None
+            else decoded
+        )
         if (
             policy.counter_step != tick + 1
             or policy.async_stage_thread is not None
-            or not np.array_equal(
-                policy.policy_output.actions.astype(np.float64), raw["joint_targets"][tick]
-            )
+            or not np.array_equal(applied, raw["joint_targets"][tick])
         ):
             raise ValueError("private CFtrack tick/decoded native target differs")
     forces = raw["ball_forces"][:, 0]
@@ -245,6 +280,8 @@ def main():
             actual_neural_readbacks=len(calls),
             reference_source=reference_source,
             foot_frame_conditioning=report.get("foot_frame_conditioning"),
+            motor_plan=report.get("motor_plan"),
+            motor_nomination_hash=report.get("motor_nomination_hash"),
             motion_source=str(motion_path) if motion_path else None,
             new_initial_condition_not_an_old_exam_certificate=True,
             constructor_warmups=0,

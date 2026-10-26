@@ -4,6 +4,72 @@ import pytest
 from rosclaw_soccer.rsi.cftrack_motor_authority import summarize_motor_future
 
 
+def nomination():
+    from dataclasses import asdict
+
+    from rosclaw_soccer.rsi.cftrack_motor_authority import MOTOR_AXES
+    from rosclaw_soccer.rsi.cftrack_motor_residual_plan import CFtrackMotorResidualPlan
+
+    rows = [dict(name="parent", metrics=dict(first_foot_control=71))]
+    for i in range(8):
+        delta = [0.0] * 29
+        delta[MOTOR_AXES[i // 2][1]] = 0.15 if i % 2 else -0.15
+        p = CFtrackMotorResidualPlan(0, 46, 24, tuple(delta), "sha256:" + "a" * 64)
+        rows.append(
+            dict(
+                name=f"arm-{i:02d}",
+                motor_plan=asdict(p),
+                metrics=dict(local_post60_conditions_met=i == 3),
+                future=dict(controls=160, body_failed=False, runtime_failure=None),
+            )
+        )
+    return dict(
+        status="CFTRACK_MOTOR_AUTHORITY_LOCAL_RESCUE",
+        private_post60_is_not_full_h300_exam=True,
+        actual_native_steps=0,
+        neural_optimizer_updates=0,
+        records=rows,
+        selected_local_candidate="arm-03",
+    )
+
+
+def test_decode_frozen_nominee_preserves_only_predeclared_axis_window():
+    from rosclaw_soccer.rsi.cftrack_motor_authority import selected_motor_plan
+
+    p = selected_motor_plan(nomination())
+    assert p.start_control == 46 and p.delta_hg[7] == 0.15
+    assert sum(v != 0 for v in p.delta_hg) == 1
+
+
+@pytest.mark.parametrize(
+    "defect",
+    ["unclosed", "partial", "parent", "unsafe", "axis", "window", "amplitude", "lateorigin"],
+)
+def test_invalid_nomination_rejected_without_execution(defect):
+    from rosclaw_soccer.rsi.cftrack_motor_authority import selected_motor_plan
+
+    report = nomination()
+    row = report["records"][4]
+    if defect == "unclosed":
+        report["status"] = "RUNNING"
+    elif defect == "partial":
+        report["records"].pop()
+    elif defect == "parent":
+        report["selected_local_candidate"] = "parent"
+    elif defect == "unsafe":
+        row["future"]["body_failed"] = True
+    elif defect == "axis":
+        row["motor_plan"]["delta_hg"] = tuple([0.15] + [0.0] * 28)
+    elif defect == "window":
+        row["motor_plan"]["start_control"] = 45
+    elif defect == "amplitude":
+        row["motor_plan"]["delta_hg"] = (0.3,) * 29
+    elif defect == "lateorigin":
+        row["motor_plan"]["origin_counter"] = 1
+    with pytest.raises(ValueError):
+        selected_motor_plan(report)
+
+
 def fixture():
     q = np.zeros((1600, 43))
     q[:, 9] = 0.77

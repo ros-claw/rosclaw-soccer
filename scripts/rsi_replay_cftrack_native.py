@@ -51,6 +51,10 @@ def main():
     reference_source = report.get("reference_source", "CFgen")
     if audit.get("foot_frame_conditioning") != report.get("foot_frame_conditioning"):
         raise ValueError("producer and neural readback foot reference bindings disagree")
+    if audit.get("motor_plan") != report.get("motor_plan") or audit.get(
+        "motor_nomination_hash"
+    ) != report.get("motor_nomination_hash"):
+        raise ValueError("producer and neural readback motor nominations disagree")
     motion = None
     if audit.get("reference_source", "CFgen") != reference_source:
         raise ValueError("producer and neural readback reference protocols disagree")
