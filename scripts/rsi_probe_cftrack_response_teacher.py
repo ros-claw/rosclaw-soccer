@@ -18,12 +18,15 @@ def main():
     parser.add_argument("--external-source", type=Path, required=True)
     parser.add_argument("--expected-head", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--local-sparse", action="store_true")
     a = parser.parse_args()
     from rosclaw_soccer.rsi.cftrack_direct_approach import condition_direct_kick_approach
     from rosclaw_soccer.rsi.cftrack_motor_authority import summarize_motor_future
+    from rosclaw_soccer.rsi.cftrack_motor_residual_plan import CFtrackMotorResidualPlan
     from rosclaw_soccer.rsi.cftrack_response_teacher import (
         fit_motor_response,
         propose_response_motor_plan,
+        refit_current_hip_response,
     )
     from rosclaw_soccer.rsi.cold_cftrack_trial import cold_cftrack_trial, validate_cold_ball_xy
     from rosclaw_soccer.rsi.omnicontact_policy_copy import cftrack_state_hash
@@ -88,16 +91,19 @@ def main():
             input_file_hashes=pins,
             cases=cases,
             fitted_model=asdict(model),
-            maximum_private_native_steps=16000,
-            maximum_private_nn_calls=1600,
+            maximum_private_native_steps=24000 if a.local_sparse else 16000,
+            maximum_private_nn_calls=2400 if a.local_sparse else 1600,
+            local_sparse=a.local_sparse,
+            current_safe_hg7_positive_probe_rad=0.15 if a.local_sparse else None,
             actual_native_steps=0,
             neural_optimizer_updates=0,
             proposals_per_case=1,
             no_amplitude_or_seed_grid=True,
             planning_minimum_forward_m=1.2,
             planning_direction_ratio=0.2,
-            objective_weights=[1.0, 4.0],
+            objective_weights=[0.0 if a.local_sparse else 1.0, 4.0],
             quadratic_regularization=0.1,
+            l1_penalty=0.25 if a.local_sparse else 0.0,
             unchanged_motor_offset_limit_rad=0.25,
             unchanged_extra_motor_velocity_rad_s=4.0,
             unchanged_torque_fraction=0.85,
@@ -132,7 +138,7 @@ def main():
             player,
             expected_policy_type=type(player.policy),
             expected_model_hash=body_hash,
-            native_step_budget=3200,
+            native_step_budget=4800 if a.local_sparse else 3200,
         )
         parent = forecaster.forecast(controls=160)
         parent_traces[name] = parent
@@ -146,14 +152,49 @@ def main():
         candidate = None
         candidate_metrics = None
         candidate_artifact = None
+        support = None
+        support_plan = None
+        support_metrics = None
+        support_artifact = None
+        local_fit = None
+        current_model = model
         try:
+            if a.local_sparse:
+                first = metrics["first_foot_control"]
+                if (
+                    not metrics["private_safe"]
+                    or not metrics["post60_observed"]
+                    or type(first) is not int
+                    or not 25 <= first <= 99
+                ):
+                    raise ValueError(
+                        "current safe parent contact window required for response probe"
+                    )
+                delta = [0.0] * 29
+                delta[7] = 0.15
+                support_plan = CFtrackMotorResidualPlan(
+                    player.policy.counter_step,
+                    player.policy.counter_step + first - 25,
+                    24,
+                    tuple(delta),
+                    before,
+                )
+                support = forecaster.forecast(controls=160, motor_plan=support_plan)
+                support_artifact = save(name + "-positive-support", support)
+                support_metrics = summarize_motor_future(
+                    support, ball_address=player.layout.bq, root_address=player.layout.rq
+                )
+                current_model, local_fit = refit_current_hip_response(
+                    model, metrics, support_metrics
+                )
             proposal, planning = propose_response_motor_plan(
-                model,
+                current_model,
                 metrics,
                 origin_counter=player.policy.counter_step,
                 donor_policy_hash=before,
                 parent_targets=parent["nn_decoded_targets"],
                 limits_hg=player.world.model.jnt_range[player.layout.joints].astype(np.float64),
+                minimal_intervention=a.local_sparse,
             )
         except ValueError as error:
             failure = dict(type=type(error).__name__, message=str(error))
@@ -179,6 +220,11 @@ def main():
             ball_xy=xy,
             parent_metrics=metrics,
             parent_artifact=parent_artifact,
+            support_plan=asdict(support_plan) if support_plan else None,
+            support_metrics=support_metrics,
+            support_artifact=support_artifact,
+            support_runtime_failure=support["runtime_failure"] if support else None,
+            local_response_fit=local_fit,
             motor_plan=asdict(proposal) if proposal else None,
             planning=planning,
             proposal_failure=failure,
@@ -235,6 +281,7 @@ def main():
             source_head=a.expected_head,
             input_file_hashes=pins,
             fitted_model=asdict(model),
+            local_sparse=a.local_sparse,
             records=records,
             private_margin_accepted_cases=[
                 r["case"] for r in records if r["private_margin_accepted"]

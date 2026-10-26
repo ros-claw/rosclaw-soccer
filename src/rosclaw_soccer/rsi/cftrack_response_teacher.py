@@ -5,12 +5,12 @@ unmeasured joint coupling/extrapolation always needs a new native NN preview.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
 
-from rosclaw_soccer.physics.small_strict_qp import solve_small_strict_qp
+from rosclaw_soccer.physics.small_strict_qp import solve_small_l1_qp, solve_small_strict_qp
 from rosclaw_soccer.rsi.cftrack_motor_authority import MOTOR_AXES
 from rosclaw_soccer.rsi.cftrack_motor_residual_plan import CFtrackMotorResidualPlan
 from rosclaw_soccer.rsi.contact_reference_plan import _c2_offsets
@@ -100,6 +100,7 @@ def propose_response_motor_plan(
     donor_policy_hash: str,
     parent_targets: np.ndarray,
     limits_hg: np.ndarray,
+    minimal_intervention: bool = False,
 ) -> tuple[CFtrackMotorResidualPlan, dict[str, Any]]:
     if (
         type(model) is not MotorResponseModel
@@ -107,6 +108,7 @@ def propose_response_motor_plan(
         or origin_counter < 0
         or parent.get("private_safe") is not True
         or parent.get("post60_observed") is not True
+        or type(minimal_intervention) is not bool
     ):
         raise ValueError("fitted model and current safe own-parent prediction required")
     first = parent["first_foot_control"]
@@ -154,7 +156,7 @@ def propose_response_motor_plan(
         raise ValueError("no feasible parent-linearized physical target envelope")
     # New planning margin, not a change to the frozen H300 exam: x>=1.2,
     # |y|<=.2*x. Fixed weights/regularization, no amplitude or seed sweep.
-    weights = np.diag([1.0, 4.0])
+    weights = np.diag([0.0 if minimal_intervention else 1.0, 4.0])
     target = np.array([max(1.5, float(baseline[0])), 0.0])
     h = j.T @ weights @ j + 0.1 * np.eye(4)
     g = j.T @ weights @ (baseline - target)
@@ -166,7 +168,19 @@ def propose_response_motor_plan(
             [baseline[0] - 1.2, 0.2 * baseline[0] - baseline[1], 0.2 * baseline[0] + baseline[1]]
         ),
     ]
-    delta, certificate = solve_small_strict_qp(h, g, a, b)
+    if minimal_intervention:
+        delta, certificate = solve_small_l1_qp(h, g, a, b, penalty=0.25)
+        # Numerical coefficient encoding, not clipping actual motor targets.
+        delta[abs(delta) <= 1e-10] = 0.0
+        residual = float(np.max(a @ delta - b))
+        if residual > 1e-9:
+            raise ValueError("zero-encoded sparse coefficients violate planning constraints")
+        certificate.update(
+            coefficient_zero_encoding_threshold_rad=1e-10,
+            encoded_maximum_constraint_violation=max(0.0, residual),
+        )
+    else:
+        delta, certificate = solve_small_strict_qp(h, g, a, b)
     full = [0.0] * 29
     for value, (_, hg) in zip(delta, MOTOR_AXES, strict=True):
         full[hg] = float(value)
@@ -183,7 +197,9 @@ def propose_response_motor_plan(
         predicted_outcome_xy=predicted.tolist(),
         planning_minimum_forward_m=1.2,
         planning_ratio_margin=0.2,
-        objective_weights=[1.0, 4.0],
+        objective_weights=[0.0 if minimal_intervention else 1.0, 4.0],
+        minimal_intervention=minimal_intervention,
+        l1_penalty=0.25 if minimal_intervention else 0.0,
         quadratic_regularization=0.1,
         effective_lower_bounds=lo.tolist(),
         effective_upper_bounds=hi.tolist(),
@@ -195,4 +211,45 @@ def propose_response_motor_plan(
         neural_optimizer_updates=0,
         qp_certificate=certificate,
         hardware_authorized=False,
+    )
+
+
+def refit_current_hip_response(
+    model: MotorResponseModel, parent: dict[str, Any], support: dict[str, Any]
+) -> tuple[MotorResponseModel, dict[str, Any]]:
+    """One current safe +0.15 HG7 probe updates only the corresponding column."""
+    if type(model) is not MotorResponseModel or any(
+        m.get("private_safe") is not True or m.get("post60_observed") is not True
+        for m in (parent, support)
+    ):
+        raise ValueError("safe complete current anchor and positive support probe required")
+    j = np.array(model.jacobian, np.float64)
+    anchor = np.array([parent["forward_60_m"], parent["lateral_60_m"]], np.float64)
+    observed = np.array([support["forward_60_m"], support["lateral_60_m"]], np.float64)
+    lower = np.array(model.lower, np.float64)
+    if (
+        j.shape != (2, 4)
+        or lower.shape != (4,)
+        or len(model.fitted_arms) != 4
+        or not all(np.isfinite(x).all() for x in (j, anchor, observed, lower))
+        or lower[1] < 0
+    ):
+        raise ValueError("finite current response and retained unsafe-direction exclusion required")
+    previous = j[:, 1].copy()
+    j[:, 1] = (observed - anchor) / 0.15
+    used = list(model.fitted_arms)
+    used[1] = ("current_safe_hg7_positive_0.15",)
+    updated = replace(
+        model, jacobian=tuple(tuple(float(x) for x in row) for row in j), fitted_arms=tuple(used)
+    )
+    return updated, dict(
+        axis_hg=7,
+        positive_probe_rad=0.15,
+        previous_column=previous.tolist(),
+        current_column=j[:, 1].tolist(),
+        current_anchor_xy=anchor.tolist(),
+        current_support_xy=observed.tolist(),
+        other_columns_unchanged=True,
+        unsafe_negative_direction_still_excluded=True,
+        neural_optimizer_updates=0,
     )

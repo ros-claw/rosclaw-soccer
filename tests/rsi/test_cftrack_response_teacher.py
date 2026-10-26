@@ -5,6 +5,7 @@ from rosclaw_soccer.rsi.cftrack_motor_authority import MOTOR_AXES
 from rosclaw_soccer.rsi.cftrack_response_teacher import (
     fit_motor_response,
     propose_response_motor_plan,
+    refit_current_hip_response,
 )
 
 
@@ -89,3 +90,36 @@ def test_bad_calibration_never_silently_fits_or_uses_unsafe_both_directions(defe
         source = "unbound"
     with pytest.raises(ValueError):
         fit_motor_response(data, source_hash=source)
+
+
+def test_current_safe_response_replaces_only_one_column_without_mutating_prior():
+    data = calibration()
+    model = fit_motor_response(data, source_hash="sha256:" + "a" * 64)
+    parent = data["records"][0]["metrics"]
+    support = dict(parent, forward_60_m=1.5, lateral_60_m=0.25)
+    updated, receipt = refit_current_hip_response(model, parent, support)
+    np.testing.assert_allclose(np.array(updated.jacobian)[:, 1], [2.0, -3.0])
+    np.testing.assert_allclose(np.array(model.jacobian)[:, 1], [1.0, -2.0])
+    np.testing.assert_array_equal(
+        np.array(model.jacobian)[:, [0, 2, 3]], np.array(updated.jacobian)[:, [0, 2, 3]]
+    )
+    assert receipt["neural_optimizer_updates"] == 0 and updated.lower[1] == 0.0
+    with pytest.raises(ValueError):
+        refit_current_hip_response(model, parent, dict(support, private_safe=False))
+
+
+def test_sparse_mode_keeps_forward_as_constraint_and_zeros_ineffective_axes():
+    data = calibration()
+    model = fit_motor_response(data, source_hash="sha256:" + "a" * 64)
+    plan, c = propose_response_motor_plan(
+        model,
+        data["records"][0]["metrics"],
+        origin_counter=0,
+        donor_policy_hash="sha256:" + "b" * 64,
+        parent_targets=np.zeros((160, 29)),
+        limits_hg=np.tile([-1.0, 1.0], (29, 1)),
+        minimal_intervention=True,
+    )
+    assert c["objective_weights"] == [0.0, 4.0] and c["l1_penalty"] == 0.25
+    assert sum(v != 0.0 for v in plan.delta_hg) == 1 and plan.delta_hg[7] > 0.2
+    assert c["qp_certificate"]["encoded_maximum_constraint_violation"] < 1e-9

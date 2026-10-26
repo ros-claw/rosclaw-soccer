@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.physics.small_strict_qp import solve_small_strict_qp
+from rosclaw_soccer.physics.small_strict_qp import solve_small_l1_qp, solve_small_strict_qp
 
 
 def test_unconstrained_optimum_inside_declared_box():
@@ -52,3 +52,22 @@ def test_invalid_or_uncertified_problem_rejects_without_relaxation(defect):
         b = np.ones(3)
     with pytest.raises(ValueError):
         solve_small_strict_qp(h, g, a, b)
+
+
+def test_l1_matches_analytic_soft_threshold_and_preserves_physical_caveat():
+    h = np.eye(2)
+    g = np.array([-0.1, -2.0])
+    a = np.r_[np.eye(2), -np.eye(2)]
+    b = np.full(4, 3.0)
+    x, c = solve_small_l1_qp(h, g, a, b, penalty=0.25)
+    np.testing.assert_allclose(x, [0.0, 1.75], atol=1e-12)
+    assert c["sign_regions_considered"] == 4 and c["physical_feasibility_not_implied"]
+
+
+def test_l1_still_obeys_oblique_constraints_not_posthoc_clipping():
+    h = np.eye(2)
+    g = np.array([-2.0, -2.0])
+    a = np.array([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0], [1.0, 1.0]])
+    b = np.array([1.0, 1.0, 0.0, 0.0, 0.5])
+    x, _ = solve_small_l1_qp(h, g, a, b, penalty=0.25)
+    np.testing.assert_allclose(x, [0.25, 0.25], atol=1e-12)
