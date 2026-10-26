@@ -227,13 +227,12 @@ def condition_staged_lateral_intercept(
     except BaseException:
         player.failed = True
         raise
-    return dict(
+    receipt = dict(
         schema="soccer.cftrack.staged_lateral_reference.v1",
         prediction=forecast,
         geometry=geometry,
         stage_controls=stage_controls,
         stage_reference_step_m=0.005,
-        reference_hold_controls=hold_controls,
         original_swing_and_recovery_suffix_exact=True,
         original_reference_hash=original_reference_hash,
         staged_reference_hash=new_reference_hash,
@@ -244,3 +243,6 @@ def condition_staged_lateral_intercept(
         neural_optimizer_updates=0,
         hardware_authorized=False,
     )
+    if hold_controls:
+        receipt["reference_hold_controls"] = hold_controls
+    return receipt

@@ -14,6 +14,7 @@ def main():
     p.add_argument("--external-source", type=Path, required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--held", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -31,8 +32,18 @@ def main():
         raise ValueError("unused audit and exact staged source required")
     source = json.loads(complete.read_text())
     if (
-        source["status"] != "CFTRACK_STAGED_LATERAL_DEVELOPMENT_RECORDED"
-        or [(r["case"], tuple(r["ball_velocity_m_s"])) for r in source["records"]] != list(CASES)
+        source["status"]
+        != (
+            "CFTRACK_HELD_LATERAL_DEVELOPMENT_RECORDED"
+            if a.held
+            else "CFTRACK_STAGED_LATERAL_DEVELOPMENT_RECORDED"
+        )
+        or [r["case"] for r in source["records"]] != [name for name, _ in CASES]
+        or (
+            not a.held
+            and [tuple(r["ball_velocity_m_s"]) for r in source["records"]]
+            != [velocity for _, velocity in CASES]
+        )
         or source["new_neural_calls"] > 600
         or source["new_native_steps"] > 6000
         or source["neural_optimizer_updates"] != 0
@@ -65,6 +76,7 @@ def main():
             staged_reference_boundary_and_C2_math_shared=True,
             saved_targets_only_for_verification=True,
             partial_stages_not_complete_h300=True,
+            held_reference_controls=20 if a.held else 0,
             neural_optimizer_updates=0,
             new_independent_scenarios=0,
             hardware_authorized=False,
@@ -189,7 +201,7 @@ def main():
             expected_policy_type=type(prototype),
             goal=np.array([5.0, 0.0, 0.11]),
         )
-        reference = condition_staged_lateral_intercept(player)
+        reference = condition_staged_lateral_intercept(player, hold_controls=20 if a.held else 0)
         if hash_json(reference) != hash_json(row["reference"]):
             raise ValueError("independently regenerated staged reference differs")
         plan_data = dict(row["plan"])
@@ -248,7 +260,9 @@ def main():
             original_nn_input_output_and_target_exact=True,
             replay=replay,
             outcome=outcome,
-            verified_previous_outcome=row["verified_previous_outcome"],
+            verified_previous_outcome=(
+                row["previously_verified_outcome"] if a.held else row["verified_previous_outcome"]
+            ),
             artifact_hash=row["artifact"]["hash"],
         )
         records.append(result)
@@ -260,7 +274,11 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="CFTRACK_STAGED_LATERAL_NN_NATIVE_AND_BOUNDARY_EXACT"
+            status=(
+                "CFTRACK_HELD_LATERAL_NN_NATIVE_AND_BOUNDARY_EXACT"
+                if a.held
+                else "CFTRACK_STAGED_LATERAL_NN_NATIVE_AND_BOUNDARY_EXACT"
+            )
             if calls == source["new_neural_calls"]
             and steps == source["new_native_steps"]
             and len(records) == 2
