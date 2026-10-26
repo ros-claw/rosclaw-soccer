@@ -1,3 +1,4 @@
+import copy
 import threading
 
 import mujoco
@@ -9,6 +10,7 @@ from test_omnicontact_policy_copy import Kinematics, Record
 from test_shared_nn_forecast import setup as original_setup
 from test_shared_omnicontact_player import Policy as BasePolicy
 
+from rosclaw_soccer.rsi.cftrack_motor_residual_plan import CFtrackMotorResidualPlan
 from rosclaw_soccer.rsi.omnicontact_policy_copy import cftrack_state_hash
 from rosclaw_soccer.rsi.shared_cftrack_forecast import SharedCFtrackForecaster
 from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
@@ -57,13 +59,16 @@ class Policy(BasePolicy):
         mujoco.mj_forward(self.kinematics.model, self.kinematics.data)
 
 
-def setup(tmp_path):
+def setup(tmp_path, *, physical_range=None):
     old, _ = original_setup(tmp_path)
-    data = mujoco.MjData(old.world.model)
-    mujoco.mj_copyData(data, old.world.model, old.world.data)
-    world = SharedNativeMotorWorld(
-        old.world.model, data, players=old.world.parameters, ball_body_name="ball"
-    )
+    model = old.world.model
+    if physical_range is not None:
+        model = copy.copy(model)
+        model.jnt_limited[old.layout.joints] = True
+        model.jnt_range[old.layout.joints] = [-physical_range, physical_range]
+    data = mujoco.MjData(model)
+    mujoco.mj_copyData(data, model, old.world.data)
+    world = SharedNativeMotorWorld(model, data, players=old.world.parameters, ball_body_name="ball")
     weight = np.zeros((1244, 29), np.float32)
     weight[:29] = np.eye(29, dtype=np.float32)
     graph = helper.make_graph(
@@ -157,3 +162,73 @@ def test_private_failure_preserves_partial_raw_and_full_reservation(tmp_path, mo
     assert f.counters()["integrated_native_steps"] == 10
     with pytest.raises(ValueError, match="budget"):
         f.forecast(controls=5)
+
+
+def motor_plan(p, *, amount=0.01, peak=2):
+    delta = [0.0] * 29
+    delta[8] = float(amount)
+    return CFtrackMotorResidualPlan(
+        p.policy.counter_step,
+        p.policy.counter_step,
+        peak,
+        tuple(delta),
+        cftrack_state_hash(p.policy),
+    )
+
+
+@pytest.mark.parametrize("amount", [0.0, 0.01])
+def test_motor_future_matches_actual_with_original_nn_and_inherited_nonzero_clock(tmp_path, amount):
+    p, f = setup(tmp_path, physical_range=1.0)
+    plan = motor_plan(p, amount=amount)
+    before = cftrack_state_hash(p.policy)
+    future = f.forecast(controls=4, motor_plan=plan)
+    assert future["runtime_failure"] is None and future["controls"] == 4
+    assert cftrack_state_hash(p.policy) == before and p.motor_plan is None
+    if amount:
+        assert np.any(future["joint_targets"] != future["nn_decoded_targets"])
+    else:
+        np.testing.assert_array_equal(future["joint_targets"], future["nn_decoded_targets"])
+    p.install_motor_plan(plan)
+    for tick in range(4):
+        target, observed = p.propose()
+        np.testing.assert_array_equal(target, future["joint_targets"][tick])
+        np.testing.assert_array_equal(
+            observed["nn_decoded_target"], future["nn_decoded_targets"][tick]
+        )
+        row = p.world.advance({p.prefix: target})
+        p.commit()
+        np.testing.assert_array_equal(row["qpos"], future["qpos"][tick * 10 : (tick + 1) * 10])
+    second = f.forecast(controls=4)
+    assert second["runtime_failure"] is None and second["controls"] == 4
+    for tick in range(4):
+        target, _ = p.propose()
+        np.testing.assert_array_equal(target, second["joint_targets"][tick])
+        row = p.world.advance({p.prefix: target})
+        p.commit()
+        np.testing.assert_array_equal(row["qvel"], second["qvel"][tick * 10 : (tick + 1) * 10])
+
+
+def test_rejected_post_nn_motor_target_counts_nn_but_never_integrates_that_target(tmp_path):
+    p, f = setup(tmp_path, physical_range=0.01)
+    before = cftrack_state_hash(p.policy)
+    future = f.forecast(controls=4, motor_plan=motor_plan(p, amount=0.15, peak=4))
+    assert future["controls"] == 1 and future["native_steps"] == 10
+    assert "no clipping" in future["runtime_failure"]["message"]
+    assert f.counters()["future_nn_calls"] == 2 and f.counters()["attempted_native_steps"] == 40
+    assert p.world.native_steps == 0 and cftrack_state_hash(p.policy) == before
+
+
+def test_donor_mismatch_and_motor_stacking_reject_before_physical_allocation(tmp_path):
+    from dataclasses import replace
+
+    p, f = setup(tmp_path, physical_range=1.0)
+    plan = motor_plan(p)
+    with pytest.raises(ValueError, match="donor"):
+        f.forecast(controls=4, motor_plan=replace(plan, donor_policy_hash="sha256:" + "0" * 64))
+    assert f.counters()["attempted_native_steps"] == 0
+    p.install_motor_plan(plan)
+    with pytest.raises(ValueError):
+        p.install_motor_plan(plan)
+    with pytest.raises(ValueError):
+        f.forecast(controls=4, motor_plan=plan)
+    assert f.counters()["attempted_native_steps"] == 0

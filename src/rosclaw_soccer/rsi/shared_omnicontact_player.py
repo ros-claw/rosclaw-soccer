@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.rsi.cftrack_motor_residual_plan import CFtrackMotorResidualPlan
 from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
 
 
@@ -74,6 +75,7 @@ class SharedOmniContactPlayer:
         self.layout = world.layouts[prefix]
         self.boundary, self.commits = world.control_steps, 0
         self.pending: np.ndarray | None = None
+        self.motor_plan: CFtrackMotorResidualPlan | None = None
         self.failed = False
         owners[prefix] = identities
         try:
@@ -86,6 +88,31 @@ class SharedOmniContactPlayer:
         except BaseException:
             self.failed = True
             raise
+
+    def install_motor_plan(self, plan: CFtrackMotorResidualPlan) -> None:
+        from rosclaw_soccer.rsi.omnicontact_policy_copy import cftrack_state_hash
+
+        w = self.world
+        w._require_current_boundary()
+        if (
+            type(plan) is not CFtrackMotorResidualPlan
+            or self.failed
+            or self.pending is not None
+            or self.boundary != w.control_steps
+            or self.motor_plan is not None
+            or self.prefix in w._torque_layer_owners
+            or not np.all(w.model.jnt_limited[self.layout.joints])
+        ):
+            raise ValueError(
+                "one fresh donor-bound motor plan and explicit physical joint limits required"
+            )
+        plan.require_donor(
+            policy_hash=cftrack_state_hash(self.policy), counter=self.policy.counter_step
+        )
+        limits = w.model.jnt_range[self.layout.joints].astype(np.float64)
+        if not np.isfinite(limits).all() or (limits[:, 0] >= limits[:, 1]).any():
+            raise ValueError("finite ordered HG29 physical joint limits required")
+        self.motor_plan = plan
 
     def _observe(self) -> dict[str, Any]:
         w, p, lo = self.world, self.policy, self.layout
@@ -132,6 +159,14 @@ class SharedOmniContactPlayer:
             target = np.asarray(p.policy_output.actions, dtype=np.float64)
             if target.shape != (29,) or not np.isfinite(target).all():
                 raise ValueError("finite HG29 CFtrack output required")
+            measured["nn_decoded_target"] = target.copy()
+            if self.motor_plan is not None:
+                target = self.motor_plan.apply(
+                    target,
+                    counter=old_tick,
+                    limits_hg=w.model.jnt_range[self.layout.joints].astype(np.float64),
+                )
+            measured["motor_residual"] = target - measured["nn_decoded_target"]
             self.pending = target.copy()
         except BaseException:
             self.failed = True

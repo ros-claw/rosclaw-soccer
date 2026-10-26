@@ -8,6 +8,7 @@ from rosclaw_soccer.rsi.cftrack_contact_reference import (
     CFtrackContactPlan,
     condition_cftrack_contact_reference,
 )
+from rosclaw_soccer.rsi.cftrack_motor_residual_plan import CFtrackMotorResidualPlan
 from rosclaw_soccer.rsi.omnicontact_policy_copy import cftrack_state_hash, copy_cftrack_policy
 from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
 from rosclaw_soccer.rsi.shared_omnicontact_player import SharedOmniContactPlayer
@@ -60,7 +61,11 @@ class SharedCFtrackForecaster:
         )
 
     def forecast(
-        self, *, controls: int, contact_plan: CFtrackContactPlan | None = None
+        self,
+        *,
+        controls: int,
+        contact_plan: CFtrackContactPlan | None = None,
+        motor_plan: CFtrackMotorResidualPlan | None = None,
     ) -> dict[str, Any]:
         import mujoco
 
@@ -75,11 +80,19 @@ class SharedCFtrackForecaster:
             or type(controls) is not int
             or not 1 <= controls <= 360
             or self.attempted_steps + controls * 10 > self.budget
+            or (
+                motor_plan is not None
+                and (source.motor_plan is not None or contact_plan is not None)
+            )
         ):
             raise ValueError(
                 "current pre-proposal CFtrack boundary and reserved finite budget required"
             )
         before = cftrack_state_hash(source.policy)
+        if motor_plan is not None:
+            if type(motor_plan) is not CFtrackMotorResidualPlan:
+                raise ValueError("explicit bounded CFtrack motor plan required")
+            motor_plan.require_donor(policy_hash=before, counter=source.policy.counter_step)
         policy = copy_cftrack_policy(source.policy)
         receipt = None
         if contact_plan is not None:
@@ -99,6 +112,7 @@ class SharedCFtrackForecaster:
         ghost = object.__new__(SharedOmniContactPlayer)
         ghost.world, ghost.prefix, ghost.policy = owned, source.prefix, policy
         ghost.reference_source = source.reference_source
+        ghost.motor_plan = source.motor_plan
         ghost.layout = owned.layouts[source.prefix]
         ghost.boundary, ghost.commits = 0, source.commits
         ghost.pending, ghost.failed = None, False
@@ -107,15 +121,23 @@ class SharedCFtrackForecaster:
             id(policy.state_cmd),
             id(policy.policy_output),
         )
-        rows, targets = [], []
+        rows, targets, decoded = [], [], []
         failure = None
         try:
+            if motor_plan is not None:
+                ghost.install_motor_plan(motor_plan)
             for _ in range(controls):
                 self.attempted_nn_calls += 1
-                target, _ = ghost.propose()
-                self.future_nn_calls += 1
+                previous_counter = policy.counter_step
+                try:
+                    target, observed = ghost.propose()
+                finally:
+                    # A successful NN can be followed by a rejected residual
+                    # before physics. Account for that call, not only rows.
+                    self.future_nn_calls += policy.counter_step - previous_counter
                 row = owned.advance({source.prefix: target})
                 targets.append(target.copy())
+                decoded.append(observed["nn_decoded_target"])
                 rows.append(row)
                 ghost.commit()
                 if owned.failed:
@@ -142,6 +164,7 @@ class SharedCFtrackForecaster:
         return dict(
             **arrays,
             joint_targets=np.array(targets).reshape(-1, 29),
+            nn_decoded_targets=np.array(decoded).reshape(-1, 29),
             controls=len(rows),
             native_steps=owned.native_steps,
             body_failed=owned.failed,

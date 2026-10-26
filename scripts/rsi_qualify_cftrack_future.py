@@ -2,6 +2,7 @@
 
 import argparse
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 
@@ -13,6 +14,7 @@ def main():
     p.add_argument("--external-source", type=Path, required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--qualify-motor-layer", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_cftrack_native_context import build_cold_cftrack
@@ -59,6 +61,10 @@ def main():
             parent_neural_policy_or_physics_not_modified=True,
             qualification_not_skill_improvement=True,
             hardware_authorized=False,
+            qualify_motor_layer=a.qualify_motor_layer,
+            qualification_motor_offset_hg8_rad=0.01 if a.qualify_motor_layer else None,
+            qualification_motor_start_control=46 if a.qualify_motor_layer else None,
+            qualification_motor_peak_relative_control=24 if a.qualify_motor_layer else None,
         ),
     )
     import numpy as np
@@ -79,7 +85,20 @@ def main():
         native_step_budget=1600,
     )
     before = cftrack_state_hash(player.policy)
-    future = forecaster.forecast(controls=160)
+    motor_plan = None
+    if a.qualify_motor_layer:
+        from rosclaw_soccer.rsi.cftrack_motor_residual_plan import CFtrackMotorResidualPlan
+
+        delta = [0.0] * 29
+        delta[8] = 0.01
+        motor_plan = CFtrackMotorResidualPlan(
+            player.policy.counter_step, 46, 24, tuple(delta), before
+        )
+        write_once(
+            a.output / "before-future-plan.json",
+            dict(motor_plan=asdict(motor_plan), hardware_authorized=False),
+        )
+    future = forecaster.forecast(controls=160, motor_plan=motor_plan)
     if cftrack_state_hash(player.policy) != before or player.world.control_steps != 0:
         raise ValueError("forecast modified the actual donor")
     path = a.output / "owned-future.npz"
@@ -112,12 +131,15 @@ def main():
             ),
         )
         return
-    rows, targets = [], []
+    if motor_plan is not None:
+        player.install_motor_plan(motor_plan)
+    rows, targets, decoded = [], [], []
     for _ in range(160):
-        target, _ = player.propose()
+        target, measured = player.propose()
         row = player.world.advance({player.prefix: target})
         rows.append(row)
         targets.append(target)
+        decoded.append(measured["nn_decoded_target"])
         player.commit()
         if row["body_failed"][player.prefix]:
             break
@@ -125,6 +147,7 @@ def main():
         k: np.concatenate([r[k] for r in rows]) for k in ("qpos", "qvel", "torque", "ball_forces")
     }
     actual["joint_targets"] = np.array(targets)
+    actual["nn_decoded_targets"] = np.array(decoded)
     path = a.output / "actual-unvalidated.npz"
     np.savez_compressed(path, **actual)
     pins[str(path)] = digest(path)
@@ -133,7 +156,14 @@ def main():
     if original.is_symlink() or pins.get(str(original)) != digest(original):
         raise ValueError("bound source raw required after actual execution")
     with np.load(original, allow_pickle=False) as saved:
-        matched_source = all(np.array_equal(v, saved[k][: len(v)]) for k, v in actual.items())
+        matched_source = (
+            all(
+                np.array_equal(actual[k], saved[k][: len(actual[k])])
+                for k in ("qpos", "qvel", "torque", "ball_forces", "joint_targets")
+            )
+            if motor_plan is None
+            else None
+        )
     matched_future = len(rows) == future["controls"] and all(
         np.array_equal(v, future[k]) for k, v in actual.items()
     )
@@ -142,8 +172,12 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="CFTRACK_OWN_NN_NATIVE_FUTURE_EXACT"
-            if matched_source and matched_future and len(rows) == 160
+            status=(
+                "CFTRACK_MOTOR_OWN_NN_NATIVE_FUTURE_EXACT"
+                if motor_plan is not None
+                else "CFTRACK_OWN_NN_NATIVE_FUTURE_EXACT"
+            )
+            if (matched_source or motor_plan is not None) and matched_future and len(rows) == 160
             else "CFTRACK_FUTURE_NOT_QUALIFIED",
             source_head=a.expected_head,
             input_file_hashes=pins,
@@ -152,6 +186,8 @@ def main():
             actual_controls=len(rows),
             actual_native_steps=player.world.native_steps,
             actual_nn_calls=len(rows),
+            motor_plan=asdict(motor_plan) if motor_plan is not None else None,
+            original_nn_targets_separately_recorded=True,
             future_counters=forecaster.counters(),
             constructor_warmups=0,
             neural_optimizer_updates=0,
