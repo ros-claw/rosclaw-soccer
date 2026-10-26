@@ -163,10 +163,44 @@ def test_cold_trial_records_real_native_feedback_with_fresh_fixture(tmp_path, co
     guard = CFtrackStageBoundary(
         2, (0.15, 0.15), (1.0, 0.1728, 0.11), (5.0, 0.0, 0.11), 1.44, 0.001
     )
-    _, blocked = run_cold_torque_trial(
+    blocked_raw, blocked = run_cold_torque_trial(
         blocked_player, blocked_plan, controls=controls, stage_boundary=guard
     )
     assert blocked["runtime_failure"]["type"] == "STAGE_BOUNDARY_NOT_READY"
     assert blocked["controls"] == blocked["neural_calls"] == 2
     assert blocked["native_steps"] == 20
     assert not blocked["stage_boundary_receipt"]["ready"]
+    stage_data = mujoco.MjData(model)
+    stage_data.qpos[:] = blocked_raw["initial_qpos"]
+    stage_data.qvel[:] = blocked_raw["initial_qvel"]
+    mujoco.mj_forward(model, stage_data)
+    stage_replay = replay_torque_trial(
+        model,
+        stage_data,
+        blocked_player.layout,
+        blocked_raw,
+        blocked_plan,
+        kp=blocked_world.parameters["a/"].stiffness,
+        kd=blocked_world.parameters["a/"].damping,
+        effort=blocked_world.parameters["a/"].effort,
+        controls=2,
+        stage_boundary=guard,
+    )
+    assert stage_replay["stage_boundary_receipt"] == blocked["stage_boundary_receipt"]
+    invalid_data = mujoco.MjData(model)
+    invalid_data.qpos[:] = raw["initial_qpos"]
+    invalid_data.qvel[:] = raw["initial_qvel"]
+    mujoco.mj_forward(model, invalid_data)
+    with pytest.raises(ValueError, match="continued after a rejected"):
+        replay_torque_trial(
+            model,
+            invalid_data,
+            player.layout,
+            raw,
+            plan,
+            kp=world.parameters["a/"].stiffness,
+            kd=world.parameters["a/"].damping,
+            effort=world.parameters["a/"].effort,
+            controls=controls,
+            stage_boundary=guard,
+        )

@@ -4,10 +4,12 @@ Targets are verification inputs only. This never calls the producing torque
 policy or layer and does not turn replay into another independent scenario.
 """
 
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.rsi.cftrack_stage_boundary import CFtrackStageBoundary
 from rosclaw_soccer.rsi.cftrack_torque_intent import CFtrackTorqueIntentPlan
 
 
@@ -22,6 +24,7 @@ def replay_torque_trial(
     kd: np.ndarray,
     effort: np.ndarray,
     controls: int = 160,
+    stage_boundary: CFtrackStageBoundary | None = None,
 ) -> dict[str, Any]:
     import mujoco
 
@@ -32,6 +35,8 @@ def replay_torque_trial(
         or type(plan) is not CFtrackTorqueIntentPlan
         or type(controls) is not int
         or not 1 <= controls <= 300
+        or (stage_boundary is not None and type(stage_boundary) is not CFtrackStageBoundary)
+        or (stage_boundary is not None and stage_boundary.control > controls)
         or data.time != 0
     ):
         raise ValueError("bounded cold native SIM replay required")
@@ -76,7 +81,18 @@ def replay_torque_trial(
             parts[body] = feet.index(body) if body in feet else 2
     offsets = plan.offsets()
     saturated = stopped = 0
+    stage_receipt = None
     for step in range(n):
+        if stage_boundary is not None and step == stage_boundary.control * 10:
+            view = SimpleNamespace(
+                data=data,
+                control_steps=stage_boundary.control,
+                failed=False,
+                _require_current_boundary=lambda: None,
+            )
+            stage_receipt = stage_boundary.check(view, layout)
+            if not stage_receipt["ready"]:
+                raise ValueError("recorded replay continued after a rejected actual stage boundary")
         parent = np.clip(
             kp * (raw["joint_targets"][step // 10] - data.qpos[layout.qi])
             - kd * data.qvel[layout.vi],
@@ -128,7 +144,15 @@ def replay_torque_trial(
             or not np.array_equal(forces, raw["ball_forces"][step])
         ):
             raise ValueError(f"independent native state/torque/contact mismatch at step {step}")
-    return dict(
+    if stage_boundary is not None and stage_boundary.control == controls:
+        view = SimpleNamespace(
+            data=data,
+            control_steps=stage_boundary.control,
+            failed=False,
+            _require_current_boundary=lambda: None,
+        )
+        stage_receipt = stage_boundary.check(view, layout)
+    result: dict[str, Any] = dict(
         native_steps=n,
         saturation_steps=saturated,
         measured_stop_guard_steps=stopped,
@@ -137,3 +161,6 @@ def replay_torque_trial(
         plan_envelope_math_shared=True,
         hardware_authorized=False,
     )
+    if stage_boundary is not None:
+        result["stage_boundary_receipt"] = stage_receipt
+    return result
