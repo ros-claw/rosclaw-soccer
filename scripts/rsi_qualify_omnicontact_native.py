@@ -20,6 +20,7 @@ def main():
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--direct-approach-reference", action="store_true")
+    p.add_argument("--motion-reference", type=Path)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -54,6 +55,19 @@ def main():
             pins[str(path)] = digest(path)
     source_pins(pins)
     check_pins(pins)
+    import numpy as np
+
+    motion = None
+    motion_source = None
+    if a.motion_reference is not None:
+        from rosclaw_soccer.rsi.cftrack_motion_reference import load_cftrack_motion
+
+        if a.direct_approach_reference or a.motion_reference.is_symlink():
+            raise ValueError("whole-body motion and procedural conditioning are distinct protocols")
+        motion_source = a.motion_reference.resolve()
+        if str(motion_source) not in pins or not motion_source.is_relative_to(external):
+            raise ValueError("motion must be in the pinned external source")
+        motion = load_cftrack_motion(motion_source)
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
@@ -69,10 +83,19 @@ def main():
             neural_constructor_warmups=0,
             native_dt_sec=0.002,
             control_dt_sec=0.02,
-            initial_robot_root=[0.0, 0.0, 0.77],
-            initial_ball=[1.0, 0.0, 0.11],
+            initial_robot_root=[0.0, 0.0, 0.77]
+            if motion is None
+            else motion["body_pos_w"][0, 0].tolist(),
+            initial_ball=[1.0, 0.0, 0.11]
+            if motion is None
+            else [
+                *motion["object_pos_w"][0, :2].tolist(),
+                max(0.11, float(motion["object_pos_w"][0, 2])),
+            ],
             goal=[5.0, 0.0, 0.11],
-            initial_joint_pose="external_DefaultPose",
+            initial_joint_pose="external_DefaultPose"
+            if motion is None
+            else "motion_frame_zero_Lab_to_HG",
             pd_profile="external_OmniContact_yaml_not_RoboNaldo",
             torque_cap_fraction=0.85,
             software_history="original_cold_zero_not_measured_five_frames",
@@ -81,7 +104,19 @@ def main():
             original_external_ball_radius_m=0.10,
             original_external_scene_not_used=True,
             policy="kick_50k.onnx",
-            reference="current_initial_body_CFgen_kickball",
+            reference="current_initial_body_CFgen_kickball"
+            if motion is None
+            else "complete_NPZmotion_frame_zero_no_trimming",
+            motion_source=str(motion_source) if motion_source else None,
+            motion_root_convention="author_body_index_zero_not_redundant_base_arrays",
+            motion_base_body_max_position_difference_m=None
+            if motion is None
+            else float(
+                np.linalg.norm(motion["base_pos_w"] - motion["body_pos_w"][:, 0], axis=-1).max()
+            ),
+            reference_contact_is_not_actual_contact=True,
+            reference_joint_positions_are_not_executed_targets=True,
+            initial_velocity="zero_author_reset_convention",
             direct_approach_reference=a.direct_approach_reference,
             intended_scope="interface_and_single_native_baseline_not_generalized_teacher",
             license_commercial_publicity_authorized=False,
@@ -91,7 +126,6 @@ def main():
         ),
     )
     import mujoco
-    import numpy as np
     from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
 
     from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
@@ -129,6 +163,10 @@ def main():
     if tuple(policy.kinematics.joint_names) != tuple(G1_DDS_JOINT_NAMES):
         raise ValueError("external FK/actual HG joint order mismatch")
     policy.task, policy.reference_source = "kickball", "CFgen"
+    if motion is not None:
+        policy.reference_source = "NPZmotion"
+        policy.npz_dir = str(motion_source)
+        policy.tracking_start_frame, policy.tracking_end_frame = 0, -1
     policy.active_object_name = "ball"
     policy.box_dims = policy.ball_dims = np.full(3, 0.11, np.float32)
     policy.bbox_scale = policy.box_dims * 2
@@ -137,6 +175,13 @@ def main():
     data.qpos[lo.rq : lo.rq + 7] = [0, 0, 0.77, 1, 0, 0, 0]
     data.qpos[lo.qi] = DEFAULT_JOINT_POS_MJ
     data.qpos[lo.bq : lo.bq + 7] = [1, 0, 0.11, 1, 0, 0, 0]
+    if motion is not None:
+        data.qpos[lo.rq : lo.rq + 3] = motion["body_pos_w"][0, 0]
+        data.qpos[lo.rq + 3 : lo.rq + 7] = motion["body_quat_w"][0, 0]
+        data.qpos[lo.qi] = motion["joint_pos"][0, policy.lab2mj]
+        data.qpos[lo.bq : lo.bq + 3] = motion["object_pos_w"][0]
+        data.qpos[lo.bq + 2] = max(0.11, float(data.qpos[lo.bq + 2]))
+        data.qpos[lo.bq + 3 : lo.bq + 7] = motion["object_quat_w"][0]
     mujoco.mj_forward(model, data)
     order = policy.lab2mj
     params = NativePDParameters(
@@ -172,7 +217,12 @@ def main():
     reference_conditioning = None
     try:
         player = SharedOmniContactPlayer(
-            world, "a/", policy, expected_policy_type=OmniContact, goal=np.array([5.0, 0.0, 0.11])
+            world,
+            "a/",
+            policy,
+            expected_policy_type=OmniContact,
+            goal=np.array([5.0, 0.0, 0.11]),
+            reference_source="CFgen" if motion is None else "NPZmotion",
         )
         if a.direct_approach_reference:
             from rosclaw_soccer.rsi.cftrack_direct_approach import condition_direct_kick_approach
@@ -239,6 +289,8 @@ def main():
             external_head=head,
             runtime_failure=failure,
             reference_conditioning=reference_conditioning,
+            reference_source="CFgen" if motion is None else "NPZmotion",
+            motion_source=str(motion_source) if motion_source else None,
             controls=world.control_steps,
             native_steps=world.native_steps,
             new_neural_calls=len(captured_obs),

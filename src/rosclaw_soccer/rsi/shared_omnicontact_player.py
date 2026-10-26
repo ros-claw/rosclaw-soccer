@@ -21,13 +21,15 @@ class SharedOmniContactPlayer:
         *,
         expected_policy_type: type[Any],
         goal: np.ndarray,
+        reference_source: str = "CFgen",
     ) -> None:
         world._require_current_boundary()
         if (
             type(policy) is not expected_policy_type
             or prefix not in world.layouts
             or policy.task != "kickball"
-            or policy.reference_source != "CFgen"
+            or reference_source not in ("CFgen", "NPZmotion")
+            or policy.reference_source != reference_source
             or policy.counter_step != 0
             or policy.async_stage_thread is not None
             or goal.shape != (3,)
@@ -68,6 +70,7 @@ class SharedOmniContactPlayer:
         if prefix in owners or any(set(identities) & set(ids) for ids in owners.values()):
             raise ValueError("one private CFtrack policy/state/output per player required")
         self.world, self.prefix, self.policy = world, prefix, policy
+        self.reference_source = reference_source
         self.layout = world.layouts[prefix]
         self.boundary, self.commits = world.control_steps, 0
         self.pending: np.ndarray | None = None
@@ -78,7 +81,7 @@ class SharedOmniContactPlayer:
             policy.goal_pos_override = goal.astype(np.float32, copy=True)
             policy.enter()
             world._require_current_boundary()
-            if policy.async_stage_thread is not None:
+            if policy.async_stage_thread is not None or policy.reference_source != reference_source:
                 raise ValueError("asynchronous stage planning is not qualified")
         except BaseException:
             self.failed = True
@@ -112,12 +115,15 @@ class SharedOmniContactPlayer:
         if self.failed or self.pending is not None or self.boundary != w.control_steps:
             raise ValueError("one fresh private CFtrack proposal per shared boundary required")
         try:
+            if p.reference_source != self.reference_source:
+                raise ValueError("admitted CFtrack reference source changed")
             measured = self._observe()
             old_tick = p.counter_step
             p.run()
             w._require_current_boundary()
             if (
                 p.counter_step != old_tick + 1
+                or p.reference_source != self.reference_source
                 or p.async_stage_thread is not None
                 or not np.array_equal(p.policy_output.kps, w.parameters[self.prefix].stiffness)
                 or not np.array_equal(p.policy_output.kds, w.parameters[self.prefix].damping)

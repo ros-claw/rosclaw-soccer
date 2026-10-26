@@ -108,3 +108,24 @@ def test_taskspace_ownership_and_target_commitment_are_enforced():
     with pytest.raises(ValueError, match="executed target differs"):
         a.commit()
     assert a.failed
+
+
+def test_npz_requires_explicit_admission_and_stays_bound_to_its_source():
+    w, p = setup(), Policy()
+    p.reference_source = "NPZmotion"
+    with pytest.raises(ValueError, match="pinned"):
+        player(w, policy=p)
+    assert not w._private_policy_owners
+    a = SharedOmniContactPlayer(
+        w,
+        "a/",
+        p,
+        expected_policy_type=Policy,
+        goal=np.array([5.0, 0.0, 0.11]),
+        reference_source="NPZmotion",
+    )
+    assert w.native_steps == 0
+    p.reference_source = "CFgen"
+    with pytest.raises(ValueError, match="reference source changed"):
+        a.propose()
+    assert a.failed and not p.observed and w.native_steps == 0
