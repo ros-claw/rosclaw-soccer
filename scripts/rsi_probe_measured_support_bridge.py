@@ -12,6 +12,8 @@ def main():
     p.add_argument("--source-hash", required=True)
     p.add_argument("--actual-review", type=Path, required=True)
     p.add_argument("--actual-review-hash", required=True)
+    p.add_argument("--terminal-anchor-review", type=Path)
+    p.add_argument("--terminal-anchor-review-hash")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -31,6 +33,23 @@ def main():
     ):
         raise ValueError("unused output, exact source/replay and isolated imports required")
     source, review = json.loads(complete.read_text()), json.loads(a.actual_review.read_text())
+    terminal_anchor = a.terminal_anchor_review is not None
+    if terminal_anchor != (a.terminal_anchor_review_hash is not None):
+        raise ValueError("terminal anchor mode requires exact earlier independent review")
+    if terminal_anchor:
+        if (
+            a.terminal_anchor_review.is_symlink()
+            or digest(a.terminal_anchor_review) != a.terminal_anchor_review_hash
+        ):
+            raise ValueError("exact previous independent bridge review required")
+        bridge_review = json.loads(a.terminal_anchor_review.read_text())
+        if (
+            bridge_review["status"] != "MEASURED_SUPPORT_BRIDGE_READBACK_NOT_PHYSICS"
+            or bridge_review["source_hash"]
+            != "sha256:5e6033c223cfe95c5c4bd6f07443199e6a8b76f492e85bd2ddaf59e2e0bdc078"
+            or [r["all_frames_pass"] for r in bridge_review["records"]] != [False, False]
+        ):
+            raise ValueError("specific prior failed two-bridge review required")
     if (
         source["status"] != "WARM_LEFT_SETTLING_MEASURED_NOT_KICK"
         or source["controls"] != 157
@@ -54,6 +73,8 @@ def main():
             str(trace): source["artifact"]["hash"],
         }
     )
+    if terminal_anchor:
+        pins[str(a.terminal_anchor_review)] = a.terminal_anchor_review_hash
     source_pins(pins)
     check_pins(pins)
     scenes = [Path(x) for x in pins if x.endswith("/cached-standard/declared-scene.xml")]
@@ -112,12 +133,16 @@ def main():
             source_hash=a.source_hash,
             actual_review_hash=a.actual_review_hash,
             input_file_hashes=pins,
-            entry_controls=[57, 82],
+            entry_controls=[57] if terminal_anchor else [57, 82],
             controls_per_bridge=20,
             interval_s=0.02,
             max_sampled_joint_speed_rad_s=6.0,
             max_ik_evaluations_per_frame=2000,
-            total_max_ik_evaluations=80000,
+            total_max_ik_evaluations=38000 if terminal_anchor else 80000,
+            terminal_anchor_adjustment=terminal_anchor,
+            terminal_root_xy_adjustment_limit_m=0.08 if terminal_anchor else None,
+            terminal_root_forward_not_negative=terminal_anchor,
+            terminal_frame_raw_default_without_ik=terminal_anchor,
             provisional_support_gap_m=[-0.002, 0.003],
             support_anchor_limit_m=0.02,
             foot_penetration_limit_m=0.002,
@@ -134,7 +159,7 @@ def main():
         ),
     )
     results, total_evaluations, unknown_failed_fits = [], 0, 0
-    for entry in (57, 82):
+    for entry in (57,) if terminal_anchor else (57, 82):
         qpos, qvel = raw["qpos"][entry * 10 - 1].copy(), raw["qvel"][entry * 10 - 1].copy()
         root0, q0, v0 = qpos[lo.rq : lo.rq + 7].copy(), qpos[lo.qi].copy(), qvel[lo.vi].copy()
         initial_gaps, anchor = measure(root0, q0)
@@ -157,15 +182,41 @@ def main():
             control_interval_s=0.02,
             maximum_sampled_speed_rad_s=6.0,
         )
+        root_terminal = root0[:3] + qvel[lo.rv : lo.rv + 3] * 0.2
+        terminal_shift = np.zeros(2)
+        terminal_forward = None
+        if terminal_anchor:
+            if support.tolist() != [False, True]:
+                raise ValueError("declared single-right-foot support proxy required")
+            raw_terminal = root0.copy()
+            raw_terminal[:3] = root_terminal
+            _, terminal_xy = measure(raw_terminal, bridge["position"][-1])
+            terminal_shift = np.mean((anchor - terminal_xy)[support], axis=0)
+            if np.linalg.norm(terminal_shift) > 0.08:
+                raise ValueError("terminal anchor root adjustment exceeds declared bound")
+            root_terminal[:2] += terminal_shift
+            goal_direction = np.array([5.0, 0.0]) - qpos[lo.bq : lo.bq + 2]
+            goal_direction /= np.linalg.norm(goal_direction)
+            terminal_forward = float((root_terminal[:2] - root0[:2]) @ goal_direction)
+            if terminal_forward < 0:
+                raise ValueError("terminal root would move backward toward goal axis")
         records, q_candidates, roots, ankle_positions = [], [], [], []
         for i, raw_joint in enumerate(bridge["position"]):
             t = i * 0.02
             raw_root = root0.copy()
-            raw_root[:3] += qvel[lo.rv : lo.rv + 3] * (t - t * t / 0.8)
+            if terminal_anchor:
+                u = t / 0.4
+                raw_root[:3] = (
+                    (2 * u**3 - 3 * u**2 + 1) * root0[:3]
+                    + (u**3 - 2 * u**2 + u) * 0.4 * qvel[lo.rv : lo.rv + 3]
+                    + (-2 * u**3 + 3 * u**2) * root_terminal
+                )
+            else:
+                raw_root[:3] += qvel[lo.rv : lo.rv + 3] * (t - t * t / 0.8)
             fit = None
             error = None
             try:
-                if i == 0:
+                if i == 0 or (terminal_anchor and i == 20):
                     candidate_root, candidate_q = raw_root.copy(), raw_joint.copy()
                 else:
                     fit = fit_reference_support_pose(
@@ -206,7 +257,7 @@ def main():
                     and anchor_error <= 0.02
                 )
             except (ValueError, RuntimeError) as exc:
-                if i > 0 and fit is None:
+                if i > 0 and not (terminal_anchor and i == 20) and fit is None:
                     unknown_failed_fits += 1
                 candidate_root, candidate_q = raw_root.copy(), raw_joint.copy()
                 gaps, xy = measure(candidate_root, candidate_q)
@@ -230,9 +281,19 @@ def main():
                 foot_gaps_m=gaps.tolist(),
                 max_anchor_error_m=anchor_error,
                 geometry=audit,
-                solver_evaluations=(0 if i == 0 else None)
+                solver_evaluations=(0 if i == 0 or (terminal_anchor and i == 20) else None)
                 if fit is None
                 else fit["solver_evaluations"],
+                fit_outcome=(
+                    None
+                    if fit is None
+                    else {
+                        "solver_success": fit["solver_success"],
+                        "reference_geometry_feasible": fit["reference_geometry_feasible"],
+                        "joint_trust_boundary_active": fit["joint_trust_boundary_active"],
+                        "anchor_error_m": fit["maximum_claimed_ankle_anchor_error_m"],
+                    }
+                ),
                 artifact=dict(path=frame_path.name, hash=digest(frame_path)),
             )
             write_once(a.output / f"entry{entry}-frame{i:02d}.json", rec)
@@ -272,6 +333,9 @@ def main():
             initial_velocity_mismatch_rad_s=initial_error,
             terminal_joint_error_rad=terminal_error,
             all_frames_pass=passed,
+            terminal_anchor_adjustment=terminal_anchor,
+            terminal_root_xy_shift_m=terminal_shift.tolist(),
+            terminal_forward_displacement_m=terminal_forward,
             artifact=dict(path=path.name, hash=digest(path)),
         )
         write_once(a.output / f"entry{entry}.json", case)
@@ -281,7 +345,11 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="MEASURED_SUPPORT_BRIDGE_STATIC_STUDY_NOT_PHYSICS",
+            status=(
+                "MEASURED_TERMINAL_ANCHOR_BRIDGE_STATIC_STUDY_NOT_PHYSICS"
+                if terminal_anchor
+                else "MEASURED_SUPPORT_BRIDGE_STATIC_STUDY_NOT_PHYSICS"
+            ),
             source_head=a.expected_head,
             source_hash=a.source_hash,
             actual_review_hash=a.actual_review_hash,
