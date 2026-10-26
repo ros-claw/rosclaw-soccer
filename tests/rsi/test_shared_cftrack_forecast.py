@@ -59,7 +59,7 @@ class Policy(BasePolicy):
         mujoco.mj_forward(self.kinematics.model, self.kinematics.data)
 
 
-def setup(tmp_path, *, physical_range=None):
+def setup(tmp_path, *, physical_range=None, cold=False):
     old, _ = original_setup(tmp_path)
     model = old.world.model
     if physical_range is not None:
@@ -67,7 +67,10 @@ def setup(tmp_path, *, physical_range=None):
         model.jnt_limited[old.layout.joints] = True
         model.jnt_range[old.layout.joints] = [-physical_range, physical_range]
     data = mujoco.MjData(model)
-    mujoco.mj_copyData(data, model, old.world.data)
+    if cold:
+        mujoco.mj_forward(model, data)
+    else:
+        mujoco.mj_copyData(data, model, old.world.data)
     world = SharedNativeMotorWorld(model, data, players=old.world.parameters, ball_body_name="ball")
     weight = np.zeros((1244, 29), np.float32)
     weight[:29] = np.eye(29, dtype=np.float32)
