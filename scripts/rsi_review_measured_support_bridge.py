@@ -10,6 +10,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--source", type=Path, required=True)
     p.add_argument("--source-hash", required=True)
+    p.add_argument("--terminal-anchor", action="store_true")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -28,8 +29,13 @@ def main():
         raise ValueError("unused output, exact source and isolated import required")
     source = json.loads(complete.read_text())
     if (
-        source["status"] != "MEASURED_SUPPORT_BRIDGE_STATIC_STUDY_NOT_PHYSICS"
-        or [row["entry"] for row in source["records"]] != [57, 82]
+        source["status"]
+        != (
+            "MEASURED_TERMINAL_ANCHOR_BRIDGE_STATIC_STUDY_NOT_PHYSICS"
+            if a.terminal_anchor
+            else "MEASURED_SUPPORT_BRIDGE_STATIC_STUDY_NOT_PHYSICS"
+        )
+        or [row["entry"] for row in source["records"]] != ([57] if a.terminal_anchor else [57, 82])
         or source["native_steps"] != 0
         or source["neural_calls"] != 0
     ):
@@ -119,11 +125,11 @@ def main():
             source_head=a.expected_head,
             source_hash=a.source_hash,
             input_file_hashes=pins,
-            frames=42,
+            frames=21 if a.terminal_anchor else 42,
             independent_mujoco_geometry_and_anchor=True,
             bridge_polynomial_and_body_assets_shared=True,
             optimizer_not_rerun=True,
-            optimizer_success_not_recorded_in_source=True,
+            optimizer_success_not_recorded_in_source=not a.terminal_anchor,
             neural_calls=0,
             native_steps=0,
             hardware_authorized=False,
@@ -161,14 +167,43 @@ def main():
             or not np.allclose(aggregate["ankle_anchor_xy"], anchor, rtol=0, atol=1e-12)
         ):
             raise ValueError("source initial state, raw bridge or anchor mismatch")
-        valid, xy_rows, uncertain = [], [], []
+        root_terminal = root0[:3] + initial_v[lo.rv : lo.rv + 3] * 0.2
+        if a.terminal_anchor:
+            if support.tolist() != [False, True]:
+                raise ValueError("source must use the measured single-right support proxy")
+            terminal_base = root0.copy()
+            terminal_base[:3] = root_terminal
+            _, terminal_xy, _ = measure(terminal_base, bridge["position"][-1])
+            shift = np.mean((anchor - terminal_xy)[support], axis=0)
+            root_terminal[:2] += shift
+            direction = np.array([5.0, 0.0]) - initial_q[lo.bq : lo.bq + 2]
+            direction /= np.linalg.norm(direction)
+            forward = float((root_terminal[:2] - root0[:2]) @ direction)
+            if (
+                np.linalg.norm(shift) > 0.08
+                or forward < 0
+                or not np.allclose(shift, case["terminal_root_xy_shift_m"], rtol=0, atol=1e-12)
+                or not np.isclose(
+                    forward, case["terminal_forward_displacement_m"], rtol=0, atol=1e-12
+                )
+            ):
+                raise ValueError("terminal root anchor, displacement or bound mismatch")
+        valid, geometry_valid, xy_rows, uncertain = [], [], [], []
         for i in range(21):
             row = json.loads((a.source / f"entry{entry}-frame{i:02d}.json").read_text())
             with np.load(a.source / row["artifact"]["path"], allow_pickle=False) as f:
                 saved = {k: f[k].copy() for k in f.files}
             raw_root = root0.copy()
             t = i * 0.02
-            raw_root[:3] += initial_v[lo.rv : lo.rv + 3] * (t - t * t / 0.8)
+            if a.terminal_anchor:
+                u = t / 0.4
+                raw_root[:3] = (
+                    (2 * u**3 - 3 * u**2 + 1) * root0[:3]
+                    + (u**3 - 2 * u**2 + u) * 0.4 * initial_v[lo.rv : lo.rv + 3]
+                    + (-2 * u**3 + 3 * u**2) * root_terminal
+                )
+            else:
+                raw_root[:3] += initial_v[lo.rv : lo.rv + 3] * (t - t * t / 0.8)
             if (
                 not np.array_equal(saved["raw_root"], raw_root)
                 or not np.array_equal(saved["raw_joint"], bridge["position"][i])
@@ -201,7 +236,26 @@ def main():
                 raise ValueError(f"source accepted geometrically invalid frame {entry}/{i}")
             if not row["valid"] and geometry_ok:
                 uncertain.append(i)
+            if a.terminal_anchor:
+                outcome = row["fit_outcome"]
+                if i in (0, 20):
+                    if outcome is not None:
+                        raise ValueError("measured initial and default terminal must not be fitted")
+                elif (
+                    type(outcome) is not dict
+                    or type(outcome["solver_success"]) is not bool
+                    or type(outcome["reference_geometry_feasible"]) is not bool
+                    or type(outcome["joint_trust_boundary_active"]) is not bool
+                    or bool(row["valid"])
+                    != bool(
+                        geometry_ok
+                        and outcome["reference_geometry_feasible"]
+                        and not outcome["joint_trust_boundary_active"]
+                    )
+                ):
+                    raise ValueError("source optimizer/geometry decision mismatch")
             valid.append(bool(row["valid"]))
+            geometry_valid.append(geometry_ok)
             xy_rows.append(xy)
         roots, joints, xy = (
             aggregate["candidate_root"],
@@ -233,12 +287,24 @@ def main():
         )
         if passed != case["all_frames_pass"]:
             raise ValueError("source full bridge decision mismatch")
+        sampled_geometry_certificate = bool(
+            all(geometry_valid)
+            and measured["max_root_step_m"] <= 0.006
+            and measured["max_joint_step_rad"] <= 0.12
+            and measured["max_support_ankle_step_m"] <= 0.006
+            and measured["initial_velocity_mismatch_rad_s"] <= 2.0
+            and measured["terminal_joint_error_rad"] <= 0.02
+        )
         summaries.append(
             dict(
                 entry=entry,
                 metrics=measured,
                 all_frames_pass=passed,
-                invalid_with_geometry_pass_and_unrecorded_solver_status=uncertain,
+                sampled_geometry_certificate=sampled_geometry_certificate,
+                invalid_with_geometry_pass=uncertain,
+                invalid_with_geometry_pass_and_unrecorded_solver_status=(
+                    [] if a.terminal_anchor else uncertain
+                ),
             )
         )
     check_pins(pins)
@@ -246,7 +312,11 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="MEASURED_SUPPORT_BRIDGE_READBACK_NOT_PHYSICS",
+            status=(
+                "MEASURED_TERMINAL_ANCHOR_BRIDGE_READBACK_NOT_PHYSICS"
+                if a.terminal_anchor
+                else "MEASURED_SUPPORT_BRIDGE_READBACK_NOT_PHYSICS"
+            ),
             source_head=a.expected_head,
             source_hash=a.source_hash,
             input_file_hashes=pins,
@@ -254,7 +324,8 @@ def main():
             independent_geometry=True,
             shared_bridge_math=True,
             optimizer_not_rerun=True,
-            solver_success_not_recorded_in_source=True,
+            solver_success_not_recorded_in_source=not a.terminal_anchor,
+            sampled_geometry_is_not_physical_execution=True,
             neural_calls=0,
             native_steps=0,
             hardware_authorized=False,
