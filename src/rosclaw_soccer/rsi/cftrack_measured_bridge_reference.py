@@ -17,6 +17,7 @@ def condition_measured_bridge_reference(
     joints: np.ndarray,
     *,
     expected_model_hash: str,
+    ball_prediction_horizon_s: float | None = None,
 ) -> dict[str, Any]:
     """Install one prequalified sampled bridge and preserve the original kick suffix.
 
@@ -126,6 +127,26 @@ def condition_measured_bridge_reference(
     before_ball = w.data.xpos[lo.ball].copy(), w.data.xquat[lo.ball].copy()
     before_policy = cftrack_state_hash(p)
     candidate = copy_cftrack_policy(p)
+    planned_ball = p.state_cmd.obj_pos.copy()
+    prediction_receipt = None
+    if ball_prediction_horizon_s is not None:
+        from policy.omnicontact.CFgen_reference import plan_cfgen_reference
+
+        from rosclaw_soccer.rsi.cftrack_reference_ball_prediction import predict_ball_reference
+
+        planned_ball, prediction_receipt = predict_ball_reference(
+            np.asarray(p.state_cmd.obj_pos).copy(),
+            w.data.qvel[lo.bv : lo.bv + 3].copy(),
+            horizon_s=ball_prediction_horizon_s,
+        )
+        # Only the private planning copy sees the predicted position. The
+        # original policy and live ball observations stay measured.
+        candidate.state_cmd.ball_pos = planned_ball.copy()
+        candidate.state_cmd.obj_pos = planned_ball.copy()
+        fk = candidate.kinematics.forward(
+            candidate.state_cmd.q, candidate.state_cmd.base_pos, candidate.state_cmd.base_quat
+        )
+        plan_cfgen_reference(candidate, fk)
     phase = candidate.ref_phase
     tail = np.flatnonzero(phase >= 13)
     if not len(tail) or tail[0] == 0 or not np.array_equal(tail, np.arange(tail[0], len(phase))):
@@ -144,7 +165,7 @@ def condition_measured_bridge_reference(
         builder,
         12,
         fk_refs=refs,
-        object_pos=p.state_cmd.obj_pos.copy(),
+        object_pos=planned_ball.copy(),
         object_quat=p.state_cmd.obj_quat.copy(),
         contact=np.tile(generator._contact0, (21, 1)),
     )
@@ -156,7 +177,7 @@ def condition_measured_bridge_reference(
         yaw_start=roots[-1, 3:],
         yaw_target=goal_quat,
         step_angular=float(generator.step_angular),
-        object_pos=p.state_cmd.obj_pos.copy(),
+        object_pos=planned_ball.copy(),
         object_quat=p.state_cmd.obj_quat.copy(),
         dof_pos=DEFAULT_JOINT_POS_MJ,
         contact=generator._contact0,
@@ -171,7 +192,7 @@ def condition_measured_bridge_reference(
         torso_target=None,
         yaw=goal_quat,
         step_linear=float(generator.step_linear),
-        object_pos=p.state_cmd.obj_pos.copy(),
+        object_pos=planned_ball.copy(),
         object_quat=p.state_cmd.obj_quat.copy(),
         dof_pos=DEFAULT_JOINT_POS_MJ,
         contact=generator._contact0,
@@ -214,7 +235,7 @@ def condition_measured_bridge_reference(
             setattr(p, key, value)
         player.measured_bridge_reference_installed = False
         raise
-    return dict(
+    receipt = dict(
         schema="soccer.cftrack.measured_bridge_reference.v1",
         original_reference_hash=original_hash,
         conditioned_reference_hash=new_hash,
@@ -222,7 +243,7 @@ def condition_measured_bridge_reference(
         prefix_frames=len(prefix["ref_phase"]),
         original_swing_start=start,
         original_kick_recovery_suffix_unchanged=True,
-        actual_ball_reference_static=True,
+        actual_ball_reference_static=prediction_receipt is None,
         support_inferred_from_geometry_not_force=True,
         sampled_geometry_not_dynamics=True,
         original_direct_and_staged_guards_unchanged=True,
@@ -231,3 +252,7 @@ def condition_measured_bridge_reference(
         hardware_authorized=False,
         promotion_authorized=False,
     )
+    if prediction_receipt is not None:
+        receipt["ball_prediction"] = prediction_receipt
+        receipt["kick_suffix_from_predicted_ball_replan"] = True
+    return receipt

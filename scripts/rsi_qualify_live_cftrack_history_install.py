@@ -24,6 +24,10 @@ def main():
     p.add_argument("--measured-bridge-hash")
     p.add_argument("--bridge-certificate", type=Path)
     p.add_argument("--bridge-certificate-hash")
+    p.add_argument("--static-bridge-proof", type=Path)
+    p.add_argument("--static-bridge-proof-hash")
+    p.add_argument("--static-bridge-review", type=Path)
+    p.add_argument("--static-bridge-review-hash")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -46,6 +50,31 @@ def main():
     forecast_enabled = a.private_forecast_proof is not None
     execute_enabled = a.execute_forecast_proof is not None
     bridge_mode = a.measured_bridge is not None
+    prediction_mode = a.static_bridge_proof is not None
+    if (
+        prediction_mode
+        != all(
+            value is not None
+            for value in (
+                a.static_bridge_proof_hash,
+                a.static_bridge_review,
+                a.static_bridge_review_hash,
+            )
+        )
+        or (
+            not prediction_mode
+            and any(
+                value is not None
+                for value in (
+                    a.static_bridge_proof_hash,
+                    a.static_bridge_review,
+                    a.static_bridge_review_hash,
+                )
+            )
+        )
+        or (prediction_mode and not bridge_mode)
+    ):
+        raise ValueError("prediction mode requires the exact paired source and independent review")
     if bridge_mode != all(
         value is not None
         for value in (a.measured_bridge_hash, a.bridge_certificate, a.bridge_certificate_hash)
@@ -155,6 +184,39 @@ def main():
             or digest(bridge_artifact) != item["hash"]
         ):
             raise ValueError("exact confined sampled bridge artifact required")
+    static_bridge_artifact = None
+    if prediction_mode:
+        if (
+            a.static_bridge_proof.is_symlink()
+            or a.static_bridge_review.is_symlink()
+            or digest(a.static_bridge_proof) != a.static_bridge_proof_hash
+            or digest(a.static_bridge_review) != a.static_bridge_review_hash
+        ):
+            raise ValueError("exact static bridge source and independent review required")
+        static_source = json.loads(a.static_bridge_proof.read_text())
+        static_review = json.loads(a.static_bridge_review.read_text())
+        if (
+            static_source["status"] != "CFTRACK_MEASURED_BRIDGE_H300_PAIRED_NOT_PROMOTED"
+            or static_source["source_hash"] != a.source_hash
+            or static_source["history_hash"] != a.history_hash
+            or static_review["status"]
+            != "ACTUAL_CFTRACK_BRIDGE_H300_NN_READBACK_EXACT_NOT_PROMOTED"
+            or static_review["source_hash"] != a.static_bridge_proof_hash
+            or len(static_source["records"]) != 2
+            or static_source["records"][1]["actual_execution"]["arm"] != "measured_bridge"
+            or static_source["records"][1]["actual_execution"]["absolute_h300_outcome"]["task_pass"]
+            is not False
+            or static_review["records"][1]["first_contact_reference_phase"] != 12
+        ):
+            raise ValueError("verified failed approach-phase static baseline required")
+        item = static_source["records"][1]["actual_execution"]["artifact"]
+        static_bridge_artifact = a.static_bridge_proof.parent / item["path"]
+        if (
+            static_bridge_artifact.is_symlink()
+            or static_bridge_artifact.parent != a.static_bridge_proof.parent
+            or digest(static_bridge_artifact) != item["hash"]
+        ):
+            raise ValueError("exact confined static baseline actual trajectory required")
     if (
         source["status"] != "WARM_LEFT_SETTLING_MEASURED_NOT_KICK"
         or history["status"] != "MEASURED_CFTRACK_HISTORY_CANDIDATES_NOT_INSTALLED"
@@ -197,6 +259,12 @@ def main():
         pins[str(a.measured_bridge)] = a.measured_bridge_hash
         pins[str(a.bridge_certificate)] = a.bridge_certificate_hash
         pins[str(bridge_artifact)] = bridge_source["records"][0]["artifact"]["hash"]
+    if prediction_mode:
+        pins[str(a.static_bridge_proof)] = a.static_bridge_proof_hash
+        pins[str(a.static_bridge_review)] = a.static_bridge_review_hash
+        pins[str(static_bridge_artifact)] = static_source["records"][1]["actual_execution"][
+            "artifact"
+        ]["hash"]
     source_pins(pins)
     check_pins(pins)
     scenes = [Path(x) for x in pins if x.endswith("/cached-standard/declared-scene.xml")]
@@ -270,6 +338,10 @@ def main():
             execute_forecast_proof_hash=a.execute_forecast_proof_hash,
             actual_forecast_replay=execute_enabled,
             measured_bridge_mode=bridge_mode,
+            predicted_ball_reference_mode=prediction_mode,
+            ball_prediction_horizon_s=1.74 if prediction_mode else None,
+            static_bridge_proof_hash=a.static_bridge_proof_hash,
+            static_bridge_review_hash=a.static_bridge_review_hash,
             measured_bridge_hash=a.measured_bridge_hash,
             bridge_certificate_hash=a.bridge_certificate_hash,
             absolute_h300_includes_57_approach_controls=bridge_mode,
@@ -304,7 +376,9 @@ def main():
     atexit.register(retain_partial)
     actual_cftrack_calls = 0
     specs = (
-        [(57, "parent"), (57, "measured_bridge")]
+        [(57, "static_bridge"), (57, "predictive_bridge")]
+        if prediction_mode
+        else [(57, "parent"), (57, "measured_bridge")]
         if bridge_mode
         else [
             (57, "measured_history"),
@@ -395,12 +469,16 @@ def main():
         ):
             raise ValueError("installed history must match qualified actual scratch observation")
         bridge_receipt = None
-        if bridge_mode and actual_arm == "measured_bridge":
+        if bridge_mode and (actual_arm == "measured_bridge" or prediction_mode):
             with np.load(bridge_artifact, allow_pickle=False) as f:
                 bridge_roots = f["candidate_root"].copy()
                 bridge_joints = f["candidate_joint"].copy()
             bridge_receipt = condition_measured_bridge_reference(
-                player, bridge_roots, bridge_joints, expected_model_hash=compiled_model_hash(model)
+                player,
+                bridge_roots,
+                bridge_joints,
+                expected_model_hash=compiled_model_hash(model),
+                ball_prediction_horizon_s=1.74 if actual_arm == "predictive_bridge" else None,
             )
         after = snapshot(data)
         if (
@@ -483,6 +561,8 @@ def main():
                 policy.action.fill(0)
             forecast_arm = "measured_history" if bridge_mode else actual_arm
             prior_path, _ = forecast_artifacts[(entry, forecast_arm)]
+            if prediction_mode and actual_arm == "static_bridge":
+                prior_path = static_bridge_artifact
             with np.load(prior_path, allow_pickle=False) as f:
                 predicted = {k: f[k].copy() for k in f.files}
             session = policy.ort_session
@@ -511,7 +591,10 @@ def main():
                 real_rows.append(row)
                 real_targets.append(target.copy())
                 contacts.append(dict(world.last_ball_contact_bodies["a/"]))
-                compare_parent = not bridge_mode or (actual_arm == "parent" and step < 100)
+                compare_parent = (prediction_mode and actual_arm == "static_bridge") or (
+                    not prediction_mode
+                    and (not bridge_mode or (actual_arm == "parent" and step < 100))
+                )
                 if compare_parent and (
                     not np.array_equal(target, predicted["joint_targets"][step])
                     or any(
@@ -542,6 +625,7 @@ def main():
                 forecast_exact_horizon_controls=(
                     100 if not bridge_mode or actual_arm == "parent" else None
                 ),
+                static_baseline_actual_exact=(prediction_mode and actual_arm == "static_bridge"),
                 ball_contact_bodies_by_control=contacts,
                 artifact=dict(path=future_path.name, hash=digest(future_path)),
             )
@@ -586,7 +670,9 @@ def main():
         a.output / "complete.json",
         dict(
             status=(
-                "CFTRACK_MEASURED_BRIDGE_H300_PAIRED_NOT_PROMOTED"
+                "CFTRACK_PREDICTIVE_BALL_H300_PAIRED_NOT_PROMOTED"
+                if prediction_mode
+                else "CFTRACK_MEASURED_BRIDGE_H300_PAIRED_NOT_PROMOTED"
                 if bridge_mode
                 else "CFTRACK_PRIVATE_FUTURES_REPLAYED_ACTUALLY_NOT_PROMOTED"
                 if execute_enabled
