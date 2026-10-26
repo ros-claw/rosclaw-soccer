@@ -12,7 +12,10 @@ def main():
     for key in ("composed-hash", "geometry-hash", "reference-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
     p.add_argument("--absolute-reference-waypoint", action="store_true")
+    p.add_argument("--bounded-absolute-curve", action="store_true")
     a = p.parse_args()
+    if a.bounded_absolute_curve and not a.absolute_reference_waypoint:
+        p.error("bounded absolute curve requires --absolute-reference-waypoint")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
@@ -92,6 +95,7 @@ def main():
             original_constructor_warmups_source_bound=5,
             reference_joint_offset_limit_rad=None if a.absolute_reference_waypoint else 0.35,
             absolute_reference_waypoint=a.absolute_reference_waypoint,
+            bounded_absolute_curve=a.bounded_absolute_curve,
             additional_reference_velocity_limit_rad_s=6.0 if a.absolute_reference_waypoint else 4.0,
             reference_duration_controls=48,
             actual_joint_or_torque_caps_modified=False,
@@ -128,7 +132,10 @@ def main():
         def install_measured_entry(self, samples, *, reference_frame):
             receipt = super().install_measured_entry(samples, reference_frame=reference_frame)
             plan, self.generation, self.parent = generate_contact_reference(
-                self, self.forecaster, absolute_waypoint=a.absolute_reference_waypoint
+                self,
+                self.forecaster,
+                absolute_waypoint=a.absolute_reference_waypoint,
+                bounded_absolute_curve=a.bounded_absolute_curve,
             )
             save_future("parent-future", self.parent)
             if plan is not None:
@@ -228,7 +235,9 @@ def main():
         a.output / "complete.json",
         dict(
             status=status,
-            reference_contract="absolute_contact_waypoint_v1"
+            reference_contract="bounded_absolute_contact_waypoint_v1"
+            if a.bounded_absolute_curve
+            else "absolute_contact_waypoint_v1"
             if a.absolute_reference_waypoint
             else "relative_actual_delta_v1",
             source_head=a.expected_head,

@@ -177,13 +177,15 @@ def main():
     if receipt != row["measured_history_receipt"]:
         raise ValueError("measured history receipt differs")
     delta = np.array(ik["reference_joints_hg"]) - seed.qpos[lo.qi]
-    absolute = report.get("reference_contract") == "absolute_contact_waypoint_v1"
+    bounded = report.get("reference_contract") == "bounded_absolute_contact_waypoint_v1"
+    absolute = bounded or report.get("reference_contract") == "absolute_contact_waypoint_v1"
     plan = (
         AbsoluteContactReferencePlan(
             row["admitted_reference_phase"],
             tuple(int(v) for v in mapping),
             tuple(float(v) for v in ik["reference_joints_hg"]),
             peak,
+            bounded_curve=bounded,
         )
         if absolute
         else ContactReferencePlan(

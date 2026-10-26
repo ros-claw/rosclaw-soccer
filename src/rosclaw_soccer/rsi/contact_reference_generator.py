@@ -15,7 +15,11 @@ from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
 
 
 def generate_contact_reference(
-    player: SharedRoboNaldoPlayer, forecaster: Any, *, absolute_waypoint: bool = False
+    player: SharedRoboNaldoPlayer,
+    forecaster: Any,
+    *,
+    absolute_waypoint: bool = False,
+    bounded_absolute_curve: bool = False,
 ) -> tuple[
     ContactReferencePlan | AbsoluteContactReferencePlan | None, dict[str, Any], dict[str, Any]
 ]:
@@ -25,7 +29,11 @@ def generate_contact_reference(
 
     world = player.world
     world._require_current_boundary()
-    if type(absolute_waypoint) is not bool:
+    if (
+        type(absolute_waypoint) is not bool
+        or type(bounded_absolute_curve) is not bool
+        or (bounded_absolute_curve and not absolute_waypoint)
+    ):
         raise ValueError("explicit absolute-reference experiment switch required")
     if (
         type(forecaster) is not SharedNNForecaster
@@ -50,6 +58,8 @@ def generate_contact_reference(
         hardware_authorized=False,
         absolute_waypoint=absolute_waypoint,
     )
+    if bounded_absolute_curve:
+        report["bounded_absolute_curve"] = True
     plan = None
     if parent["controls"] != 128 or parent["body_failed"]:
         report["status"] = "ABSTAIN_INCOMPLETE_PARENT_FUTURE"
@@ -92,7 +102,11 @@ def generate_contact_reference(
                     candidate: ContactReferencePlan | AbsoluteContactReferencePlan
                     candidate = (
                         AbsoluteContactReferencePlan(
-                            start, mapping, tuple(float(v) for v in ik["reference_joints_hg"]), peak
+                            start,
+                            mapping,
+                            tuple(float(v) for v in ik["reference_joints_hg"]),
+                            peak,
+                            bounded_curve=bounded_absolute_curve,
                         )
                         if absolute_waypoint
                         else ContactReferencePlan(
@@ -101,7 +115,12 @@ def generate_contact_reference(
                     )
                     try:
                         pos, vel = (
-                            candidate.offsets(player.policy)
+                            candidate.offsets(
+                                player.policy,
+                                limits_hg=world.model.jnt_range[player.layout.joints].astype(
+                                    np.float64
+                                ),
+                            )
                             if isinstance(candidate, AbsoluteContactReferencePlan)
                             else candidate.offsets()
                         )

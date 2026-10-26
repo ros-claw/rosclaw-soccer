@@ -19,8 +19,11 @@ class AbsoluteContactReferencePlan:
     hg_to_isaac: tuple[int, ...]
     waypoint_hg: tuple[float, ...]
     peak_control: int
+    bounded_curve: bool = False
 
-    def offsets(self, policy: Any) -> tuple[np.ndarray, np.ndarray]:
+    def offsets(
+        self, policy: Any, *, limits_hg: np.ndarray | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
         if (
             type(self.start_frame) is not int
             or self.start_frame < 0
@@ -38,6 +41,7 @@ class AbsoluteContactReferencePlan:
             or type(policy.motion_joint_pos) is not np.ndarray
             or policy.motion_joint_pos.shape != (policy.motion_total_steps, 29)
             or self.start_frame + 48 >= policy.motion_total_steps
+            or type(self.bounded_curve) is not bool
         ):
             raise ValueError("explicit complete absolute-contact reference contract required")
         nominal = policy.motion_joint_pos[
@@ -45,6 +49,20 @@ class AbsoluteContactReferencePlan:
         ].astype(np.float64)
         delta = np.zeros(29)
         delta[:12] = np.array(self.waypoint_hg)[:12] - nominal[:12]
+        if self.bounded_curve:
+            from rosclaw_soccer.rsi.bounded_contact_reference_curve import bounded_contact_curve
+
+            if limits_hg is None:
+                raise ValueError("bounded absolute curve requires actual physical joint ranges")
+            q = policy.motion_joint_pos[
+                self.start_frame : self.start_frame + 49, self.hg_to_isaac
+            ].astype(np.float64)
+            pos_hg, vel_hg, _ = bounded_contact_curve(
+                q, np.array(self.waypoint_hg), limits_hg, self.peak_control
+            )
+            pos, vel = np.zeros((49, 29)), np.zeros((49, 29))
+            pos[:, self.hg_to_isaac], vel[:, self.hg_to_isaac] = pos_hg, vel_hg
+            return pos, vel
         if (
             not np.isfinite(delta).all()
             or 1.875 * abs(delta).max() / min(self.peak_control, 48 - self.peak_control) / 0.02
@@ -59,7 +77,7 @@ def condition_absolute_contact_reference(
 ) -> dict[str, Any]:
     if type(plan) is not AbsoluteContactReferencePlan:
         raise ValueError("explicit absolute SIM reference required")
-    pos, vel = plan.offsets(policy)
+    pos, vel = plan.offsets(policy, limits_hg=limits_hg)
     q, v = policy.motion_joint_pos, policy.motion_joint_vel
     if (
         policy.runtime_mode != "sim"
@@ -97,6 +115,11 @@ def condition_absolute_contact_reference(
         neural_weights_modified=False,
         hardware_authorized=False,
     )
+    if plan.bounded_curve:
+        receipt["trajectory_contract"] = "bounded_c2_bspline_v1"
+        receipt["continuous_additional_velocity_bound_rad_s"] = 6.0
+        receipt["physical_joint_bounds_scope"] = "49_consumed_reference_samples"
+        receipt["trajectory_linear_programs_per_resolution"] = 12
     if not np.any(pos):
         return dict(receipt, applied=False, zero_branch_exact=True)
     start = plan.start_frame
