@@ -85,3 +85,38 @@ def test_tampered_stream_rejects_and_restores_original_session(tmp_path, key):
     with pytest.raises(ValueError):
         verify_cftrack_trace(reader.policy, data, reader.layout, raw, controls=4)
     assert reader.policy.ort_session is original and data.time == 0
+
+
+def test_readback_can_rebuild_explicit_previous_substep_ball_cache(tmp_path):
+    source, _ = setup(tmp_path, physical_range=1.0, cold=True)
+    current = source.world.data.qpos.copy()
+    previous = current.copy()
+    previous[source.layout.bq] += 0.03
+    source.world.data.qpos[:] = previous
+    mujoco.mj_kinematics(source.world.model, source.world.data)
+    mujoco.mj_comPos(source.world.model, source.world.data)
+    expected_cached_ball = source.world.data.xpos[source.layout.ball].copy()
+    source.world.data.qpos[:] = current
+    raw = capture(source, None)
+    reader, _ = setup(tmp_path, physical_range=1.0, cold=True)
+    data = mujoco.MjData(reader.world.model)
+    data.qpos[:] = current
+    data.qvel[:] = reader.world.data.qvel
+    observed = []
+
+    def audit(policy, _):
+        observed.append(policy.state_cmd.obj_pos.copy())
+
+    assert (
+        verify_cftrack_trace(
+            reader.policy,
+            data,
+            reader.layout,
+            raw,
+            controls=4,
+            proprioception_audit=audit,
+            initial_cached_qpos=previous,
+        )
+        == 4
+    )
+    np.testing.assert_array_equal(observed[0], expected_cached_ball)

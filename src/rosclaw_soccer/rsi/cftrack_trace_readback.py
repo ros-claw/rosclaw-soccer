@@ -23,6 +23,7 @@ def verify_cftrack_trace(
     controls: int,
     motor_plan: CFtrackMotorResidualPlan | None = None,
     proprioception_audit: Callable[[Any, np.ndarray], None] | None = None,
+    initial_cached_qpos: np.ndarray | None = None,
 ) -> int:
     import mujoco
     import onnxruntime as ort
@@ -64,6 +65,13 @@ def verify_cftrack_trace(
     elif motor_plan is not None:
         raise ValueError("motor trace must separate original NN targets")
     model = layout.model
+    if initial_cached_qpos is not None and (
+        type(initial_cached_qpos) is not np.ndarray
+        or initial_cached_qpos.shape != (model.nq,)
+        or initial_cached_qpos.dtype.kind != "f"
+        or not np.isfinite(initial_cached_qpos).all()
+    ):
+        raise ValueError("finite explicit prior native position for initial cached ball required")
     original = policy.ort_session
     calls = 0
 
@@ -99,8 +107,12 @@ def verify_cftrack_trace(
                 data.qpos[:] = raw["qpos"][tick * 10 - 1]
                 data.qvel[:] = raw["qvel"][tick * 10 - 1]
             else:
+                current = data.qpos.copy()
+                if initial_cached_qpos is not None:
+                    data.qpos[:] = initial_cached_qpos
                 mujoco.mj_kinematics(model, data)
                 mujoco.mj_comPos(model, data)
+                data.qpos[:] = current
             view.world.control_steps = tick
             SharedOmniContactPlayer._observe(cast(SharedOmniContactPlayer, view))
             policy.run()
