@@ -4,6 +4,8 @@ A PD setpoint is not a joint position measurement. This diagnostic neither
 changes the strict position-residual contract nor approves a torque interface.
 """
 
+from typing import Any
+
 import numpy as np
 
 
@@ -16,7 +18,7 @@ def audit_pd_intent(
     limits: np.ndarray,
     effort: np.ndarray,
     native_steps_per_control: int = 10,
-) -> dict:
+) -> dict[str, Any]:
     if (
         type(native_steps_per_control) is not int
         or native_steps_per_control < 1
@@ -46,10 +48,11 @@ def audit_pd_intent(
     if (limits[:, 0] >= limits[:, 1]).any() or (effort <= 0).any():
         raise ValueError("ordered physical limits and positive actual effort caps required")
 
-    def excess(x):
-        return np.maximum(np.maximum(limits[:, 0] - x, x - limits[:, 1]), 0.0)
+    def excess(x: np.ndarray) -> np.ndarray:
+        result: np.ndarray = np.maximum(np.maximum(limits[:, 0] - x, x - limits[:, 1]), 0.0)
+        return result
 
-    def record(x):
+    def record(x: np.ndarray) -> dict[str, Any]:
         e = excess(x)
         return dict(
             rows_outside_range=int((e > 0).any(axis=1).sum()),

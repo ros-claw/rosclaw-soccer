@@ -1,6 +1,7 @@
 """Core neural-torque/teacher contract over one body in a shared SIM clock.
 
-Only explicitly known pure Core policy implementations are admitted. No Runtime,
+Only explicitly known pure Core policies and the explicit Soccer SIM torque
+intention protocol are admitted. No Runtime,
 driver, hardware executor, transport, checkpoint loader or permit is created.
 The parent joint target remains a PD setpoint; actual total actuator torque is
 separately observed and fed back at every native step.
@@ -33,6 +34,8 @@ class SharedNativeTorqueLayer:
         import mujoco
         from rosclaw.simforge.g1_neural_torque import G1NeuralTorquePolicy, G1TeacherTorqueCollector
 
+        from rosclaw_soccer.rsi.cftrack_torque_intent import CFtrackTorqueIntentPolicy
+
         neural_types: tuple[type[G1NeuralTorquePolicy], ...] = (G1NeuralTorquePolicy,)
         if type(policy).__module__ == "rosclaw.simforge.g1_parent_residual_torque":
             from rosclaw.simforge.g1_parent_residual_torque import G1ParentResidualTorquePolicy
@@ -43,7 +46,8 @@ class SharedNativeTorqueLayer:
         if (
             world.native_steps != 0
             or prefix not in world.layouts
-            or type(policy) not in (*neural_types, G1TeacherTorqueCollector)
+            or type(policy)
+            not in (*neural_types, G1TeacherTorqueCollector, CFtrackTorqueIntentPolicy)
             or type(horizon_controls) is not int
             or not 1 <= horizon_controls <= 6000
             or not np.isfinite([target_y_m, target_z_m]).all()
@@ -72,6 +76,15 @@ class SharedNativeTorqueLayer:
         from rosclaw_soccer.sim.contracts import hash_json
 
         self.body_hash = hash_json(self.layout.profile())
+        if type(policy) is CFtrackTorqueIntentPolicy and (
+            policy.body_hash != self.body_hash
+            or expected_parent_policy_hash is None
+            or policy.parent_policy_hash != expected_parent_policy_hash
+            or not np.array_equal(policy.effort, world.parameters[prefix].effort)
+            or intervention_fraction != 1.0
+            or capture_actor_proposals
+        ):
+            raise ValueError("torque intention must bind actual body, parent and unchanged caps")
         if type(policy) in neural_types and (
             policy.artifact.body_hash != self.body_hash
             or expected_parent_policy_hash is None
