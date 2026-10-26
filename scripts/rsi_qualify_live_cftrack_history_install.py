@@ -1,7 +1,8 @@
-"""Install two measured histories at true live boundaries; no kick inference."""
+"""Install owned histories and optionally examine bounded private futures."""
 
 import argparse
 import atexit
+import copy
 import json
 import sys
 from pathlib import Path
@@ -15,6 +16,8 @@ def main():
     p.add_argument("--history-hash", required=True)
     p.add_argument("--live-review", type=Path, required=True)
     p.add_argument("--live-review-hash", required=True)
+    p.add_argument("--private-forecast-proof", type=Path)
+    p.add_argument("--private-forecast-proof-hash")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -34,6 +37,24 @@ def main():
     ):
         raise ValueError("unused output and exact isolated source lineage required")
     source, history, prior = (json.loads(x.read_text()) for x in (complete, hist, live))
+    forecast_enabled = a.private_forecast_proof is not None
+    if forecast_enabled != (a.private_forecast_proof_hash is not None):
+        raise ValueError("private forecast requires both prior installation proof and hash")
+    if forecast_enabled:
+        if (
+            a.private_forecast_proof.is_symlink()
+            or digest(a.private_forecast_proof) != a.private_forecast_proof_hash
+        ):
+            raise ValueError("exact earlier closed installation report required")
+        proof = json.loads(a.private_forecast_proof.read_text())
+        if (
+            proof["status"] != "LIVE_CFTRACK_HISTORY_INSTALLED_NOT_EXECUTED"
+            or proof["source_hash"] != a.source_hash
+            or proof["history_hash"] != a.history_hash
+            or proof["live_review_hash"] != a.live_review_hash
+            or [row["entry_control"] for row in proof["records"]] != [57, 82]
+        ):
+            raise ValueError("exact matching qualified two-boundary history install required")
     if (
         source["status"] != "WARM_LEFT_SETTLING_MEASURED_NOT_KICK"
         or history["status"] != "MEASURED_CFTRACK_HISTORY_CANDIDATES_NOT_INSTALLED"
@@ -67,6 +88,8 @@ def main():
             str(histories): history["artifact"]["hash"],
         }
     )
+    if forecast_enabled:
+        pins[str(a.private_forecast_proof)] = a.private_forecast_proof_hash
     source_pins(pins)
     check_pins(pins)
     scenes = [Path(x) for x in pins if x.endswith("/cached-standard/declared-scene.xml")]
@@ -85,7 +108,9 @@ def main():
     from rosclaw_soccer.rsi.cftrack_live_history import CFtrackLiveHistory
     from rosclaw_soccer.rsi.cftrack_measured_history_install import install_owned_cftrack_history
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+    from rosclaw_soccer.rsi.omnicontact_policy_copy import cftrack_state_hash, copy_cftrack_policy
     from rosclaw_soccer.rsi.paid_skill_handoff import snapshot
+    from rosclaw_soccer.rsi.shared_cftrack_forecast import SharedCFtrackForecaster
     from rosclaw_soccer.rsi.shared_native_motor_world import (
         NativePDParameters,
         SharedNativeMotorWorld,
@@ -123,7 +148,11 @@ def main():
             entry_controls=[57, 82],
             maximum_velocity_calls=139,
             maximum_native_steps=1390,
-            cftrack_neural_calls=0,
+            cftrack_neural_calls_max=400 if forecast_enabled else 0,
+            private_forecast_native_step_budget=4000 if forecast_enabled else 0,
+            private_forecast_horizon_controls=100 if forecast_enabled else 0,
+            private_forecast_proof_hash=a.private_forecast_proof_hash,
+            private_cold_vs_measured_history=forecast_enabled,
             no_body_or_ball_reset=True,
             software_pd_switch_explicit=True,
             cftrack_reference_not_qualified=True,
@@ -132,6 +161,8 @@ def main():
         ),
     )
     results, partial_raw = [], {}
+    forecast_nn_calls = 0
+    forecast_native_steps = 0
     counts = {"controls": 0, "native_steps": 0}
 
     def retain_partial():
@@ -239,6 +270,70 @@ def main():
             raise ValueError("gain switch or history install modified physical state or ball cache")
         trace_path = a.output / f"entry{entry}.npz"
         np.savez_compressed(trace_path, **{k: np.concatenate(v) for k, v in partial_raw.items()})
+        private_forecasts = []
+        if forecast_enabled:
+            original_hash = cftrack_state_hash(policy)
+            for arm in ("measured_history", "zero_history"):
+                branch_player = player
+                if arm == "zero_history":
+                    branch_player = copy.copy(player)
+                    branch_player.policy = copy_cftrack_policy(policy)
+                    branch_player.policy.obs_history_buffer.fill(0)
+                    branch_player.policy.action.fill(0)
+                    branch_player.measured_history_installed = False
+                forecaster = SharedCFtrackForecaster(
+                    branch_player,
+                    expected_policy_type=OmniContact,
+                    expected_model_hash=compiled_model_hash(model),
+                    native_step_budget=1000,
+                )
+                future = forecaster.forecast(controls=100)
+                counters = forecaster.counters()
+                forecast_nn_calls += counters["future_nn_calls"]
+                forecast_native_steps += counters["integrated_native_steps"]
+                path = a.output / f"entry{entry}-{arm}.npz"
+                np.savez_compressed(
+                    path, **{k: v for k, v in future.items() if isinstance(v, np.ndarray)}
+                )
+                summary = {k: v for k, v in future.items() if not isinstance(v, np.ndarray)}
+                summary.update(
+                    arm=arm,
+                    counters=counters,
+                    minimum_root_height_m=(
+                        float(np.min(future["qpos"][:, lo.rq + 2]))
+                        if future["native_steps"]
+                        else None
+                    ),
+                    ball_displacement_m=(
+                        (
+                            future["qpos"][-1, lo.bq : lo.bq + 3] - data.qpos[lo.bq : lo.bq + 3]
+                        ).tolist()
+                        if future["native_steps"]
+                        else None
+                    ),
+                    first_target_change_rad=(
+                        float(
+                            np.max(
+                                np.abs(future["joint_targets"][0] - old["joint_targets"][entry - 1])
+                            )
+                        )
+                        if future["controls"]
+                        else None
+                    ),
+                    first_torque_change_nm=(
+                        float(np.max(np.abs(future["torque"][0] - old["torque"][entry * 10 - 1])))
+                        if future["native_steps"]
+                        else None
+                    ),
+                    artifact=dict(path=path.name, hash=digest(path)),
+                )
+                private_forecasts.append(summary)
+                write_once(a.output / f"entry{entry}-{arm}.json", summary)
+            if cftrack_state_hash(policy) != original_hash:
+                raise ValueError("private futures changed the installed source policy")
+            actual_after = snapshot(data)
+            if any(not np.array_equal(before[k], actual_after[k]) for k in before):
+                raise ValueError("private futures changed actual physical state")
         results.append(
             dict(
                 entry_control=entry,
@@ -247,6 +342,7 @@ def main():
                 physics_unchanged=True,
                 pd_switch_physics_unchanged=switch["physics_unchanged"],
                 history_receipt=receipt,
+                private_forecasts=private_forecasts,
                 artifact=dict(path=trace_path.name, hash=digest(trace_path)),
             )
         )
@@ -255,7 +351,11 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="LIVE_CFTRACK_HISTORY_INSTALLED_NOT_EXECUTED",
+            status=(
+                "CFTRACK_MEASURED_HISTORY_PRIVATE_FUTURES_RECORDED_NOT_PROMOTED"
+                if forecast_enabled
+                else "LIVE_CFTRACK_HISTORY_INSTALLED_NOT_EXECUTED"
+            ),
             source_head=a.expected_head,
             source_hash=a.source_hash,
             history_hash=a.history_hash,
@@ -264,7 +364,8 @@ def main():
             records=results,
             **counts,
             velocity_neural_calls=139,
-            cftrack_neural_calls=0,
+            cftrack_neural_calls=forecast_nn_calls,
+            private_forecast_native_steps=forecast_native_steps,
             task_reference_qualified=False,
             hardware_authorized=False,
             promotion_authorized=False,
