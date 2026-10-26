@@ -61,6 +61,7 @@ def test_cold_trial_records_real_native_feedback_with_fresh_fixture(tmp_path):
     from test_shared_native_motor_world import source_xml
 
     from rosclaw_soccer.rsi.cftrack_torque_intent import CFtrackTorqueIntentPlan
+    from rosclaw_soccer.rsi.cftrack_torque_replay import replay_torque_trial
     from rosclaw_soccer.rsi.cftrack_torque_trial import run_cold_torque_trial
     from rosclaw_soccer.rsi.omnicontact_policy_copy import cftrack_state_hash
     from rosclaw_soccer.rsi.shared_native_motor_world import (
@@ -101,3 +102,35 @@ def test_cold_trial_records_real_native_feedback_with_fresh_fixture(tmp_path):
     assert raw["qpos"].shape == (1600, model.nq)
     assert raw["neural_obs"].shape == (160, 1, 1244)
     assert policy.ort_session is original_session
+    replay_data = mujoco.MjData(model)
+    replay_data.qpos[:] = raw["initial_qpos"]
+    replay_data.qvel[:] = raw["initial_qvel"]
+    mujoco.mj_forward(model, replay_data)
+    verified = replay_torque_trial(
+        model,
+        replay_data,
+        player.layout,
+        raw,
+        plan,
+        kp=world.parameters["a/"].stiffness,
+        kd=world.parameters["a/"].damping,
+        effort=world.parameters["a/"].effort,
+    )
+    assert verified["values_exact"] and verified["native_steps"] == 1600
+    broken = dict(raw, parent_torque=raw["parent_torque"].copy())
+    broken["parent_torque"][0, 0] += 1
+    replay_data = mujoco.MjData(model)
+    replay_data.qpos[:] = raw["initial_qpos"]
+    replay_data.qvel[:] = raw["initial_qvel"]
+    mujoco.mj_forward(model, replay_data)
+    with pytest.raises(ValueError, match="parent PD mismatch"):
+        replay_torque_trial(
+            model,
+            replay_data,
+            player.layout,
+            broken,
+            plan,
+            kp=world.parameters["a/"].stiffness,
+            kd=world.parameters["a/"].damping,
+            effort=world.parameters["a/"].effort,
+        )
