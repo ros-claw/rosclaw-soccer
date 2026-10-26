@@ -46,10 +46,26 @@ def test_independent_scratch_nn_inputs_and_both_target_streams_rebuild(tmp_path,
     data.qpos[:] = reader.world.data.qpos
     data.qvel[:] = reader.world.data.qvel
     original = reader.policy.ort_session
+    observed = []
+
+    def audit(policy, observation):
+        assert policy is reader.policy
+        observed.append(observation.copy())
+
     assert (
-        verify_cftrack_trace(reader.policy, data, reader.layout, raw, controls=4, motor_plan=plan)
+        verify_cftrack_trace(
+            reader.policy,
+            data,
+            reader.layout,
+            raw,
+            controls=4,
+            motor_plan=plan,
+            proprioception_audit=audit,
+        )
         == 4
     )
+    assert len(observed) == 4
+    np.testing.assert_array_equal(np.asarray(observed), raw["neural_obs"])
     assert (
         data.time == 0 and reader.world.native_steps == 0 and reader.policy.ort_session is original
     )

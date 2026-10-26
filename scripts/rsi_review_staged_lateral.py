@@ -15,6 +15,7 @@ def main():
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--held", action="store_true")
+    p.add_argument("--audit-history-codec", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -77,6 +78,7 @@ def main():
             saved_targets_only_for_verification=True,
             partial_stages_not_complete_h300=True,
             held_reference_controls=20 if a.held else 0,
+            history_proprioception_audit=a.audit_history_codec,
             neural_optimizer_updates=0,
             new_independent_scenarios=0,
             hardware_authorized=False,
@@ -215,7 +217,16 @@ def main():
         for key in ("waypoint_xy", "reference_ball_xyz", "actual_goal_xyz"):
             guard_data[key] = tuple(guard_data[key])
         guard = CFtrackStageBoundary(**guard_data)
-        calls += verify_cftrack_trace(policy, data, lo, raw, controls=controls)
+        history_audit = None
+        if a.audit_history_codec:
+            from rosclaw_soccer.rsi.cftrack_history_observation import (
+                audit_current_ball_observation,
+            )
+
+            history_audit = audit_current_ball_observation
+        calls += verify_cftrack_trace(
+            policy, data, lo, raw, controls=controls, proprioception_audit=history_audit
+        )
         replay = replay_torque_trial(
             model,
             initial(velocity),
@@ -258,6 +269,7 @@ def main():
             case=row["case"],
             controls=controls,
             original_nn_input_output_and_target_exact=True,
+            history_proprioception_audited=a.audit_history_codec,
             replay=replay,
             outcome=outcome,
             verified_previous_outcome=(
@@ -289,6 +301,7 @@ def main():
             records=records,
             new_neural_calls=calls,
             new_native_steps=steps,
+            history_proprioception_audited=a.audit_history_codec,
             new_independent_scenarios=0,
             reference_boundary_and_C2_math_shared=True,
             neural_optimizer_updates=0,

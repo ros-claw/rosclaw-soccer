@@ -4,6 +4,7 @@ The caller pins the source and regenerates the initial reference independently.
 Saved targets are evidence to compare, never control commands for an actor.
 """
 
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -21,6 +22,7 @@ def verify_cftrack_trace(
     *,
     controls: int,
     motor_plan: CFtrackMotorResidualPlan | None = None,
+    proprioception_audit: Callable[[Any, np.ndarray], None] | None = None,
 ) -> int:
     import mujoco
     import onnxruntime as ort
@@ -74,6 +76,8 @@ def verify_cftrack_trace(
                 or not np.array_equal(inputs["time_step"], np.zeros((1, 1), np.float32))
             ):
                 raise ValueError("original proprioception/reference/history input does not rebuild")
+            if proprioception_audit is not None:
+                proprioception_audit(policy, inputs["obs"])
             result = original.run(outputs, inputs)
             if not np.array_equal(result[0], raw["neural_actions"][calls]):
                 raise ValueError("original NN output differs")
