@@ -14,6 +14,7 @@ def main():
     p.add_argument("--external-source", type=Path, required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--velocity-intercept", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -35,11 +36,19 @@ def main():
         ("left", (0.0, 0.1, 0.0)),
         ("right", (0.0, -0.1, 0.0)),
     )
-    expected = [
-        (name, arm, vel) for name, vel in cases for arm in ("parent", "frozen-nominal-torque")
-    ]
+    arms = (
+        ("intercept-reference-only", "intercept-plus-fixed-nominal-torque")
+        if a.velocity_intercept
+        else ("parent", "frozen-nominal-torque")
+    )
+    expected_status = (
+        "CFTRACK_VELOCITY_INTERCEPT_DEVELOPMENT_RECORDED"
+        if a.velocity_intercept
+        else "CFTRACK_FROZEN_TORQUE_MOVING_BALL_EXPLORATORY_RECORDED"
+    )
+    expected = [(name, arm, vel) for name, vel in cases for arm in arms]
     if (
-        source["status"] != "CFTRACK_FROZEN_TORQUE_MOVING_BALL_EXPLORATORY_RECORDED"
+        source["status"] != expected_status
         or [(r["case"], r["arm"], tuple(r["ball_velocity_m_s"])) for r in source["records"]]
         != expected
         or source["new_neural_calls"] > 2400
@@ -73,6 +82,7 @@ def main():
             envelope_math_shared=True,
             old_targets_for_verification_only=True,
             new_independent_scenarios=0,
+            velocity_intercept_reference_math_shared=a.velocity_intercept,
             neural_optimizer_updates=0,
             hardware_authorized=False,
         ),
@@ -87,9 +97,14 @@ def main():
     from rosclaw_soccer.rsi.cftrack_torque_replay import replay_torque_trial
     from rosclaw_soccer.rsi.cftrack_torque_trial import complete_torque_trial
     from rosclaw_soccer.rsi.cftrack_trace_readback import verify_cftrack_trace
+    from rosclaw_soccer.rsi.cftrack_velocity_intercept import condition_velocity_intercept
     from rosclaw_soccer.rsi.first_touch_outcome import label_first_touch, outcome_contract
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.omnicontact_policy_copy import cftrack_state_hash, copy_cftrack_policy
+    from rosclaw_soccer.rsi.shared_native_motor_world import (
+        NativePDParameters,
+        SharedNativeMotorWorld,
+    )
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
     from rosclaw_soccer.rsi.shared_omnicontact_player import SharedOmniContactPlayer
     from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
@@ -167,7 +182,25 @@ def main():
             raw = {key: saved[key].copy() for key in saved.files}
         data = initial(velocity)
         policy = copy_cftrack_policy(prototype)
-        reference(policy, data)
+        if a.velocity_intercept:
+            world = SharedNativeMotorWorld(
+                model,
+                data,
+                players={"a/": NativePDParameters(kp, kd, effort)},
+                ball_body_name="soccer_ball",
+            )
+            player = SharedOmniContactPlayer(
+                world,
+                "a/",
+                policy,
+                expected_policy_type=type(prototype),
+                goal=np.array([5.0, 0.0, 0.11]),
+            )
+            receipt = condition_velocity_intercept(player)
+            if hash_json(receipt) != hash_json(source_row["reference"]):
+                raise ValueError("independently regenerated privileged reference differs")
+        else:
+            reference(policy, data)
         plan_data = dict(source_row["plan"])
         plan_data["fraction_effort_hg"] = tuple(plan_data["fraction_effort_hg"])
         plan = CFtrackTorqueIntentPlan(**plan_data)
@@ -220,15 +253,22 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="CFTRACK_MOVING_BALL_ALL8_NN_AND_MANUAL_NATIVE_EXACT"
+            status=(
+                "CFTRACK_INTERCEPT_ALL8_NN_AND_MANUAL_NATIVE_EXACT"
+                if a.velocity_intercept
+                else "CFTRACK_MOVING_BALL_ALL8_NN_AND_MANUAL_NATIVE_EXACT"
+            )
             if len(reviewed) == 8 and calls == 2400 and steps == 24000
-            else "CFTRACK_MOVING_BALL_PARTIAL_REVIEW_NOT_QUALIFIED",
+            else "CFTRACK_PAIRED_MOVING_BALL_PARTIAL_REVIEW_NOT_QUALIFIED",
             source_head=a.expected_head,
             source_hash=a.source_hash,
             input_file_hashes=pins,
             records=records,
             parent_passes=sum(p[0]["outcome"]["task_pass"] for p in pairs),
             candidate_passes=sum(p[1]["outcome"]["task_pass"] for p in pairs),
+            first_arm=arms[0],
+            second_arm=arms[1],
+            velocity_intercept_reference_math_shared=a.velocity_intercept,
             new_neural_calls=calls,
             new_native_steps=steps,
             new_independent_scenarios=0,
