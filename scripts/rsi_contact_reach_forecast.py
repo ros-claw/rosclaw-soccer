@@ -42,6 +42,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-head", required=True)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--exclude-right-ankle-roll-after-rejection", action="store_true")
     args = parser.parse_args()
     clean(args.expected_head)
     source_dir = ROOT / "rsi-cftrack-predicted-ball-h300-20261027"
@@ -53,6 +54,18 @@ def main():
         or digest(audit_path) != AUDIT_HASH
     ):
         raise ValueError("unused output and exact completed source and independent review required")
+    rejection = ROOT / "rsi-contact-reach-forecast-20261027/complete.json"
+    if args.exclude_right_ankle_roll_after_rejection:
+        if (
+            digest(rejection)
+            != "sha256:e74da7e3dbad9535e3698d66fab43d482c5ce6bd0107dac099197433496d567a"
+        ):
+            raise ValueError("exact earlier physical-limit rejection required")
+        rejected = json.loads(rejection.read_text())["records"]["candidate"]["runtime_failure"]
+        if rejected["type"] != "MotorTargetRejected" or rejected["target_rejection"][
+            "violating_hg_indices"
+        ] != [11]:
+            raise ValueError("right ankle roll rejection required")
     source = json.loads(source_path.read_text())
     if source["status"] != "CFTRACK_PREDICTIVE_BALL_H300_PAIRED_NOT_PROMOTED":
         raise ValueError("expected failed predictive source required")
@@ -100,6 +113,7 @@ def main():
             experiment="one damped Jacobian candidate against same-state parent",
             actual_prefix_controls=140,
             candidate_count=1,
+            excluded_hg_indices=[11] if args.exclude_right_ankle_roll_after_rejection else [],
             forecast_controls_per_arm=160,
             native_step_budget=4600,
             damping=0.02,
@@ -222,11 +236,12 @@ def main():
     gap, foot, points = min(candidates, key=lambda x: x[0])
     jac = np.zeros((3, model.nv))
     mujoco.mj_jac(model, scratch, jac, None, points[3:], model.geom_bodyid[foot])
+    active = np.arange(6, 11 if args.exclude_right_ankle_roll_after_rejection else 12)
     proposal = bounded_contact_reach(
-        jac[:, lo.vi[6:12]], points[:3] - points[3:], damping=0.02, max_joint_delta=0.18
+        jac[:, lo.vi[active]], points[:3] - points[3:], damping=0.02, max_joint_delta=0.18
     )
     delta = np.zeros(29)
-    delta[6:12] = proposal.delta
+    delta[active] = proposal.delta
     plan = CFtrackMotorResidualPlan(
         origin_counter=83,
         start_control=83,
@@ -279,7 +294,8 @@ def main():
             witness_points=points.tolist(),
             raw_delta=proposal.raw_delta.tolist(),
             delta=proposal.delta.tolist(),
-            jacobian=jac[:, lo.vi[6:12]].tolist(),
+            active_hg_indices=active.tolist(),
+            jacobian=jac[:, lo.vi[active]].tolist(),
             predicted_linear_displacement=proposal.predicted_displacement.tolist(),
             records=records,
             counters=forecaster.counters(),
