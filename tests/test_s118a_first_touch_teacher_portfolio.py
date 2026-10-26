@@ -98,3 +98,19 @@ def test_motiondecode_audit_rejects_joint_header_drift(tmp_path: Path) -> None:
             selected_per_category_and_foot=1,
             minimum_total_clips=7,
         )
+
+
+def test_motiondecode_audit_rejects_identical_content_in_retention(tmp_path: Path) -> None:
+    root = _dataset(tmp_path)
+    train = next((root / "extracted_s118" / "3.3.3.Football").rglob("*.csv"))
+    for index in range(10000):
+        retention = train.parent / f"duplicate_{index:05d}.csv"
+        if portfolio._split_for_path(retention.relative_to(root).as_posix()) == "retention":  # noqa: SLF001
+            break
+    else:
+        pytest.fail("could not construct retention fixture")
+    retention.write_bytes(train.read_bytes())
+    with pytest.raises(ValueError, match="identical MotionDecode source content crosses"):
+        portfolio.audit_motiondecode_football(
+            root, selected_per_category_and_foot=1, minimum_total_clips=7
+        )

@@ -249,6 +249,11 @@ def audit_motiondecode_football(
         raise ValueError("MotionDecode football extraction is incomplete")
     if len({clip.relative_path for clip in clips}) != len(clips):
         raise ValueError("MotionDecode football inventory contains duplicate paths")
+    split_by_hash: dict[str, str] = {}
+    for clip in clips:
+        previous = split_by_hash.setdefault(clip.source_hash, clip.split)
+        if previous != clip.split:
+            raise ValueError("identical MotionDecode source content crosses train/retention splits")
 
     selected: list[FirstTouchStyleTeacher] = []
     for category in sorted(_RELEVANT_CATEGORIES):
@@ -292,6 +297,9 @@ def audit_motiondecode_football(
         "category_counts": category_counts,
         "split_counts": split_counts,
         "split_rule": "sha256(relative_path)[0] % 5 == 0 -> retention",
+        "exact_content_cross_split_checked": True,
+        "near_duplicate_cross_split_checked": False,
+        "source_independence_proven": False,
         "retention_metrics_accessed": False,
         "inventory_hash": hash_json(inventory),
         "selected_style_teachers": [asdict(item) for item in selected],
