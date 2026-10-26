@@ -13,6 +13,9 @@ def main():
     p.add_argument("--scene", type=Path, required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--provisional", action="store_true")
+    p.add_argument("--control", type=Path)
+    p.add_argument("--control-review", type=Path)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import digest
@@ -25,7 +28,12 @@ def main():
         raise ValueError("unused independent audit and exact static source required")
     source = json.loads(complete.read_text())
     if (
-        source["status"] != "REFERENCE_SUPPORT_IK_TWO_STATIC_POSES_RECORDED_NOT_PHYSICS"
+        source["status"]
+        != (
+            "PROVISIONAL_PRIOR_SUPPORT_TWO_STATIC_POSES_RECORDED_NOT_PHYSICS"
+            if a.provisional
+            else "REFERENCE_SUPPORT_IK_TWO_STATIC_POSES_RECORDED_NOT_PHYSICS"
+        )
         or [(r["source_file"], r["source_hash"]) for r in source["records"]] != list(CASES)
         or source["model_hash"] != MODEL_HASH
         or source["native_steps"] != 0
@@ -34,6 +42,25 @@ def main():
         or digest(a.scene) != source["scene_hash"]
     ):
         raise ValueError("exact two-source static fit and scene required")
+    if a.provisional:
+        if (
+            a.control is None
+            or a.control_review is None
+            or a.control.is_symlink()
+            or a.control_review.is_symlink()
+            or digest(a.control) != source["control_hash"]
+            or digest(a.control_review) != source["control_review_hash"]
+        ):
+            raise ValueError("exact provisional negative control and independent review required")
+        control = json.loads(a.control.read_text())
+        previous_review = json.loads(a.control_review.read_text())
+        if (
+            previous_review["status"]
+            != "REFERENCE_SUPPORT_IK_INDEPENDENT_DISTANCE_READBACK_EXACT_NOT_PHYSICS"
+            or previous_review["source_hash"] != source["control_hash"]
+            or any(row["result"]["reference_geometry_feasible"] for row in control["records"])
+        ):
+            raise ValueError("independently audited negative control required")
     paths = [(a.dataset / name, expected) for name, expected in CASES]
     if any(path.is_symlink() or digest(path) != expected for path, expected in paths):
         raise ValueError("exact source data required")
@@ -41,6 +68,10 @@ def main():
     import numpy as np
 
     from rosclaw_soccer.rsi.candidate_motion23_mapping import candidate_map_motion23
+    from rosclaw_soccer.rsi.reference_contact_diagnostic import (
+        provisional_prior_support,
+        reference_ankle_positions,
+    )
     from rosclaw_soccer.rsi.reference_support_geometry import support_distances
     from rosclaw_soccer.rsi.reference_support_ik_audit import audit_support_candidate
     from rosclaw_soccer.rsi.restricted_motion_pickle import read_motion
@@ -64,6 +95,7 @@ def main():
             selection_and_mapping_math_shared=True,
             candidate_gap_reader="mujoco.mj_geomDistance",
             no_optimizer_replayed=True,
+            provisional_support_rule_shared=a.provisional,
             native_steps=0,
             neural_optimizer_updates=0,
             hardware_authorized=False,
@@ -78,11 +110,33 @@ def main():
             raise ValueError("source claimed double support required")
         scores = np.where(labels.all(axis=1), np.abs(gaps[:, 0] - gaps[:, 1]), -1.0)
         frame = int(np.argmax(scores))
-        if (
-            frame != source_row["frame"]
-            or float(scores[frame]) != source_row["maximum_double_support_gap_difference_m"]
+        if frame != source_row["frame"] or (
+            not a.provisional
+            and float(scores[frame]) != source_row["maximum_double_support_gap_difference_m"]
         ):
             raise ValueError("source-selected static frame does not reproduce")
+        chosen = labels[frame]
+        if a.provisional:
+            if (
+                source_row["original_claimed_contacts"] != labels[frame].astype(float).tolist()
+                or source_row["negative_control_geometry_feasible"] is not False
+            ):
+                raise ValueError("original claimed labels and failed control must be preserved")
+            ankles = reference_ankle_positions(model, fields, expected_model_hash=MODEL_HASH)
+            support = provisional_prior_support(
+                ankles, labels, frame=frame, fps=float(fields["fps"])
+            )
+            serial = {k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in support.items()}
+            if serial != source_row["provisional_support"]:
+                raise ValueError("provisional support decision does not reproduce")
+            chosen = support["provisional_mask"]
+            if support["abstained"]:
+                if source_row["result"] is not None:
+                    raise ValueError("abstention cannot produce a reference candidate")
+                row = dict(source_file=path.name, source_hash=expected, frame=frame, abstained=True)
+                rows.append(row)
+                write_once(a.output / (path.stem + ".json"), row)
+                continue
         mapped = candidate_map_motion23(fields["dof"], fields["root_rot"])
         source_root = np.r_[
             fields["root_trans_offset"][frame], mapped["root_rot_wxyz"][frame]
@@ -95,7 +149,7 @@ def main():
             source_joints,
             np.array(result["root_pose_wxyz"], np.float64),
             np.array(result["joints_hg29"], np.float64),
-            labels[frame],
+            chosen,
             expected_model_hash=MODEL_HASH,
             max_claimed_ankle_xy_change_m=result.get("claimed_ankle_xy_limit_m"),
         )
@@ -133,15 +187,25 @@ def main():
         print(json.dumps(row), flush=True)
     if digest(a.scene) != source["scene_hash"] or any(digest(path) != h for path, h in paths):
         raise ValueError("source data or scene changed during audit")
+    if a.provisional and (
+        digest(a.control) != source["control_hash"]
+        or digest(a.control_review) != source["control_review_hash"]
+    ):
+        raise ValueError("negative control changed during audit")
     clean(a.expected_head)
     write_once(
         a.output / "complete.json",
         dict(
-            status="REFERENCE_SUPPORT_IK_INDEPENDENT_DISTANCE_READBACK_EXACT_NOT_PHYSICS",
+            status=(
+                "PROVISIONAL_SUPPORT_INDEPENDENT_DISTANCE_READBACK_EXACT_NOT_PHYSICS"
+                if a.provisional
+                else "REFERENCE_SUPPORT_IK_INDEPENDENT_DISTANCE_READBACK_EXACT_NOT_PHYSICS"
+            ),
             source_head=a.expected_head,
             source_hash=a.source_hash,
             records=rows,
             selection_and_mapping_math_shared=True,
+            provisional_support_rule_shared=a.provisional,
             optimizer_replayed=False,
             native_steps=0,
             neural_optimizer_updates=0,
