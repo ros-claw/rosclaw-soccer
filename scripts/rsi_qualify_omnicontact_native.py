@@ -19,6 +19,7 @@ def main():
     p.add_argument("--body-source-hash", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--direct-approach-reference", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -81,6 +82,7 @@ def main():
             original_external_scene_not_used=True,
             policy="kick_50k.onnx",
             reference="current_initial_body_CFgen_kickball",
+            direct_approach_reference=a.direct_approach_reference,
             intended_scope="interface_and_single_native_baseline_not_generalized_teacher",
             license_commercial_publicity_authorized=False,
             hardware_authorized=False,
@@ -167,10 +169,17 @@ def main():
     policy.ort_session = CaptureSession()
     rows, targets, errors = [], [], []
     failure = None
+    reference_conditioning = None
     try:
         player = SharedOmniContactPlayer(
             world, "a/", policy, expected_policy_type=OmniContact, goal=np.array([5.0, 0.0, 0.11])
         )
+        if a.direct_approach_reference:
+            from rosclaw_soccer.rsi.cftrack_direct_approach import condition_direct_kick_approach
+
+            reference_conditioning = condition_direct_kick_approach(policy)
+            world._require_current_boundary()
+            write_once(a.output / "before-actual-reference.json", reference_conditioning)
         for _ in range(600):
             target, _ = player.propose()
             row = world.advance({"a/": target})
@@ -229,6 +238,7 @@ def main():
             input_file_hashes=pins,
             external_head=head,
             runtime_failure=failure,
+            reference_conditioning=reference_conditioning,
             controls=world.control_steps,
             native_steps=world.native_steps,
             new_neural_calls=len(captured_obs),

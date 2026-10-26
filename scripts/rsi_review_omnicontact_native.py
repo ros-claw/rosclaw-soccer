@@ -130,6 +130,14 @@ def main():
     SharedOmniContactPlayer._observe(view)
     policy.goal_pos_override = np.array([5.0, 0.0, 0.11], np.float32)
     policy.enter()
+    if report.get("reference_conditioning") is not None:
+        from rosclaw_soccer.rsi.cftrack_direct_approach import condition_direct_kick_approach
+        from rosclaw_soccer.sim.contracts import hash_json
+
+        if hash_json(condition_direct_kick_approach(policy)) != hash_json(
+            report["reference_conditioning"]
+        ):
+            raise ValueError("current-state direct reference does not regenerate")
     original_session = policy.ort_session
     calls = []
 
