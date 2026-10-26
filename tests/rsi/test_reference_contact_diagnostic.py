@@ -4,6 +4,7 @@ from test_candidate_body23_comparison import _models
 
 from rosclaw_soccer.rsi.reference_contact_diagnostic import (
     contact_label_motion_diagnostic,
+    provisional_prior_support,
     reference_ankle_positions,
 )
 from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
@@ -44,3 +45,25 @@ def test_ankles_are_computed_from_scratch_named_body_kinematics():
     np.testing.assert_allclose(ankles[:, 0, 0], [0, 0.1, 0.2], atol=1e-12)
     with pytest.raises(ValueError):
         reference_ankle_positions(model, fields, expected_model_hash="sha256:" + "0" * 64)
+
+
+def test_provisional_support_uses_only_prior_labels_and_velocity():
+    positions = np.zeros((5, 2, 3), np.float64)
+    positions[2, 1, 0] = 0.1
+    labels = np.array([[True, False], [True, False], [True, True], [False, False], [False, False]])
+    result = provisional_prior_support(positions, labels, frame=2, fps=30.0)
+    np.testing.assert_array_equal(result["provisional_mask"], [True, False])
+    assert result["source_labels_changed"] is False
+    assert result["actual_contact_proven"] is False
+    assert result["future_frames_used"] is False
+    positions[3:] = np.nan
+    again = provisional_prior_support(positions, labels, frame=2, fps=30.0)
+    np.testing.assert_array_equal(again["provisional_mask"], result["provisional_mask"])
+
+
+def test_provisional_support_abstains_if_no_stable_foot():
+    pos = np.zeros((3, 2, 3), np.float64)
+    labels = np.array([[True, False], [False, True], [True, True]])
+    result = provisional_prior_support(pos, labels, frame=2, fps=30.0)
+    assert result["abstained"] is True
+    assert not result["provisional_mask"].any()

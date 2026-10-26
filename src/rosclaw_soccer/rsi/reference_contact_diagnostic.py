@@ -91,3 +91,50 @@ def contact_label_motion_diagnostic(
         physical_execution_qualified=False,
         hardware_authorized=False,
     )
+
+
+def provisional_prior_support(
+    ankle_positions: np.ndarray,
+    claimed_contacts: np.ndarray,
+    *,
+    frame: int,
+    fps: float,
+) -> dict[str, Any]:
+    """Causal research subset: three prior labels and slow measured reference ankle.
+
+    This never changes source labels or asserts contact truth; an empty mask
+    means abstention. The caller still must check all feet for penetration.
+    """
+    if (
+        type(ankle_positions) is not np.ndarray
+        or ankle_positions.ndim != 3
+        or ankle_positions.shape[1:] != (2, 3)
+        or not 3 <= len(ankle_positions) <= 60000
+        or ankle_positions.dtype.kind != "f"
+        or type(claimed_contacts) is not np.ndarray
+        or claimed_contacts.shape != ankle_positions.shape[:2]
+        or claimed_contacts.dtype != np.bool_
+        or type(frame) is not int
+        or not 2 <= frame < len(ankle_positions)
+        or not np.isfinite(ankle_positions[frame - 1 : frame + 1]).all()
+        or type(fps) is not float
+        or not np.isfinite(fps)
+        or not 1 <= fps <= 240
+    ):
+        raise ValueError("finite reference, explicit causal frame and source labels required")
+    speed = np.linalg.norm(
+        (ankle_positions[frame, :, :2] - ankle_positions[frame - 1, :, :2]) * fps, axis=1
+    )
+    selected = claimed_contacts[frame - 2 : frame + 1].all(axis=0) & (speed <= 0.3)
+    return dict(
+        provisional_mask=selected.copy(),
+        prior_three_labels=claimed_contacts[frame - 2 : frame + 1].copy(),
+        backward_ankle_xy_speed_m_s=speed.copy(),
+        reference_speed_threshold_m_s=0.3,
+        abstained=not bool(selected.any()),
+        source_labels_changed=False,
+        actual_contact_proven=False,
+        future_frames_used=False,
+        physical_execution_qualified=False,
+        hardware_authorized=False,
+    )
