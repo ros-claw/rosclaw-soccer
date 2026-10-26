@@ -11,6 +11,7 @@ def main():
         parser.add_argument("--" + name, type=Path, required=True)
     for name in ("composed-hash", "reference-hash", "expected-head"):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--anticipatory-velocity", action="store_true")
     args = parser.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -56,6 +57,7 @@ def main():
     from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
     from rosclaw_soccer.rsi.walk_kick_teacher_episode import evaluate_episode
 
+    plan = BallClearancePlan(anticipatory_velocity=args.anticipatory_velocity)
     args.output.mkdir()
     write_once(
         args.output / "declaration.json",
@@ -68,6 +70,8 @@ def main():
             forecast_native_step_ceiling=1280,
             future_nn_call_ceiling=128,
             activation_clearance_m=0.08,
+            anticipatory_velocity=args.anticipatory_velocity,
+            kinematic_extrapolation_sec=0.16 if args.anticipatory_velocity else 0.0,
             target_offset_limit_rad=0.06,
             requested_offset_slew_per_control_rad=0.008,
             active_controls=128,
@@ -84,7 +88,7 @@ def main():
     class QualificationPlayer(SharedRoboNaldoPlayer):
         def __init__(self, *a, **kw):
             super().__init__(*a, **kw)
-            self.controller = BallClearanceController(self, BallClearancePlan())
+            self.controller = BallClearanceController(self, plan)
             self.forecaster = SharedNNForecaster(
                 self,
                 expected_policy_type=type(self.policy),
@@ -97,7 +101,7 @@ def main():
         def install_measured_entry(self, samples, *, reference_frame):
             receipt = super().install_measured_entry(samples, reference_frame=reference_frame)
             self.future = self.forecaster.forecast(
-                controls=128, before_proposal=True, clearance_plan=BallClearancePlan()
+                controls=128, before_proposal=True, clearance_plan=plan
             )
             path = args.output / "future.npz"
             np.savez_compressed(
@@ -159,6 +163,7 @@ def main():
         args.output / "complete.json",
         dict(
             status="MEASURED_CLEARANCE_G1_ACTUAL_NN_FUTURE_EXACT",
+            anticipatory_velocity=args.anticipatory_velocity,
             source_head=args.expected_head,
             input_file_hashes=pins,
             actual_record=row,

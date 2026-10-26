@@ -13,10 +13,10 @@ from rosclaw_soccer.rsi.synergy_forecast_kick_player import SynergyForecastKickP
 
 class ClearanceKickPlayer(SynergyForecastKickPlayer):
     forecast_controls = 128
+    clearance_plan = BallClearancePlan()
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self.clearance_plan = BallClearancePlan()
         self.clearance_controller = BallClearanceController(self, self.clearance_plan)
         self.clearance_forecaster = SharedNNForecaster(
             self,
@@ -87,3 +87,7 @@ class ClearanceKickPlayer(SynergyForecastKickPlayer):
             proposed_target=target.copy(),
             clearance_edit=edit,
         )
+
+
+class AnticipatoryClearanceKickPlayer(ClearanceKickPlayer):
+    clearance_plan = BallClearancePlan(anticipatory_velocity=True)

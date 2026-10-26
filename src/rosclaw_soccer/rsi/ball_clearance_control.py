@@ -18,10 +18,13 @@ from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
 @dataclass(frozen=True)
 class BallClearancePlan:
     activation_m: float = 0.08
+    anticipatory_velocity: bool = False
 
     def validate(self) -> None:
         if type(self.activation_m) is not float or self.activation_m != 0.08:
             raise ValueError("one preregistered 8cm clearance-feedback hypothesis required")
+        if type(self.anticipatory_velocity) is not bool:
+            raise ValueError("explicit measured-velocity anticipation switch required")
 
 
 def clearance_offset(
@@ -87,9 +90,16 @@ class BallClearanceController:
         if self.calls >= 128:
             return player.pending.copy(), dict(applied=False, inactive_after_bounded128=True)
         qpos = world.data.qpos.copy()
+        projected = qpos.copy()
+        if self.plan.anticipatory_velocity:
+            # 8 periods are the existing .06/.008 target-request ramp rounded
+            # up, NOT a searched prediction horizon. Kinematic extrapolation
+            # is a risk cue, never a dynamic rollout or a forced actual state.
+            mujoco.mj_integratePos(model, projected, world.data.qvel.copy(), 0.16)
         self.scratch.qpos[:] = qpos
         mujoco.mj_kinematics(model, self.scratch)
         distances, gradients = np.ones(2), np.zeros((2, 12))
+        risk_distances = np.ones(2)
         selected = []
         for side, group in enumerate(self.groups):
             geom = min(
@@ -98,13 +108,31 @@ class BallClearanceController:
             )
             distance = mujoco.mj_geomDistance(model, self.scratch, self.ball, geom, 1.0, None)
             distances[side] = distance
+            linearization = qpos
+            if self.plan.anticipatory_velocity:
+                self.scratch.qpos[:] = projected
+                mujoco.mj_kinematics(model, self.scratch)
+                ahead_geom = min(
+                    group,
+                    key=lambda g: mujoco.mj_geomDistance(
+                        model, self.scratch, self.ball, g, 1.0, None
+                    ),
+                )
+                ahead = mujoco.mj_geomDistance(
+                    model, self.scratch, self.ball, ahead_geom, 1.0, None
+                )
+                if ahead < distance:
+                    distance, geom, linearization = ahead, ahead_geom, projected
+                self.scratch.qpos[:] = qpos
+                mujoco.mj_kinematics(model, self.scratch)
+            risk_distances[side] = distance
             selected.append(geom)
             if distance >= self.plan.activation_m:
                 continue
             for axis, address in enumerate(player.layout.qi[:12]):
                 values = []
                 for sign in (-1, 1):
-                    self.scratch.qpos[:] = qpos
+                    self.scratch.qpos[:] = linearization
                     self.scratch.qpos[address] += sign * 1e-4
                     mujoco.mj_kinematics(model, self.scratch)
                     values.append(
@@ -114,13 +142,17 @@ class BallClearanceController:
             # Do not let one side's finite difference contaminate the next side.
             self.scratch.qpos[:] = qpos
             mujoco.mj_kinematics(model, self.scratch)
-        delta = clearance_offset(distances, gradients, self.previous)
+        delta = clearance_offset(risk_distances, gradients, self.previous)
         if self.calls >= 120:
             delta = self.previous + np.clip(-self.previous, -0.008, 0.008)
         receipt = dict(
             schema="soccer.measured_ball_clearance_target.v1",
             control_step=world.control_steps,
             distances_m=distances.tolist(),
+            decision_distances_m=risk_distances.tolist(),
+            anticipatory_velocity=self.plan.anticipatory_velocity,
+            kinematic_extrapolation_sec=0.16 if self.plan.anticipatory_velocity else 0.0,
+            extrapolation_is_not_physical_prediction=True,
             gradient_hg12=gradients.tolist(),
             selected_geometry=selected,
             previous_requested_offset=self.previous.tolist(),

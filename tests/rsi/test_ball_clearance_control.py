@@ -50,7 +50,8 @@ def test_no_implicit_hyperparameter_search():
         BallClearancePlan(0.12).validate()
 
 
-def test_closed_nn_clearance_future_matches_own_actual_targets_and_history(tmp_path):
+@pytest.mark.parametrize("anticipatory", [False, True])
+def test_closed_nn_clearance_future_matches_own_actual_targets_and_history(tmp_path, anticipatory):
     import xml.etree.ElementTree as ET
 
     root = ET.fromstring(source_xml())
@@ -67,12 +68,16 @@ def test_closed_nn_clearance_future_matches_own_actual_targets_and_history(tmp_p
     player.commit()
     before = policy_state_hash(player.policy)
     predicted = forecaster.forecast(
-        controls=4, before_proposal=True, clearance_plan=BallClearancePlan()
+        controls=4,
+        before_proposal=True,
+        clearance_plan=BallClearancePlan(anticipatory_velocity=anticipatory),
     )
     assert policy_state_hash(player.policy) == before
     assert predicted["measured_clearance_feedback"]
     assert any(e["applied"] for e in predicted["executed_target_edits"])
-    controller = BallClearanceController(player, BallClearancePlan())
+    controller = BallClearanceController(
+        player, BallClearancePlan(anticipatory_velocity=anticipatory)
+    )
     records, targets = [], []
     for _ in range(4):
         player.propose()
