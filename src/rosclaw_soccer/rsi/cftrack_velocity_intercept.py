@@ -54,7 +54,9 @@ def predict_initial_intercept(
     )
 
 
-def condition_velocity_intercept(player: SharedOmniContactPlayer) -> dict[str, Any]:
+def condition_velocity_intercept(
+    player: SharedOmniContactPlayer, *, reference_goal_offset_y_m: float = 0.0
+) -> dict[str, Any]:
     """Regenerate a cold reference once from a bounded predicted ball location."""
     from policy.omnicontact.CFgen_reference import (  # type: ignore[import-not-found]
         plan_cfgen_reference,
@@ -80,11 +82,15 @@ def condition_velocity_intercept(player: SharedOmniContactPlayer) -> dict[str, A
         or p.async_stage_thread is not None
         or np.any(p.obs_history_buffer)
         or np.any(p.action)
+        or type(reference_goal_offset_y_m) is not float
+        or not np.isfinite(reference_goal_offset_y_m)
+        or abs(reference_goal_offset_y_m) > 0.7
     ):
         raise ValueError("unexecuted private CFgen SIM policy required")
     s = p.state_cmd
     ball = np.asarray(s.ball_pos).copy()
     obj = np.asarray(s.obj_pos).copy()
+    actual_goal = np.asarray(p.goal_pos).copy()
     if not np.array_equal(ball, w.data.xpos[player.layout.ball]) or not np.array_equal(ball, obj):
         raise ValueError("actual observed current ball position required")
     velocity = w.data.qvel[player.layout.bv : player.layout.bv + 3].copy()
@@ -92,11 +98,13 @@ def condition_velocity_intercept(player: SharedOmniContactPlayer) -> dict[str, A
     old_policy = cftrack_state_hash(p)
     before_q, before_v, before_time = w.data.qpos.copy(), w.data.qvel.copy(), float(w.data.time)
     try:
-        if np.any(velocity):
+        if np.any(velocity) or reference_goal_offset_y_m:
             # Restricted to plan generation. The state is restored before
             # any inference or integration, including on exceptions.
             s.ball_pos = prediction.copy()
             s.obj_pos = prediction.copy()
+            p.goal_pos = actual_goal.copy()
+            p.goal_pos[1] += reference_goal_offset_y_m
             fk = p.kinematics.forward(s.q, s.base_pos, s.base_quat)
             plan_cfgen_reference(p, fk)
         direct = condition_direct_kick_approach(p)
@@ -106,6 +114,7 @@ def condition_velocity_intercept(player: SharedOmniContactPlayer) -> dict[str, A
     finally:
         s.ball_pos = ball
         s.obj_pos = obj
+        p.goal_pos = actual_goal
     try:
         w._require_current_boundary()
     except BaseException:
@@ -119,10 +128,11 @@ def condition_velocity_intercept(player: SharedOmniContactPlayer) -> dict[str, A
         or p.async_stage_thread is not None
         or not np.array_equal(s.ball_pos, ball)
         or not np.array_equal(s.obj_pos, obj)
+        or not np.array_equal(p.goal_pos, actual_goal)
     ):
         player.failed = True
         raise ValueError("actual body and measured observations must remain unchanged")
-    return dict(
+    receipt = dict(
         schema="soccer.cftrack.velocity_intercept_reference.v1",
         prediction=forecast,
         direct_approach=direct,
@@ -134,3 +144,10 @@ def condition_velocity_intercept(player: SharedOmniContactPlayer) -> dict[str, A
         neural_optimizer_updates=0,
         hardware_authorized=False,
     )
+    if reference_goal_offset_y_m:
+        receipt["reference_aim"] = dict(
+            planning_only_goal_offset_y_m=reference_goal_offset_y_m,
+            measured_task_goal_restored_before_inference=True,
+            h300_target_and_scoring_unchanged=True,
+        )
+    return receipt

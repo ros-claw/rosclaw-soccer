@@ -42,7 +42,10 @@ def test_lateral_and_backward_predictions_follow_measured_direction():
 
 
 @pytest.mark.parametrize("fail_plan", [False, True])
-def test_reference_planning_restores_measured_ball_before_return_or_failure(monkeypatch, fail_plan):
+@pytest.mark.parametrize("aim", [0.0, -0.4])
+def test_reference_planning_restores_measured_ball_before_return_or_failure(
+    monkeypatch, fail_plan, aim
+):
     import sys
     from types import ModuleType, SimpleNamespace
 
@@ -95,6 +98,7 @@ def test_reference_planning_restores_measured_ball_before_return_or_failure(monk
     def generate(p, fk):
         assert p.state_cmd.ball_pos[0] > actual[0]
         assert p.state_cmd.obj_pos[0] > actual[0]
+        assert p.goal_pos[1] == aim
         if fail_plan:
             raise RuntimeError("generator failed")
 
@@ -106,12 +110,13 @@ def test_reference_planning_restores_measured_ball_before_return_or_failure(monk
     monkeypatch.setattr(module, "condition_direct_kick_approach", lambda p: {"test": True})
     if fail_plan:
         with pytest.raises(RuntimeError, match="generator failed"):
-            module.condition_velocity_intercept(player)
+            module.condition_velocity_intercept(player, reference_goal_offset_y_m=aim)
         assert player.failed
     else:
-        receipt = module.condition_velocity_intercept(player)
+        receipt = module.condition_velocity_intercept(player, reference_goal_offset_y_m=aim)
         assert receipt["measured_ball_observations_restored_before_inference"]
         assert not player.failed
     np.testing.assert_array_equal(state.ball_pos, actual)
     np.testing.assert_array_equal(state.obj_pos, actual)
+    np.testing.assert_array_equal(policy.goal_pos, [5.0, 0.0, 0.11])
     assert data.time == 0.0 and world.native_steps == 0
