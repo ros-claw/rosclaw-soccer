@@ -61,6 +61,7 @@ def test_cold_trial_records_real_native_feedback_with_fresh_fixture(tmp_path, co
     from test_shared_cftrack_forecast import Policy, setup
     from test_shared_native_motor_world import source_xml
 
+    from rosclaw_soccer.rsi.cftrack_stage_boundary import CFtrackStageBoundary
     from rosclaw_soccer.rsi.cftrack_torque_intent import CFtrackTorqueIntentPlan
     from rosclaw_soccer.rsi.cftrack_torque_replay import replay_torque_trial
     from rosclaw_soccer.rsi.cftrack_torque_trial import run_cold_torque_trial
@@ -137,3 +138,35 @@ def test_cold_trial_records_real_native_feedback_with_fresh_fixture(tmp_path, co
             effort=world.parameters["a/"].effort,
             controls=controls,
         )
+    blocked_data = mujoco.MjData(model)
+    blocked_data.qpos[:] = raw["initial_qpos"]
+    blocked_data.qvel[:] = raw["initial_qvel"]
+    mujoco.mj_forward(model, blocked_data)
+    blocked_world = SharedNativeMotorWorld(
+        model, blocked_data, players={"a/": params}, ball_body_name="ball"
+    )
+    blocked_policy = Policy(old.policy.ort_session)
+    blocked_player = SharedOmniContactPlayer(
+        blocked_world,
+        "a/",
+        blocked_policy,
+        expected_policy_type=Policy,
+        goal=np.array([5.0, 0.0, 0.11]),
+    )
+    blocked_plan = CFtrackTorqueIntentPlan(
+        0,
+        24,
+        tuple(fractions),
+        hash_json(blocked_player.layout.profile()),
+        cftrack_state_hash(blocked_policy),
+    )
+    guard = CFtrackStageBoundary(
+        2, (0.15, 0.15), (1.0, 0.1728, 0.11), (5.0, 0.0, 0.11), 1.44, 0.001
+    )
+    _, blocked = run_cold_torque_trial(
+        blocked_player, blocked_plan, controls=controls, stage_boundary=guard
+    )
+    assert blocked["runtime_failure"]["type"] == "STAGE_BOUNDARY_NOT_READY"
+    assert blocked["controls"] == blocked["neural_calls"] == 2
+    assert blocked["native_steps"] == 20
+    assert not blocked["stage_boundary_receipt"]["ready"]

@@ -4,6 +4,7 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.rsi.cftrack_stage_boundary import CFtrackStageBoundary
 from rosclaw_soccer.rsi.cftrack_torque_intent import (
     CFtrackTorqueIntentPlan,
     CFtrackTorqueIntentPolicy,
@@ -53,7 +54,11 @@ class TorqueTrialCapture:
 
 
 def run_cold_torque_trial(
-    player: SharedOmniContactPlayer, plan: CFtrackTorqueIntentPlan, *, controls: int = 160
+    player: SharedOmniContactPlayer,
+    plan: CFtrackTorqueIntentPlan,
+    *,
+    controls: int = 160,
+    stage_boundary: CFtrackStageBoundary | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     w = player.world
     w._require_current_boundary()
@@ -62,6 +67,8 @@ def run_cold_torque_trial(
         or type(plan) is not CFtrackTorqueIntentPlan
         or type(controls) is not int
         or not 1 <= controls <= 300
+        or (stage_boundary is not None and type(stage_boundary) is not CFtrackStageBoundary)
+        or (stage_boundary is not None and not 1 <= stage_boundary.control < controls)
         or w.native_steps != 0
         or w.control_steps != 0
         or player.policy.counter_step != 0
@@ -91,8 +98,17 @@ def run_cold_torque_trial(
     targets = []
     decoded = []
     failure = None
+    stage_receipt = None
     try:
         for _ in range(controls):
+            if stage_boundary is not None and w.control_steps == stage_boundary.control:
+                stage_receipt = stage_boundary.check(w, player.layout)
+                if not stage_receipt["ready"]:
+                    failure = dict(
+                        type="STAGE_BOUNDARY_NOT_READY",
+                        message="actual stage geometry failed; no further controls",
+                    )
+                    break
             target, measured = player.propose()
             row = w.advance({player.prefix: target}, torque_layers={player.prefix: layer})
             rows.append(row)
@@ -139,4 +155,5 @@ def run_cold_torque_trial(
         measured_stop_guard_steps=policy.stop_guard_steps,
         incomplete_control_native_steps=w.native_steps - len(rows) * 10,
         actual_changed_torque_entries=int((raw["torque"] != raw["parent_torque"]).sum()),
+        stage_boundary_receipt=stage_receipt,
     )
