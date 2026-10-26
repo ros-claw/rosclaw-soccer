@@ -22,6 +22,7 @@ class CFtrackContactPlan:
     position_world: tuple[float, ...]
     quaternion_world: tuple[float, ...]
     donor_policy_hash: str
+    bounded_position_path: bool = False
 
 
 def _multiply(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -37,6 +38,7 @@ def condition_cftrack_contact_reference(policy: Any, plan: CFtrackContactPlan) -
         type(plan) is not CFtrackContactPlan
         or any(type(i) is not int or i < 0 for i in (plan.origin_counter, plan.start_frame))
         or type(plan.peak_control) is not int
+        or type(plan.bounded_position_path) is not bool
         or not 1 <= plan.peak_control < 48
         or plan.start_frame < plan.origin_counter
         or plan.origin_counter != policy.counter_step
@@ -80,6 +82,33 @@ def condition_cftrack_contact_reference(policy: Any, plan: CFtrackContactPlan) -
     w = fraction[:, :1]
     target_p, target_q = np.array(plan.position_world), np.array(plan.quaternion_world)
     new_p = old_p + w * (target_p - old_p)
+    position_certificate = None
+    if plan.bounded_position_path:
+        from rosclaw_soccer.physics.bounded_taskspace_reference import (
+            solve_bounded_taskspace_reference,
+        )
+
+        # Reserve a conservative rounding margin BEFORE solving, rather than
+        # relaxing the encoded-sample guard after a favorable experiment.
+        magnitude = max(
+            1.0,
+            float(abs(torso[start : start + 49]).max()) + 1.25,
+            float(abs(old_p).max()),
+            float(abs(target_p).max()),
+        )
+        encoding_position_margin = float(2 * np.sqrt(3) * np.finfo(pos.dtype).eps * magnitude)
+        new_p, position_certificate = solve_bounded_taskspace_reference(
+            old_p,
+            torso[start : start + 49].astype(np.float64),
+            target_p,
+            w * (target_p - old_p),
+            peak=peak,
+            dt=0.02,
+            speed_limit=3.0 - 2 * encoding_position_margin / 0.02,
+            workspace_radius=1.25 - encoding_position_margin,
+            floor_z=-0.05 + encoding_position_margin,
+        )
+        position_certificate["encoding_position_margin_m"] = float(encoding_position_margin)
     # Short-arc SO(3) interpolation respects quaternion double coverage.
     end = np.tile(target_q, (49, 1))
     end[(normalized @ target_q) < 0] *= -1
@@ -129,7 +158,7 @@ def condition_cftrack_contact_reference(policy: Any, plan: CFtrackContactPlan) -
     new_full_p[start : start + 49], new_full_q[start : start + 49] = encoded_p, encoded_q
     setattr(policy, key + "pos", new_full_p)
     setattr(policy, key + "quat", new_full_q)
-    return dict(
+    receipt = dict(
         schema="soccer.cftrack_absolute_ankle_pitch_reference.v1",
         origin_counter=plan.origin_counter,
         start_frame=start,
@@ -155,3 +184,7 @@ def condition_cftrack_contact_reference(policy: Any, plan: CFtrackContactPlan) -
         hardware_authorized=False,
         physically_qualified=False,
     )
+    if position_certificate is not None:
+        receipt["position_path_contract"] = "bounded_c2_vector_speed_v1"
+        receipt["position_path_certificate"] = position_certificate
+    return receipt

@@ -21,6 +21,8 @@ from rosclaw_soccer.rsi.shared_omnicontact_player import SharedOmniContactPlayer
 def generate_cftrack_contact_plan(
     player: SharedOmniContactPlayer,
     forecaster: SharedCFtrackForecaster,
+    *,
+    bounded_position_path: bool = False,
 ) -> tuple[CFtrackContactPlan | None, dict[str, Any], dict[str, Any]]:
     import mujoco
 
@@ -33,6 +35,7 @@ def generate_cftrack_contact_plan(
         or player.failed
         or player.pending is not None
         or player.boundary != world.control_steps
+        or type(bounded_position_path) is not bool
     ):
         raise ValueError("current own pre-proposal CFtrack player/forecaster required")
     before = cftrack_state_hash(player.policy)
@@ -102,6 +105,7 @@ def generate_cftrack_contact_plan(
             tuple(float(v) for v in scratch.xpos[body]),
             tuple(float(v) for v in scratch.xquat[body]),
             before,
+            bounded_position_path=bounded_position_path,
         )
         try:
             receipt = condition_cftrack_contact_reference(

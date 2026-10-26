@@ -13,6 +13,7 @@ def main():
     p.add_argument("--external-source", type=Path, required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--bounded-position-path", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_cftrack_native_context import build_cold_cftrack
@@ -50,6 +51,7 @@ def main():
             reference_authority="absolute_FK_ankle_pitch_task_pose_not_joint_target",
             reference_window_samples=49,
             reference_half_window_controls=24,
+            bounded_position_path=a.bounded_position_path,
             additional_sampled_reference_speed_limit_m_s=3.0,
             additional_sampled_reference_angular_speed_limit_rad_s=8.0,
             reference_torso_workspace_limit_m=1.25,
@@ -72,7 +74,9 @@ def main():
         native_step_budget=3200,
     )
     before = cftrack_state_hash(player.policy)
-    plan, generation, parent = generate_cftrack_contact_plan(player, forecaster)
+    plan, generation, parent = generate_cftrack_contact_plan(
+        player, forecaster, bounded_position_path=a.bounded_position_path
+    )
 
     def save(name, value):
         path = a.output / (name + ".npz")

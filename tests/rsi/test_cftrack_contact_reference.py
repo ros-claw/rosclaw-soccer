@@ -87,8 +87,10 @@ def test_double_cover_identity_does_not_introduce_quaternion_spin(tmp_path):
     assert receipt["maximum_sampled_additional_reference_angular_speed_rad_s"] < 1e-6
 
 
-def test_conditioned_private_future_exact_native_actual_and_donor_unmodified(tmp_path):
+@pytest.mark.parametrize("bounded", [False, True])
+def test_conditioned_private_future_exact_native_actual_and_donor_unmodified(tmp_path, bounded):
     p, f, plan = fixture(tmp_path)
+    plan = replace(plan, bounded_position_path=bounded)
     before = cftrack_state_hash(p.policy)
     predicted = f.forecast(controls=4, contact_plan=plan)
     assert cftrack_state_hash(p.policy) == before
@@ -101,3 +103,12 @@ def test_conditioned_private_future_exact_native_actual_and_donor_unmodified(tmp
         p.commit()
         for key in ("qpos", "qvel", "torque", "ball_forces"):
             np.testing.assert_array_equal(row[key], predicted[key][i * 10 : (i + 1) * 10])
+
+
+def test_bounded_path_still_rejects_impossible_velocity_atomically(tmp_path):
+    p, _, plan = fixture(tmp_path)
+    plan = replace(plan, bounded_position_path=True, position_world=(0.5, 0.0, 0.1))
+    before = cftrack_state_hash(p.policy)
+    with pytest.raises(ValueError):
+        condition_cftrack_contact_reference(p.policy, plan)
+    assert cftrack_state_hash(p.policy) == before
