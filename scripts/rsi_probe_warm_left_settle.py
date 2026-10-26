@@ -71,7 +71,7 @@ def main():
         configs[0],
         expected_model_hash=pins[str(models[0])],
         expected_config_hash=pins[str(configs[0])],
-        horizon_controls=158,
+        horizon_controls=301,
     )
     data = mujoco.MjData(model)
     data.qpos[:], data.qvel[:] = prior["initial_qpos"], prior["initial_qvel"]
