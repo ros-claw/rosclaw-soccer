@@ -76,6 +76,7 @@ class SharedOmniContactPlayer:
         self.boundary, self.commits = world.control_steps, 0
         self.pending: np.ndarray | None = None
         self.motor_plan: CFtrackMotorResidualPlan | None = None
+        self.measured_history_installed = False
         self.failed = False
         owners[prefix] = identities
         try:

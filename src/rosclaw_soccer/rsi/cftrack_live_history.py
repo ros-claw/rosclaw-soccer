@@ -71,6 +71,10 @@ class CFtrackLiveHistory:
             self._failed = True
             raise
 
+    def belongs_to(self, world: SharedNativeMotorWorld, prefix: str) -> bool:
+        """Identity binding only; this does not validate freshness or authorize use."""
+        return not self._failed and self._world is world and self._prefix == prefix
+
     def at_current_boundary(self) -> tuple[CFtrackBoundarySample, ...]:
         """Return five samples only if the final sample still matches the live world."""
         w = self._world
