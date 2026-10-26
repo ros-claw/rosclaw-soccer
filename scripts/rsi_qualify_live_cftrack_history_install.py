@@ -20,6 +20,10 @@ def main():
     p.add_argument("--private-forecast-proof-hash")
     p.add_argument("--execute-forecast-proof", type=Path)
     p.add_argument("--execute-forecast-proof-hash")
+    p.add_argument("--measured-bridge", type=Path)
+    p.add_argument("--measured-bridge-hash")
+    p.add_argument("--bridge-certificate", type=Path)
+    p.add_argument("--bridge-certificate-hash")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -41,6 +45,20 @@ def main():
     source, history, prior = (json.loads(x.read_text()) for x in (complete, hist, live))
     forecast_enabled = a.private_forecast_proof is not None
     execute_enabled = a.execute_forecast_proof is not None
+    bridge_mode = a.measured_bridge is not None
+    if bridge_mode != all(
+        value is not None
+        for value in (a.measured_bridge_hash, a.bridge_certificate, a.bridge_certificate_hash)
+    ) or (
+        not bridge_mode
+        and any(
+            value is not None
+            for value in (a.measured_bridge_hash, a.bridge_certificate, a.bridge_certificate_hash)
+        )
+    ):
+        raise ValueError("bridge mode requires both exact source and independent certificate")
+    if bridge_mode and not execute_enabled:
+        raise ValueError("bridge mode requires exact original parent future evidence")
     if forecast_enabled != (a.private_forecast_proof_hash is not None):
         raise ValueError("private forecast requires both prior installation proof and hash")
     if execute_enabled != (a.execute_forecast_proof_hash is not None) or (
@@ -103,6 +121,40 @@ def main():
             (82, "zero_history"),
         }:
             raise ValueError("all four declared private futures required")
+    bridge_artifact = None
+    if bridge_mode:
+        if (
+            a.measured_bridge.is_symlink()
+            or a.bridge_certificate.is_symlink()
+            or digest(a.measured_bridge) != a.measured_bridge_hash
+            or digest(a.bridge_certificate) != a.bridge_certificate_hash
+        ):
+            raise ValueError("exact bridge source and independent certificate required")
+        bridge_source = json.loads(a.measured_bridge.read_text())
+        certificate = json.loads(a.bridge_certificate.read_text())
+        if (
+            bridge_source["status"] != "MEASURED_TERMINAL_ANCHOR_BRIDGE_STATIC_STUDY_NOT_PHYSICS"
+            or bridge_source["source_hash"] != a.source_hash
+            or len(bridge_source["records"]) != 1
+            or bridge_source["records"][0]["entry"] != 57
+            or bridge_source["records"][0]["all_frames_pass"] is not False
+            or certificate["status"] != "MEASURED_TERMINAL_ANCHOR_BRIDGE_READBACK_NOT_PHYSICS"
+            or certificate["source_hash"] != a.measured_bridge_hash
+            or len(certificate["records"]) != 1
+            or certificate["records"][0]["sampled_geometry_certificate"] is not True
+            or certificate["records"][0]["all_frames_pass"] is not False
+        ):
+            raise ValueError(
+                "failed original gate and independent sampled geometry certificate required"
+            )
+        item = bridge_source["records"][0]["artifact"]
+        bridge_artifact = a.measured_bridge.parent / item["path"]
+        if (
+            bridge_artifact.is_symlink()
+            or bridge_artifact.parent != a.measured_bridge.parent
+            or digest(bridge_artifact) != item["hash"]
+        ):
+            raise ValueError("exact confined sampled bridge artifact required")
     if (
         source["status"] != "WARM_LEFT_SETTLING_MEASURED_NOT_KICK"
         or history["status"] != "MEASURED_CFTRACK_HISTORY_CANDIDATES_NOT_INSTALLED"
@@ -141,6 +193,10 @@ def main():
     if execute_enabled:
         pins[str(a.execute_forecast_proof)] = a.execute_forecast_proof_hash
         pins.update({str(path): digest_value for path, digest_value in forecast_artifacts.values()})
+    if bridge_mode:
+        pins[str(a.measured_bridge)] = a.measured_bridge_hash
+        pins[str(a.bridge_certificate)] = a.bridge_certificate_hash
+        pins[str(bridge_artifact)] = bridge_source["records"][0]["artifact"]["hash"]
     source_pins(pins)
     check_pins(pins)
     scenes = [Path(x) for x in pins if x.endswith("/cached-standard/declared-scene.xml")]
@@ -157,6 +213,9 @@ def main():
     from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
     from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
     from rosclaw_soccer.rsi.cftrack_live_history import CFtrackLiveHistory
+    from rosclaw_soccer.rsi.cftrack_measured_bridge_reference import (
+        condition_measured_bridge_reference,
+    )
     from rosclaw_soccer.rsi.cftrack_measured_history_install import install_owned_cftrack_history
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.omnicontact_policy_copy import cftrack_state_hash, copy_cftrack_policy
@@ -196,16 +255,24 @@ def main():
             live_review_hash=a.live_review_hash,
             source_head=a.expected_head,
             input_file_hashes=pins,
-            entry_controls=[57, 82],
-            maximum_velocity_calls=278 if execute_enabled else 139,
-            maximum_native_steps=6780 if execute_enabled else 1390,
-            cftrack_neural_calls_max=400 if (forecast_enabled or execute_enabled) else 0,
+            entry_controls=[57, 57] if bridge_mode else [57, 82],
+            maximum_velocity_calls=114 if bridge_mode else 278 if execute_enabled else 139,
+            maximum_native_steps=7140 if bridge_mode else 6780 if execute_enabled else 1390,
+            cftrack_neural_calls_max=600
+            if bridge_mode
+            else 400
+            if (forecast_enabled or execute_enabled)
+            else 0,
             private_forecast_native_step_budget=4000 if forecast_enabled else 0,
             private_forecast_horizon_controls=100 if forecast_enabled else 0,
             private_forecast_proof_hash=a.private_forecast_proof_hash,
             private_cold_vs_measured_history=forecast_enabled,
             execute_forecast_proof_hash=a.execute_forecast_proof_hash,
             actual_forecast_replay=execute_enabled,
+            measured_bridge_mode=bridge_mode,
+            measured_bridge_hash=a.measured_bridge_hash,
+            bridge_certificate_hash=a.bridge_certificate_hash,
+            absolute_h300_includes_57_approach_controls=bridge_mode,
             no_body_or_ball_reset=True,
             software_pd_switch_explicit=True,
             cftrack_reference_not_qualified=True,
@@ -237,7 +304,9 @@ def main():
     atexit.register(retain_partial)
     actual_cftrack_calls = 0
     specs = (
-        [
+        [(57, "parent"), (57, "measured_bridge")]
+        if bridge_mode
+        else [
             (57, "measured_history"),
             (57, "zero_history"),
             (82, "measured_history"),
@@ -325,6 +394,14 @@ def main():
             or player.pending is not None
         ):
             raise ValueError("installed history must match qualified actual scratch observation")
+        bridge_receipt = None
+        if bridge_mode and actual_arm == "measured_bridge":
+            with np.load(bridge_artifact, allow_pickle=False) as f:
+                bridge_roots = f["candidate_root"].copy()
+                bridge_joints = f["candidate_joint"].copy()
+            bridge_receipt = condition_measured_bridge_reference(
+                player, bridge_roots, bridge_joints, expected_model_hash=compiled_model_hash(model)
+            )
         after = snapshot(data)
         if (
             any(not np.array_equal(before[k], after[k]) for k in before)
@@ -404,7 +481,8 @@ def main():
             if actual_arm == "zero_history":
                 policy.obs_history_buffer.fill(0)
                 policy.action.fill(0)
-            prior_path, _ = forecast_artifacts[(entry, actual_arm)]
+            forecast_arm = "measured_history" if bridge_mode else actual_arm
+            prior_path, _ = forecast_artifacts[(entry, forecast_arm)]
             with np.load(prior_path, allow_pickle=False) as f:
                 predicted = {k: f[k].copy() for k in f.files}
             session = policy.ort_session
@@ -422,7 +500,7 @@ def main():
 
             policy.ort_session = Capture(session, saved_obs, saved_actions)
             real_rows, real_targets, contacts = [], [], []
-            for step in range(100):
+            for step in range(300 if bridge_mode else 100):
                 target, _ = player.propose()
                 row = world.advance({"a/": target})
                 for key in partial_raw:
@@ -433,9 +511,13 @@ def main():
                 real_rows.append(row)
                 real_targets.append(target.copy())
                 contacts.append(dict(world.last_ball_contact_bodies["a/"]))
-                if not np.array_equal(target, predicted["joint_targets"][step]) or any(
-                    not np.array_equal(row[k], predicted[k][step * 10 : (step + 1) * 10])
-                    for k in partial_raw
+                compare_parent = not bridge_mode or (actual_arm == "parent" and step < 100)
+                if compare_parent and (
+                    not np.array_equal(target, predicted["joint_targets"][step])
+                    or any(
+                        not np.array_equal(row[k], predicted[k][step * 10 : (step + 1) * 10])
+                        for k in partial_raw
+                    )
                 ):
                     raise ValueError(
                         "actual future differs from private forecast at "
@@ -456,11 +538,34 @@ def main():
                 arm=actual_arm,
                 controls=len(real_rows),
                 native_steps=sum(len(row["qpos"]) for row in real_rows),
-                forecast_arrays_exact=True,
+                forecast_arrays_exact=(True if not bridge_mode else actual_arm == "parent"),
+                forecast_exact_horizon_controls=(
+                    100 if not bridge_mode or actual_arm == "parent" else None
+                ),
                 ball_contact_bodies_by_control=contacts,
                 artifact=dict(path=future_path.name, hash=digest(future_path)),
             )
             write_once(a.output / f"entry{entry}-{actual_arm}-actual.json", actual_execution)
+            if bridge_mode:
+                from rosclaw_soccer.rsi.first_touch_outcome import label_first_touch
+
+                all_q = np.concatenate(partial_raw["qpos"])
+                all_f = np.concatenate(partial_raw["ball_forces"])
+                if all_q.shape[0] < 3000 or all_f.shape[0] < 3000:
+                    raise ValueError("complete absolute H300 measurements required")
+                force = np.zeros((300, 1, 6), dtype=np.float64)
+                force[:, 0, :3] = all_f[:3000, 0].reshape(300, 10, 3).max(axis=1)
+                q300 = all_q[:3000].reshape(300, 10, model.nq)
+                outcome = label_first_touch(
+                    dict(
+                        force_n=force,
+                        pelvis_z_per_substep_m=q300[:, :, lo.rq + 2][:, None],
+                        ball_position_after_step_m=q300[:, -1, lo.bq : lo.bq + 3][:, None],
+                    )
+                ).to_dict()
+                actual_execution["absolute_h300_outcome"] = outcome
+                actual_execution["absolute_h300_includes_approach_controls"] = 57
+                write_once(a.output / f"entry{entry}-{actual_arm}-absolute-h300.json", outcome)
         results.append(
             dict(
                 entry_control=entry,
@@ -469,6 +574,7 @@ def main():
                 physics_unchanged=True,
                 pd_switch_physics_unchanged=switch["physics_unchanged"],
                 history_receipt=receipt,
+                bridge_reference_receipt=bridge_receipt,
                 private_forecasts=private_forecasts,
                 actual_execution=actual_execution,
                 artifact=dict(path=trace_path.name, hash=digest(trace_path)),
@@ -480,7 +586,9 @@ def main():
         a.output / "complete.json",
         dict(
             status=(
-                "CFTRACK_PRIVATE_FUTURES_REPLAYED_ACTUALLY_NOT_PROMOTED"
+                "CFTRACK_MEASURED_BRIDGE_H300_PAIRED_NOT_PROMOTED"
+                if bridge_mode
+                else "CFTRACK_PRIVATE_FUTURES_REPLAYED_ACTUALLY_NOT_PROMOTED"
                 if execute_enabled
                 else "CFTRACK_MEASURED_HISTORY_PRIVATE_FUTURES_RECORDED_NOT_PROMOTED"
                 if forecast_enabled
@@ -493,7 +601,7 @@ def main():
             input_file_hashes=pins,
             records=results,
             **counts,
-            velocity_neural_calls=278 if execute_enabled else 139,
+            velocity_neural_calls=114 if bridge_mode else 278 if execute_enabled else 139,
             cftrack_neural_calls=actual_cftrack_calls if execute_enabled else forecast_nn_calls,
             private_forecast_native_steps=forecast_native_steps,
             task_reference_qualified=False,

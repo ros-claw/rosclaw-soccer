@@ -77,6 +77,7 @@ class SharedOmniContactPlayer:
         self.pending: np.ndarray | None = None
         self.motor_plan: CFtrackMotorResidualPlan | None = None
         self.measured_history_installed = False
+        self.measured_bridge_reference_installed = False
         self.failed = False
         owners[prefix] = identities
         try:
