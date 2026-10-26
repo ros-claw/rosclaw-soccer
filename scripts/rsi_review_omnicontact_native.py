@@ -52,6 +52,22 @@ def main():
         raise ValueError("exact producer-pinned external policy source required")
     source_pins(pins)
     check_pins(pins)
+    reference_source = report.get("reference_source", "CFgen")
+    motion = None
+    motion_path = None
+    if reference_source == "NPZmotion":
+        from rosclaw_soccer.rsi.cftrack_motion_reference import load_cftrack_motion
+
+        motion_path = Path(report["motion_source"])
+        if (
+            str(motion_path) not in pins
+            or not motion_path.is_relative_to(external)
+            or report.get("reference_conditioning") is not None
+        ):
+            raise ValueError("pinned complete motion without procedural conditioning required")
+        motion = load_cftrack_motion(motion_path)
+    elif reference_source != "CFgen" or report.get("motion_source") is not None:
+        raise ValueError("explicit qualified CFtrack reference source required")
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
@@ -62,6 +78,7 @@ def main():
             constructor_warmups=0,
             new_physical_steps=0,
             neural_optimizer_updates=0,
+            reference_source=reference_source,
             hardware_authorized=False,
         ),
     )
@@ -113,6 +130,10 @@ def main():
         onnx_path=str(external / "policy/omnicontact/model/kick_50k.onnx"),
     )
     policy.task, policy.reference_source, policy.active_object_name = "kickball", "CFgen", "ball"
+    if motion is not None:
+        policy.reference_source = "NPZmotion"
+        policy.npz_dir = str(motion_path)
+        policy.tracking_start_frame, policy.tracking_end_frame = 0, -1
     policy.box_dims = policy.ball_dims = np.full(3, 0.11, np.float32)
     policy.bbox_scale = policy.box_dims * 2
     policy.bbox_offsets_scaled = policy.bbox_offsets * policy.bbox_scale.reshape(1, 3)
@@ -120,6 +141,13 @@ def main():
     data.qpos[lo.rq : lo.rq + 7] = [0, 0, 0.77, 1, 0, 0, 0]
     data.qpos[lo.qi] = DEFAULT_JOINT_POS_MJ
     data.qpos[lo.bq : lo.bq + 7] = [1, 0, 0.11, 1, 0, 0, 0]
+    if motion is not None:
+        data.qpos[lo.rq : lo.rq + 3] = motion["body_pos_w"][0, 0]
+        data.qpos[lo.rq + 3 : lo.rq + 7] = motion["body_quat_w"][0, 0]
+        data.qpos[lo.qi] = motion["joint_pos"][0, policy.lab2mj]
+        data.qpos[lo.bq : lo.bq + 3] = motion["object_pos_w"][0]
+        data.qpos[lo.bq + 2] = max(0.11, float(data.qpos[lo.bq + 2]))
+        data.qpos[lo.bq + 3 : lo.bq + 7] = motion["object_quat_w"][0]
     mujoco.mj_kinematics(model, data)
     mujoco.mj_comPos(model, data)
     # A view of scratch measurements, NOT a SharedNativeMotorWorld. Assigning
@@ -206,6 +234,9 @@ def main():
             input_file_hashes=pins,
             qualification_hash=a.qualification_hash,
             actual_neural_readbacks=len(calls),
+            reference_source=reference_source,
+            motion_source=str(motion_path) if motion_path else None,
+            new_initial_condition_not_an_old_exam_certificate=True,
             constructor_warmups=0,
             new_physical_steps=0,
             neural_optimizer_updates=0,

@@ -48,7 +48,25 @@ def main():
     pins[str(a.readback)] = a.readback_hash
     source_pins(pins)
     check_pins(pins)
+    reference_source = report.get("reference_source", "CFgen")
+    motion = None
+    if audit.get("reference_source", "CFgen") != reference_source:
+        raise ValueError("producer and neural readback reference protocols disagree")
     external = a.external_source.resolve()
+    if reference_source == "NPZmotion":
+        from rosclaw_soccer.rsi.cftrack_motion_reference import load_cftrack_motion
+
+        motion_path = Path(report["motion_source"])
+        if (
+            str(motion_path) not in pins
+            or not motion_path.is_relative_to(external)
+            or report.get("reference_conditioning") is not None
+            or audit.get("motion_source") != str(motion_path)
+        ):
+            raise ValueError("same producer-pinned complete motion required")
+        motion = load_cftrack_motion(motion_path)
+    elif reference_source != "CFgen" or report.get("motion_source") is not None:
+        raise ValueError("explicit qualified CFtrack reference protocol required")
     config = external / "policy/omnicontact/config/OmniContact.yaml"
     pose = external / "policy/defaultpose/config/DefaultPose.yaml"
     if any(str(path) not in pins for path in (config, pose)):
@@ -64,6 +82,7 @@ def main():
             neural_optimizer_updates=0,
             hardware_authorized=False,
             recorded_targets_are_verification_only_not_runtime_controller=True,
+            reference_source=reference_source,
         ),
     )
     import mujoco
@@ -94,6 +113,14 @@ def main():
     d.qpos[lo.rq : lo.rq + 7] = [0, 0, 0.77, 1, 0, 0, 0]
     d.qpos[lo.qi] = np.array(pose_data["default_angles"], np.float32)
     d.qpos[lo.bq : lo.bq + 7] = [1, 0, 0.11, 1, 0, 0, 0]
+    if motion is not None:
+        order = np.array(config_data["lab2mj"], int)
+        d.qpos[lo.rq : lo.rq + 3] = motion["body_pos_w"][0, 0]
+        d.qpos[lo.rq + 3 : lo.rq + 7] = motion["body_quat_w"][0, 0]
+        d.qpos[lo.qi] = motion["joint_pos"][0, order]
+        d.qpos[lo.bq : lo.bq + 3] = motion["object_pos_w"][0]
+        d.qpos[lo.bq + 2] = max(0.11, float(d.qpos[lo.bq + 2]))
+        d.qpos[lo.bq + 3 : lo.bq + 7] = motion["object_quat_w"][0]
     mujoco.mj_forward(m, d)
     order = np.array(config_data["lab2mj"], int)
     params = NativePDParameters(
@@ -131,6 +158,7 @@ def main():
             compared_controls=matched,
             new_native_steps=world.native_steps,
             new_neural_calls=0,
+            reference_source=reference_source,
             runtime_failure=failure,
             neural_optimizer_updates=0,
             recorded_targets_are_verification_only=True,
