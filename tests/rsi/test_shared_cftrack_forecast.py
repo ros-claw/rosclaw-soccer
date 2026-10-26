@@ -101,6 +101,7 @@ def test_private_cftrack_nn_and_fk_prediction_exact_actual_without_enter_reset(t
     before = cftrack_state_hash(p.policy)
     initial = p.world.data.qpos.copy()
     predicted = f.forecast(controls=4)
+    assert predicted["runtime_failure"] is None and predicted["controls"] == 4
     assert cftrack_state_hash(p.policy) == before and p.policy.enters == 1
     np.testing.assert_array_equal(p.world.data.qpos, initial)
     assert p.world.control_steps == 0
@@ -115,6 +116,7 @@ def test_private_cftrack_nn_and_fk_prediction_exact_actual_without_enter_reset(t
     # Fork a nonempty software history and nonzero actual native clock too.
     before = cftrack_state_hash(p.policy)
     predicted = f.forecast(controls=4)
+    assert predicted["runtime_failure"] is None and predicted["controls"] == 4
     assert cftrack_state_hash(p.policy) == before
     for i in range(4):
         target, _ = p.propose()

@@ -98,6 +98,7 @@ class SharedCFtrackForecaster:
         )
         ghost = object.__new__(SharedOmniContactPlayer)
         ghost.world, ghost.prefix, ghost.policy = owned, source.prefix, policy
+        ghost.reference_source = source.reference_source
         ghost.layout = owned.layouts[source.prefix]
         ghost.boundary, ghost.commits = 0, source.commits
         ghost.pending, ghost.failed = None, False
