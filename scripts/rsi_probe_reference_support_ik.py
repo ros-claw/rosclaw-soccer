@@ -24,6 +24,7 @@ def main():
     p.add_argument("--scene-hash", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--stance-xy-limit", type=float, choices=(0.02,))
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import digest
@@ -68,6 +69,7 @@ def main():
             contact_tolerance_m=0.01,
             penetration_tolerance_m=0.002,
             root_minimum_m=0.65,
+            claimed_ankle_xy_limit_m=a.stance_xy_limit,
             source_labels_and_23_to_29_mapping_assumed=True,
             optimizer="scipy.optimize.least_squares",
             scipy_version=scipy.__version__,
@@ -112,6 +114,7 @@ def main():
                 selected,
                 expected_model_hash=MODEL_HASH,
                 maximum_evaluations=2000,
+                max_ankle_xy_change_m=a.stance_xy_limit,
             )
             serial = {k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in result.items()}
             row = dict(

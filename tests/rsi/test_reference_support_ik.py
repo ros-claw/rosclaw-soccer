@@ -16,6 +16,8 @@ def _model():
     root = ET.fromstring(xml)
     ET.SubElement(root.find("worldbody"), "geom", name="floor", type="plane", size="1 1 .1")
     body = root.find(".//body[@name='pelvis']")
+    root.find(".//body[@name='link5']").set("name", "left_ankle_roll_link")
+    root.find(".//body[@name='link11']").set("name", "right_ankle_roll_link")
     for side in ("left", "right"):
         for i in range(1, 8):
             ET.SubElement(
@@ -60,6 +62,24 @@ def test_unpinned_body_or_missing_support_rejected():
             np.array([False, False]),
             expected_model_hash=compiled_model_hash(model),
         )
+
+
+def test_support_fit_can_require_bounded_stance_ankle_xy():
+    model = _model()
+    root = np.array([0, 0, 0.7, 1, 0, 0, 0], dtype=np.float64)
+    joints = np.zeros(29, dtype=np.float64)
+    result = fit_reference_support_pose(
+        model,
+        root,
+        joints,
+        np.array([True, True]),
+        expected_model_hash=compiled_model_hash(model),
+        max_ankle_xy_change_m=0.02,
+    )
+    assert result["ankle_xy_constrained"] is True
+    assert result["maximum_claimed_ankle_xy_change_m"] <= 0.02
+    assert result["reference_geometry_feasible"] is True
+    assert result["physical_execution_qualified"] is False
     with pytest.raises(ValueError):
         fit_reference_support_pose(
             model, root, joints, np.array([True, True]), expected_model_hash="sha256:" + "0" * 64

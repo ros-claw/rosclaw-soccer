@@ -17,6 +17,7 @@ def audit_support_candidate(
     claimed_contacts: np.ndarray,
     *,
     expected_model_hash: str,
+    max_claimed_ankle_xy_change_m: float | None = None,
 ) -> dict[str, Any]:
     """Use MuJoCo's geometry-distance query, without replaying the optimizer."""
     import mujoco
@@ -36,6 +37,14 @@ def audit_support_candidate(
         or abs(np.linalg.norm(source_root[3:]) - 1) > 1e-4
         or not np.array_equal(source_root[[0, 1, 3, 4, 5, 6]], candidate_root[[0, 1, 3, 4, 5, 6]])
         or not np.array_equal(source_joints[12:], candidate_joints[12:])
+        or (
+            max_claimed_ankle_xy_change_m is not None
+            and (
+                type(max_claimed_ankle_xy_change_m) is not float
+                or not np.isfinite(max_claimed_ankle_xy_change_m)
+                or not 0 < max_claimed_ankle_xy_change_m <= 0.02
+            )
+        )
     ):
         raise ValueError(
             "exact pinned body, bounded pose fields and unchanged non-leg reference required"
@@ -91,18 +100,23 @@ def audit_support_candidate(
     after, ankle_after, nonfoot_after = measure(candidate_root, candidate_joints)
     if data.time != 0:
         raise ValueError("static geometric readback cannot advance physics")
+    ankle_changes = np.linalg.norm(ankle_after[:, :2] - ankle_before[:, :2], axis=1)
     feasible = bool(
         np.max(np.abs(after[claimed_contacts])) <= 0.01
         and np.min(after) >= -0.002
         and candidate_root[2] >= 0.65
+        and (
+            max_claimed_ankle_xy_change_m is None
+            or np.max(ankle_changes[claimed_contacts]) <= max_claimed_ankle_xy_change_m
+        )
     )
     return dict(
         source_foot_gaps_m=before.tolist(),
         candidate_foot_gaps_m=after.tolist(),
         max_claimed_foot_error_m=float(np.max(np.abs(after[claimed_contacts]))),
-        max_ankle_xy_displacement_m=float(
-            np.max(np.linalg.norm(ankle_after[:, :2] - ankle_before[:, :2], axis=1))
-        ),
+        max_ankle_xy_displacement_m=float(np.max(ankle_changes)),
+        max_claimed_ankle_xy_displacement_m=float(np.max(ankle_changes[claimed_contacts])),
+        claimed_ankle_xy_limit_m=max_claimed_ankle_xy_change_m,
         source_minimum_nonfoot_floor_distance_m=nonfoot_before,
         candidate_minimum_nonfoot_floor_distance_m=nonfoot_after,
         root_z_change_m=root_delta,

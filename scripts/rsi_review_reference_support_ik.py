@@ -97,6 +97,7 @@ def main():
             np.array(result["joints_hg29"], np.float64),
             labels[frame],
             expected_model_hash=MODEL_HASH,
+            max_claimed_ankle_xy_change_m=result.get("claimed_ankle_xy_limit_m"),
         )
         if (
             not np.allclose(
@@ -110,6 +111,15 @@ def main():
             )
             or measured["reference_geometry_feasible"] != result["reference_geometry_feasible"]
             or measured["leg_trust_boundary_active"] != result["joint_trust_boundary_active"]
+            or (
+                result.get("claimed_ankle_xy_limit_m") is not None
+                and not np.isclose(
+                    measured["max_claimed_ankle_xy_displacement_m"],
+                    result["maximum_claimed_ankle_xy_change_m"],
+                    rtol=0,
+                    atol=1e-12,
+                )
+            )
         ):
             raise ValueError("independent geometry or numeric trust-bound decision differs")
         row = dict(

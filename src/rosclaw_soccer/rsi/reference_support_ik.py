@@ -16,6 +16,7 @@ def fit_reference_support_pose(
     *,
     expected_model_hash: str,
     maximum_evaluations: int = 2000,
+    max_ankle_xy_change_m: float | None = None,
 ) -> dict[str, Any]:
     """Locally fit labeled feet to floor, retaining pose and physical joint bounds.
 
@@ -42,6 +43,14 @@ def fit_reference_support_pose(
         or not claimed_contacts.any()
         or type(maximum_evaluations) is not int
         or not 14 <= maximum_evaluations <= 2000
+        or (
+            max_ankle_xy_change_m is not None
+            and (
+                type(max_ankle_xy_change_m) is not float
+                or not np.isfinite(max_ankle_xy_change_m)
+                or not 0 < max_ankle_xy_change_m <= 0.02
+            )
+        )
     ):
         raise ValueError("pinned body and finite pose with explicit claimed supports required")
     layout = NativeVelocityLayout(model, robot_prefix="a/", ball_body_name="soccer_ball")
@@ -73,6 +82,11 @@ def fit_reference_support_pose(
     data = mujoco.MjData(model)
     data.qpos[layout.bq : layout.bq + 7] = [100, 100, 0.11, 1, 0, 0, 0]
     calls = 0
+    ankle_ids = (
+        [int(model.body(f"a/{side}_ankle_roll_link").id) for side in ("left", "right")]
+        if max_ankle_xy_change_m is not None
+        else []
+    )
 
     def geometry(x: np.ndarray) -> np.ndarray:
         data.qpos[layout.rq : layout.rq + 7] = root0
@@ -104,13 +118,27 @@ def fit_reference_support_pose(
         if calls > maximum_evaluations:
             raise ValueError("bounded reference IK evaluation budget exhausted")
         gap = geometry(x)
-        return cast(np.ndarray, np.r_[100 * gap[claimed_contacts], 100 * np.minimum(gap, 0), 2 * x])
+        xy_residual = (
+            100 * (data.xpos[ankle_ids, :2] - initial_ankles)[claimed_contacts].reshape(-1)
+            if max_ankle_xy_change_m is not None
+            else np.empty(0)
+        )
+        return cast(
+            np.ndarray,
+            np.r_[100 * gap[claimed_contacts], 100 * np.minimum(gap, 0), xy_residual, 2 * x],
+        )
 
     before = geometry(np.zeros(13))
+    initial_ankles = data.xpos[ankle_ids, :2].copy()
     result = least_squares(
         residual, np.zeros(13), bounds=(lower, upper), max_nfev=100, ftol=1e-9, xtol=1e-9, gtol=1e-9
     )
     after = geometry(result.x)
+    ankle_change = (
+        np.linalg.norm(data.xpos[ankle_ids, :2] - initial_ankles, axis=1)
+        if max_ankle_xy_change_m is not None
+        else np.empty(0)
+    )
     candidate_q = q0.copy()
     candidate_q[:12] += result.x[1:]
     candidate_root = root0.copy()
@@ -120,6 +148,10 @@ def fit_reference_support_pose(
         and np.max(np.abs(after[claimed_contacts])) <= 0.01
         and np.min(after) >= -0.002
         and candidate_root[2] >= 0.65
+        and (
+            max_ankle_xy_change_m is None
+            or np.max(ankle_change[claimed_contacts]) <= max_ankle_xy_change_m
+        )
         and np.isfinite(candidate_q).all()
         and data.time == 0
     )
@@ -137,7 +169,14 @@ def fit_reference_support_pose(
         reference_geometry_feasible=feasible,
         source_contact_labels_assumed=True,
         input_mapping_and_provenance_assumed=True,
-        ankle_xy_and_temporal_continuity_not_constrained=True,
+        maximum_claimed_ankle_xy_change_m=(
+            float(np.max(ankle_change[claimed_contacts]))
+            if max_ankle_xy_change_m is not None
+            else None
+        ),
+        claimed_ankle_xy_limit_m=max_ankle_xy_change_m,
+        ankle_xy_constrained=max_ankle_xy_change_m is not None,
+        temporal_continuity_not_constrained=True,
         nonfoot_collision_not_qualified=True,
         integrated_native_steps=0,
         physical_execution_qualified=False,

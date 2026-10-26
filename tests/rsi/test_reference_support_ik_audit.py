@@ -44,6 +44,27 @@ def test_audit_rejects_unbounded_or_unrelated_joint_change():
             np.array([True, True]),
             expected_model_hash=compiled_model_hash(model),
         )
+
+
+def test_stance_xy_limit_is_independently_measured():
+    model, _ = _models()
+    model.body_pos[model.body("a/left_ankle_roll_link").id, 0] = 0.5
+    root = np.array([0, 0, 1, 1, 0, 0, 0], dtype=np.float64)
+    joints = np.zeros(29, dtype=np.float64)
+    target = joints.copy()
+    target[0] = 0.1
+    result = audit_support_candidate(
+        model,
+        root,
+        joints,
+        root.copy(),
+        target,
+        np.array([True, False]),
+        expected_model_hash=compiled_model_hash(model),
+        max_claimed_ankle_xy_change_m=0.02,
+    )
+    assert result["max_claimed_ankle_xy_displacement_m"] > 0.02
+    assert result["reference_geometry_feasible"] is False
     target = joints.copy()
     target[20] = 0.01
     with pytest.raises(ValueError, match="unchanged"):
