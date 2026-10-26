@@ -98,23 +98,10 @@ def flatten_five_frame_history(prior_four: np.ndarray, current: np.ndarray) -> n
     return np.concatenate([history[:, a:b].reshape(-1) for a, b in HISTORY_SLICES])
 
 
-def audit_current_ball_observation(policy: Any, full_observation: np.ndarray) -> None:
-    """Compare source inference input with independently assembled current features.
-
-    Called at its inference boundary after source history was rolled. It reads
-    the current policy and does not install a history or invoke the network.
-    The source FK and quaternion helpers are still shared dependencies.
-    """
-    if (
-        policy.task != "kickball"
-        or policy.active_object_name != "ball"
-        or type(full_observation) is not np.ndarray
-        or full_observation.shape != (1, 1244)
-        or full_observation.dtype != np.float32
-        or not np.isfinite(full_observation).all()
-        or policy.obs_history_buffer.shape != (5, 141)
-    ):
-        raise ValueError("qualified source kickball inference boundary required")
+def assemble_current_ball_observation(policy: Any) -> np.ndarray:
+    """Read a scratch policy's already measured and FK-updated ball features."""
+    if policy.task != "kickball" or policy.active_object_name != "ball":
+        raise ValueError("qualified scratch kickball policy required")
     module = importlib.import_module(type(policy).__module__)
     heading = module.yaw_quat(policy.torso_quat)
     object_position, _ = module.subtract_frame_transforms(
@@ -124,7 +111,7 @@ def audit_current_ball_observation(policy: Any, full_observation: np.ndarray) ->
     object_rotation = module.matrix_from_quat(np.array([1, 0, 0, 0], dtype=np.float32))[
         :, :2
     ].reshape(-1)
-    current = assemble_proprioception(
+    return assemble_proprioception(
         policy.ee_pos,
         policy.state_cmd.ang_vel,
         policy.state_cmd.gravity_ori,
@@ -137,6 +124,24 @@ def audit_current_ball_observation(policy: Any, full_observation: np.ndarray) ->
         mj2lab=policy.mj2lab,
         default_lab=policy.default_angles_lab,
     )
+
+
+def audit_current_ball_observation(policy: Any, full_observation: np.ndarray) -> None:
+    """Compare source inference input with independently assembled current features.
+
+    Called at its inference boundary after source history was rolled. It reads
+    the current policy and does not install a history or invoke the network.
+    The source FK and quaternion helpers are still shared dependencies.
+    """
+    if (
+        type(full_observation) is not np.ndarray
+        or full_observation.shape != (1, 1244)
+        or full_observation.dtype != np.float32
+        or not np.isfinite(full_observation).all()
+        or policy.obs_history_buffer.shape != (5, 141)
+    ):
+        raise ValueError("qualified source kickball inference boundary required")
+    current = assemble_current_ball_observation(policy)
     history = policy.obs_history_buffer
     if not np.array_equal(current, history[-1]) or not np.array_equal(
         flatten_five_frame_history(history[:4], current), full_observation[0, -705:]
