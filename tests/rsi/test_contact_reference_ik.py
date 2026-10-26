@@ -5,7 +5,11 @@ import numpy as np
 import pytest
 from test_shared_native_motor_world import source_xml
 
-from rosclaw_soccer.rsi.contact_reference_ik import first_contact_foot, solve_contact_reference_pose
+from rosclaw_soccer.rsi.contact_reference_ik import (
+    first_contact_foot,
+    solve_absolute_contact_pose,
+    solve_contact_reference_pose,
+)
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
 
@@ -80,3 +84,22 @@ def test_first_native_foot_is_not_largest_later_impact():
     assert first_contact_foot(np.zeros((10, 2))) is None
     with pytest.raises(ValueError):
         first_contact_foot(np.array([[np.nan, 0.0]]))
+
+
+def test_absolute_geometry_has_distinct_authority_and_no_physical_side_effects():
+    model, data, layout = fixture(0.12)
+    before = data.qpos.copy()
+    result = solve_absolute_contact_pose(
+        model, data, layout, goal=np.array([8.0, 0.0, 0.11]), active_foot="right"
+    )
+    assert result["status"] == "KINEMATIC_CONTACT_CONFIGURATION_FEASIBLE"
+    assert result["schema"] == "soccer.absolute_contact_reference_geometry.v1"
+    assert not result["original_035_total_displacement_certificate_claimed"]
+    assert result["physical_joint_limits_enforced"]
+    assert result["per_iteration_step_cap_rad"] == 0.1
+    assert result["new_neural_calls"] == result["new_physical_steps"] == 0
+    np.testing.assert_array_equal(data.qpos, before)
+    with pytest.raises(ValueError, match="explicit active foot"):
+        solve_absolute_contact_pose(
+            model, data, layout, goal=np.array([8.0, 0.0, 0.11]), active_foot="auto"
+        )

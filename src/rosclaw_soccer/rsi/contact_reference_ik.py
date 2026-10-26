@@ -39,6 +39,42 @@ def solve_contact_reference_pose(
     goal: np.ndarray,
     active_foot: str | None = None,
 ) -> dict[str, Any]:
+    """Original .35rad total local-reference trust contract, unchanged."""
+    return _solve_contact_pose(
+        model, measured, layout, goal=goal, active_foot=active_foot, absolute_configuration=False
+    )
+
+
+def solve_absolute_contact_pose(
+    model: Any,
+    measured: Any,
+    layout: Any,
+    *,
+    goal: np.ndarray,
+    active_foot: str,
+) -> dict[str, Any]:
+    """New absolute physical configuration contract, STILL only scratch FK.
+
+    Native joint limits, .1rad per-iteration steps and the same 16-iteration
+    budget apply. The old .35rad total displacement certificate is NOT claimed.
+    This result can only condition a neural task reference, never motors.
+    """
+    if type(active_foot) is not str or active_foot not in ("left", "right"):
+        raise ValueError("explicit active foot required for absolute geometry contract")
+    return _solve_contact_pose(
+        model, measured, layout, goal=goal, active_foot=active_foot, absolute_configuration=True
+    )
+
+
+def _solve_contact_pose(
+    model: Any,
+    measured: Any,
+    layout: Any,
+    *,
+    goal: np.ndarray,
+    active_foot: str | None,
+    absolute_configuration: bool,
+) -> dict[str, Any]:
     import mujoco
 
     if (
@@ -175,7 +211,7 @@ def solve_contact_reference_pose(
         current = scratch.qpos[layout.qi].copy()
         proposal = solve_bounded_joint_tasks(
             current,
-            original,
+            current if absolute_configuration else original,
             current,
             model.jnt_range[layout.joints].astype(np.float64),
             tuple(tasks),
@@ -207,7 +243,7 @@ def solve_contact_reference_pose(
         measured.qpos, original_qpos
     ):
         raise ValueError("reference IK modified actual state, root or ball")
-    return dict(
+    result = dict(
         schema="soccer.contact_reference_geometry.v1",
         status=status,
         active_foot=active,
@@ -224,3 +260,12 @@ def solve_contact_reference_pose(
         physically_qualified=False,
         hardware_authorized=False,
     )
+    if absolute_configuration:
+        result.update(
+            schema="soccer.absolute_contact_reference_geometry.v1",
+            reference_authority="absolute_physical_leg_configuration_not_035_total_trust",
+            original_035_total_displacement_certificate_claimed=False,
+            per_iteration_step_cap_rad=0.1,
+            physical_joint_limits_enforced=True,
+        )
+    return result
