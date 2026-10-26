@@ -16,6 +16,10 @@ import numpy as np
 
 from rosclaw_soccer.rsi.aim_goal_command import AimGoalCommand, condition_aim_goal
 from rosclaw_soccer.rsi.ball_clearance_control import BallClearanceController, BallClearancePlan
+from rosclaw_soccer.rsi.contact_reference_plan import (
+    ContactReferencePlan,
+    condition_contact_reference,
+)
 from rosclaw_soccer.rsi.executed_target_synergy import (
     ExecutedTargetSynergy,
     apply_executed_target_synergy,
@@ -208,6 +212,7 @@ class SharedNNForecaster:
         reference_plan: MotionTimingPlan
         | MotionSynergyPlan
         | WholeJointReferencePlan
+        | ContactReferencePlan
         | None = None,
         aim_goal: AimGoalCommand | None = None,
         target_plan: ExecutedTargetSynergy | None = None,
@@ -281,6 +286,12 @@ class SharedNNForecaster:
                 reference_applied = condition_whole_joint_reference(policy, reference_plan)[
                     "applied"
                 ]
+            elif type(reference_plan) is ContactReferencePlan:
+                reference_applied = condition_contact_reference(
+                    policy,
+                    reference_plan,
+                    limits_hg=donor.model.jnt_range[source.layout.joints].astype(np.float64),
+                )["applied"]
             elif isinstance(reference_plan, MotionTimingPlan):
                 reference_applied = condition_motion_reference(policy, reference_plan)["applied"]
             else:
