@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 
+from rosclaw_soccer.data.motion_anchor_guard import MotionAnchorGuard
 from rosclaw_soccer.providers.g1.asset_qualification import qualify_g1_assets
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
@@ -273,6 +274,34 @@ def audit_motiondecode_football(
                 raise ValueError(f"MotionDecode lacks qualified {category}/{foot} style teachers")
             selected.extend(pool[:selected_per_category_and_foot])
 
+    # Index only selected train references and stream held-out clips one at a
+    # time. Rounded anchors are an incomplete filter; no-hit is not proof of
+    # independence. Any hit/candidate budget exhaustion is a hard failure.
+    train_references: dict[str, np.ndarray] = {}
+    for teacher in selected:
+        path = root / teacher.relative_path
+        values = np.loadtxt(path, delimiter=",", skiprows=1, dtype=np.float64)
+        if (
+            values.shape != (teacher.frame_count, len(_EXPECTED_COLUMNS))
+            or _hash_file(path) != teacher.source_hash
+        ):
+            raise ValueError("selected MotionDecode reference changed during split screening")
+        train_references[teacher.relative_path] = values
+    guard = MotionAnchorGuard(train_references)
+    retention_screened = 0
+    for clip in clips:
+        if clip.split != "retention":
+            continue
+        path = root / clip.relative_path
+        values = np.loadtxt(path, delimiter=",", skiprows=1, dtype=np.float64)
+        if (
+            values.shape != (clip.frame_count, len(_EXPECTED_COLUMNS))
+            or _hash_file(path) != clip.source_hash
+        ):
+            raise ValueError("retention MotionDecode reference changed during split screening")
+        guard.inspect(clip.relative_path, values)
+        retention_screened += 1
+
     category_counts = {
         category: sum(clip.category == category for clip in clips)
         for category in _CATEGORY_BY_DIRECTORY.values()
@@ -299,6 +328,9 @@ def audit_motiondecode_football(
         "split_rule": "sha256(relative_path)[0] % 5 == 0 -> retention",
         "exact_content_cross_split_checked": True,
         "near_duplicate_cross_split_checked": False,
+        "selected_train_to_retention_anchor_screened": True,
+        "retention_clips_anchor_screened": retention_screened,
+        "anchor_screen_is_incomplete": True,
         "source_independence_proven": False,
         "retention_metrics_accessed": False,
         "inventory_hash": hash_json(inventory),

@@ -114,3 +114,26 @@ def test_motiondecode_audit_rejects_identical_content_in_retention(tmp_path: Pat
         portfolio.audit_motiondecode_football(
             root, selected_per_category_and_foot=1, minimum_total_clips=7
         )
+
+
+def test_motiondecode_audit_rejects_shifted_selected_reference_in_retention(tmp_path: Path) -> None:
+    root = _dataset(tmp_path)
+    train = next((root / "extracted_s118" / "3.3.3.Football" / "3.3.3.1.Short_Pass").glob("*.csv"))
+    for index in range(10000):
+        retention = train.parent / f"shifted_{index:05d}.csv"
+        if portfolio._split_for_path(retention.relative_to(root).as_posix()) == "retention":  # noqa: SLF001
+            break
+    else:
+        pytest.fail("could not construct retention fixture")
+    values = np.loadtxt(train, delimiter=",", skiprows=1)
+    np.savetxt(
+        retention,
+        np.vstack([values[0], values]),
+        delimiter=",",
+        header=",".join(_header()),
+        comments="",
+    )
+    with pytest.raises(ValueError, match="motion overlap across splits"):
+        portfolio.audit_motiondecode_football(
+            root, selected_per_category_and_foot=1, minimum_total_clips=7
+        )
