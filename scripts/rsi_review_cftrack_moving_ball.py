@@ -14,7 +14,9 @@ def main():
     p.add_argument("--external-source", type=Path, required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
-    p.add_argument("--velocity-intercept", action="store_true")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--velocity-intercept", action="store_true")
+    mode.add_argument("--aim-retention", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -42,19 +44,38 @@ def main():
         else ("parent", "frozen-nominal-torque")
     )
     expected_status = (
-        "CFTRACK_VELOCITY_INTERCEPT_DEVELOPMENT_RECORDED"
+        "CFTRACK_REFERENCE_AIM_RETENTION_RECOVERED_WITH_GUARD_REJECTION"
+        if a.aim_retention
+        else "CFTRACK_VELOCITY_INTERCEPT_DEVELOPMENT_RECORDED"
         if a.velocity_intercept
         else "CFTRACK_FROZEN_TORQUE_MOVING_BALL_EXPLORATORY_RECORDED"
     )
-    expected = [(name, arm, vel) for name, vel in cases for arm in arms]
+    expected = (
+        [(name, "aim-retention", vel) for name, vel in cases if name != "left"]
+        if a.aim_retention
+        else [(name, arm, vel) for name, vel in cases for arm in arms]
+    )
+    selected = (
+        [r for r in source["records"] if r["case"] != "left"]
+        if a.aim_retention
+        else source["records"]
+    )
     if (
         source["status"] != expected_status
-        or [(r["case"], r["arm"], tuple(r["ball_velocity_m_s"])) for r in source["records"]]
-        != expected
+        or (
+            [r["case"] for r in source["records"]] != [name for name, _ in cases]
+            if a.aim_retention
+            else [(r["case"], r["arm"], tuple(r["ball_velocity_m_s"])) for r in source["records"]]
+            != expected
+        )
         or source["new_neural_calls"] > 2400
         or source["new_native_steps"] > 24000
         or source["neural_optimizer_updates"] != 0
-        or not source["paired_initial_states_equal"]
+        or not (
+            source["nominated_right_probe_prefix_exact"]
+            if a.aim_retention
+            else source["paired_initial_states_equal"]
+        )
         or not source["cold_template_unchanged"]
     ):
         raise ValueError("complete ordered paired moving-ball source and unchanged donor required")
@@ -75,14 +96,14 @@ def main():
         dict(
             source_head=a.expected_head,
             input_file_hashes=pins,
-            max_neural_calls=2400,
-            max_native_steps=24000,
+            max_neural_calls=900 if a.aim_retention else 2400,
+            max_native_steps=9000 if a.aim_retention else 24000,
             producer_factory_not_used=True,
             producer_torque_policy_or_layer_not_used_for_replay=True,
             envelope_math_shared=True,
             old_targets_for_verification_only=True,
             new_independent_scenarios=0,
-            velocity_intercept_reference_math_shared=a.velocity_intercept,
+            velocity_intercept_reference_math_shared=a.velocity_intercept or a.aim_retention,
             neural_optimizer_updates=0,
             hardware_authorized=False,
         ),
@@ -92,12 +113,16 @@ def main():
     import yaml
     from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
 
+    from rosclaw_soccer.rsi.cftrack_alignment_diagnostic import direct_approach_geometry
     from rosclaw_soccer.rsi.cftrack_direct_approach import condition_direct_kick_approach
     from rosclaw_soccer.rsi.cftrack_torque_intent import CFtrackTorqueIntentPlan
     from rosclaw_soccer.rsi.cftrack_torque_replay import replay_torque_trial
     from rosclaw_soccer.rsi.cftrack_torque_trial import complete_torque_trial
     from rosclaw_soccer.rsi.cftrack_trace_readback import verify_cftrack_trace
-    from rosclaw_soccer.rsi.cftrack_velocity_intercept import condition_velocity_intercept
+    from rosclaw_soccer.rsi.cftrack_velocity_intercept import (
+        condition_velocity_intercept,
+        predict_initial_intercept,
+    )
     from rosclaw_soccer.rsi.first_touch_outcome import label_first_touch, outcome_contract
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.omnicontact_policy_copy import cftrack_state_hash, copy_cftrack_policy
@@ -164,15 +189,52 @@ def main():
     kp = np.array(cfg["kp_lab"], np.float32)[order].astype(np.float64)
     kd = np.array(cfg["kd_lab"], np.float32)[order].astype(np.float64)
     effort = 0.85 * np.array(G1_HARD_TORQUE_LIMITS)
+    left_guard_verified = None
+    if a.aim_retention:
+        left = next(r for r in source["records"] if r["case"] == "left")
+        left_data = initial((0.0, 0.1, 0.0))
+        ball = left_data.xpos[lo.ball].copy()
+        goal = np.array([5.0, 0.0, 0.11], np.float32)
+        predicted, prediction = predict_initial_intercept(
+            ball, left_data.qvel[lo.bv : lo.bv + 3].copy(), goal
+        )
+        planned_goal = goal.astype(np.float64)
+        planned_goal[1] -= 0.4
+        geometry = direct_approach_geometry(
+            left_data.qpos[lo.rq : lo.rq + 3].copy(),
+            left_data.qpos[lo.rq + 3 : lo.rq + 7].copy(),
+            predicted,
+            planned_goal,
+        )
+        left_guard_verified = bool(
+            hash_json(prediction) == hash_json(left["prediction"])
+            and hash_json(geometry) == hash_json(left["alignment_geometry"])
+            and not geometry["lateral_within_guard"]
+            and left["outcome"]["event_status"] == "REFERENCE_ALIGNMENT_GUARD_REJECTED"
+            and left["physical_steps"] == left["neural_calls"] == 0
+        )
+        if not left_guard_verified:
+            raise ValueError("left reference guard rejection did not independently reconstruct")
     records = []
     calls = steps = 0
-    for source_row, (_, _, velocity) in zip(source["records"], expected, strict=True):
+    for source_row, (_, arm, velocity) in zip(selected, expected, strict=True):
         if not complete_torque_trial(source_row["run"], controls=300):
-            records.append(dict(case=source_row["case"], arm=source_row["arm"], complete=False))
+            records.append(dict(case=source_row["case"], arm=arm, complete=False))
             continue
-        path = a.source / source_row["artifact"]["path"]
+        matching = [
+            Path(path)
+            for path, value in pins.items()
+            if value == source_row["artifact"]["hash"]
+            and Path(path).name == source_row["artifact"]["path"]
+        ]
+        path = (
+            matching[0]
+            if a.aim_retention and len(matching) == 1
+            else a.source / source_row["artifact"]["path"]
+        )
         if (
-            path.parent != a.source
+            (not a.aim_retention and path.parent != a.source)
+            or (a.aim_retention and len(matching) != 1)
             or path.is_symlink()
             or digest(path) != source_row["artifact"]["hash"]
             or pins.get(str(path)) != digest(path)
@@ -182,7 +244,7 @@ def main():
             raw = {key: saved[key].copy() for key in saved.files}
         data = initial(velocity)
         policy = copy_cftrack_policy(prototype)
-        if a.velocity_intercept:
+        if a.velocity_intercept or a.aim_retention:
             world = SharedNativeMotorWorld(
                 model,
                 data,
@@ -196,7 +258,9 @@ def main():
                 expected_policy_type=type(prototype),
                 goal=np.array([5.0, 0.0, 0.11]),
             )
-            receipt = condition_velocity_intercept(player)
+            receipt = condition_velocity_intercept(
+                player, reference_goal_offset_y_m=-0.4 if a.aim_retention else 0.0
+            )
             if hash_json(receipt) != hash_json(source_row["reference"]):
                 raise ValueError("independently regenerated privileged reference differs")
         else:
@@ -235,7 +299,7 @@ def main():
             raise ValueError("independent unchanged H300 outcome differs")
         row = dict(
             case=source_row["case"],
-            arm=source_row["arm"],
+            arm=arm,
             complete=True,
             original_nn_input_output_and_target_exact=True,
             replay=replay,
@@ -250,15 +314,21 @@ def main():
     clean(a.expected_head)
     reviewed = [r for r in records if r["complete"]]
     pairs = [reviewed[i : i + 2] for i in range(0, len(reviewed), 2)] if len(reviewed) == 8 else []
+    expected_count = 3 if a.aim_retention else 8
+    expected_calls = expected_count * 300
     write_once(
         a.output / "complete.json",
         dict(
             status=(
-                "CFTRACK_INTERCEPT_ALL8_NN_AND_MANUAL_NATIVE_EXACT"
+                "CFTRACK_AIM_RETENTION_3_NN_NATIVE_AND_GUARD_EXACT"
+                if a.aim_retention
+                else "CFTRACK_INTERCEPT_ALL8_NN_AND_MANUAL_NATIVE_EXACT"
                 if a.velocity_intercept
                 else "CFTRACK_MOVING_BALL_ALL8_NN_AND_MANUAL_NATIVE_EXACT"
             )
-            if len(reviewed) == 8 and calls == 2400 and steps == 24000
+            if len(reviewed) == expected_count
+            and calls == expected_calls
+            and steps == expected_calls * 10
             else "CFTRACK_PAIRED_MOVING_BALL_PARTIAL_REVIEW_NOT_QUALIFIED",
             source_head=a.expected_head,
             source_hash=a.source_hash,
@@ -266,9 +336,13 @@ def main():
             records=records,
             parent_passes=sum(p[0]["outcome"]["task_pass"] for p in pairs),
             candidate_passes=sum(p[1]["outcome"]["task_pass"] for p in pairs),
+            aim_retention_physical_passes=sum(r["outcome"]["task_pass"] for r in reviewed)
+            if a.aim_retention
+            else None,
+            left_guard_reconstructed=left_guard_verified,
             first_arm=arms[0],
             second_arm=arms[1],
-            velocity_intercept_reference_math_shared=a.velocity_intercept,
+            velocity_intercept_reference_math_shared=a.velocity_intercept or a.aim_retention,
             new_neural_calls=calls,
             new_native_steps=steps,
             new_independent_scenarios=0,
