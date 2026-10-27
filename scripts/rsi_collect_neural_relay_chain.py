@@ -23,6 +23,7 @@ def main():
     p.add_argument("--new-context-block", type=int, choices=(0, 1, 2))
     p.add_argument("--balance-teacher-pair", nargs=4, action="append")
     p.add_argument("--balance-expanded", action="store_true")
+    p.add_argument("--receiver-follow-study", action="store_true")
     p.add_argument("--balance-pilot-review", type=Path)
     p.add_argument("--balance-pilot-review-hash")
     p.add_argument("--balance-pilot-review-head")
@@ -31,6 +32,14 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.receiver_follow_study and (
+        a.new_context_block is None
+        or a.balance_teacher_pair is not None
+        or a.balance_expanded
+        or a.successor_alignment_study
+        or a.reference_bridge_controls != [0]
+    ):
+        p.error("post-contact follow requires one isolated development block")
     if a.reference_bridge_controls not in ([0], [0, 5, 15, 30]):
         p.error("entire preregistered reference ablation [0] or [0,5,15,30] required")
     if a.successor_alignment_study and a.reference_bridge_controls != [0]:
@@ -158,6 +167,16 @@ def main():
             )
             for i in (-1, 0, 1, 2)
         ]
+    if a.receiver_follow_study:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                receiver_follow_gain=gain,
+            )
+            for gain in (0.0, 0.25, 0.5, 0.75)
+        ]
     if a.successor_alignment_study:
         arms = [
             arm | dict(assigned_receiver_pass=assigned, align_successor=align)
@@ -174,7 +193,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_balance_expanded.development.v6"
+                "soccer.neural_relay_post_touch_follow.development.v7"
+                if a.receiver_follow_study
+                else "soccer.neural_relay_balance_expanded.development.v6"
                 if a.balance_expanded
                 else "soccer.neural_relay_balance_teacher.development.v5"
                 if a.balance_teacher_pair is not None
@@ -214,6 +235,7 @@ def main():
             no_future_readiness=True,
             cartesian_teachers_enabled=False,
             geometry_role_selector_is_teacher=True,
+            post_touch_velocity_follow_is_unlearned_teacher=a.receiver_follow_study,
             receiver_velocity_original_H300_preserved=True,
             longer_dual_neural_standing_is_NEW_UNQUALIFIED_PROFILE=True,
             return_goal_rule="A CURRENT root+.25forward+.12lateral,z=.11 fixed at handoff",
@@ -243,6 +265,7 @@ def main():
             successor_alignment,
         )
         from rosclaw_soccer.rsi.relay_balance_teacher import RelayBalanceTeacher
+        from rosclaw_soccer.rsi.relay_post_touch_follow import post_touch_follow
         from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
         from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
         from rosclaw_soccer.rsi.shared_relay_setup import (
@@ -429,6 +452,17 @@ def main():
                     )
                     launch = intent.launch_seen
                     command = np.array(intent.command_body, np.float32)
+                    if a.receiver_follow_study:
+                        command = post_touch_follow(
+                            command,
+                            root_xy=q[:2],
+                            yaw=yaw,
+                            ball_xy=q[36:38],
+                            ball_velocity_xy=v[35:37],
+                            pass_direction=forward,
+                            contact_seen=readiness.contact_seen and not readiness.excluded_contact,
+                            gain=course["arm"]["receiver_follow_gain"],
+                        )
                     if entry.active:
                         command = np.array(
                             successor_alignment(
@@ -594,7 +628,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_BALANCE_EXPANDED64_COLLECTED_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_POST_TOUCH_FOLLOW32_COLLECTED_PENDING_OWN_REPLAY"
+                    if a.receiver_follow_study
+                    else "NEURAL_RELAY_BALANCE_EXPANDED64_COLLECTED_PENDING_OWN_REPLAY"
                     if a.balance_expanded
                     else "NEURAL_RELAY_BALANCE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
                     if a.balance_teacher_pair is not None

@@ -31,12 +31,15 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
+    follow_study = dec["protocol"] == "soccer.neural_relay_post_touch_follow.development.v7"
     balance_expanded = dec["protocol"] == "soccer.neural_relay_balance_expanded.development.v6"
     balance_study = (
         balance_expanded or dec["protocol"] == "soccer.neural_relay_balance_teacher.development.v5"
     )
     development_study = (
-        balance_study or dec["protocol"] == "soccer.neural_relay_development_contexts.v4"
+        follow_study
+        or balance_study
+        or dec["protocol"] == "soccer.neural_relay_development_contexts.v4"
     )
     reference_study = dec["protocol"] == "soccer.neural_relay_reference_bridge.v2"
     team_entry_study = dec["protocol"] == "soccer.neural_relay_team_entry.v3"
@@ -50,7 +53,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_BALANCE_EXPANDED64_COLLECTED_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_POST_TOUCH_FOLLOW32_COLLECTED_PENDING_OWN_REPLAY"
+        if follow_study
+        else "NEURAL_RELAY_BALANCE_EXPANDED64_COLLECTED_PENDING_OWN_REPLAY"
         if balance_expanded
         else "NEURAL_RELAY_BALANCE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
         if balance_study
@@ -74,6 +79,7 @@ def main():
             "soccer.neural_relay_development_contexts.v4",
             "soccer.neural_relay_balance_teacher.development.v5",
             "soccer.neural_relay_balance_expanded.development.v6",
+            "soccer.neural_relay_post_touch_follow.development.v7",
         )
         or len(s["records"]) != expected_worlds
         or len(dec["courses"]) != expected_worlds
@@ -98,6 +104,16 @@ def main():
                     start=80,
                     memory="own_shadow_carry",
                     reference_bridge_controls=0,
+                    receiver_follow_gain=gain,
+                )
+                for gain in (0.0, 0.25, 0.5, 0.75)
+            ]
+            if follow_study
+            else [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
                     balance_teacher=i,
                 )
                 for i in (-1, 0, 1, 2)
@@ -110,6 +126,12 @@ def main():
             ]
         )
         sides = (-0.75, -0.35, 0.35, 0.75) if balance_expanded else (-0.55, 0.55)
+        if follow_study and (
+            dec.get("post_touch_velocity_follow_is_unlearned_teacher") is not True
+            or dec.get("joint_targets_remain_actual_neural_outputs") is not True
+            or dec.get("bounded_teacher_added_after_neural") is not False
+        ):
+            raise ValueError("honest post-contact command teacher provenance required")
         if balance_expanded and (
             dec.get("receiver_lateral_offsets_m") != list(sides)
             or dec.get("joint_targets_remain_actual_neural_outputs") is not False
@@ -215,6 +237,7 @@ def main():
         )
         from rosclaw_soccer.rsi.relay_audit_clock import RelayAuditClock
         from rosclaw_soccer.rsi.relay_balance_teacher import RelayBalanceTeacher
+        from rosclaw_soccer.rsi.relay_post_touch_follow import post_touch_follow
         from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
         from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
         from rosclaw_soccer.rsi.shared_relay_setup import (
@@ -388,6 +411,17 @@ def main():
                     )
                     launch = intent.launch_seen
                     command = np.array(intent.command_body, np.float32)
+                    if follow_study:
+                        command = post_touch_follow(
+                            command,
+                            root_xy=q[:2],
+                            yaw=yaw,
+                            ball_xy=q[36:38],
+                            ball_velocity_xy=v[35:37],
+                            pass_direction=forward,
+                            contact_seen=readiness.contact_seen and not readiness.excluded_contact,
+                            gain=course["arm"]["receiver_follow_gain"],
+                        )
                     if entry.active:
                         command = np.array(
                             successor_alignment(
