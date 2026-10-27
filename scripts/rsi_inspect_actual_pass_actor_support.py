@@ -75,6 +75,10 @@ def main():
             source_head=args.expected_head,
             alignment="hypothetical decision 19 controls after first passer-foot force over 10N",
             own_foot_history="force over 1N in recorded prior receiver substeps",
+            oracle_scan=(
+                "offline future-looking minimum distance before first receiver foot contact, "
+                "with hypothetical reset of relative frame to 19; not causal or deployable"
+            ),
             physical_integrations=0,
             actor_installed=False,
             simulation_transfer_proven=False,
@@ -142,6 +146,20 @@ def main():
                     for seed, actor in models.items()
                 },
             )
+            all_own = np.flatnonzero((force[:, :, 1, :2] > 1.0).any(axis=(1, 2)))
+            end = min(len(qpos) - 1, int(all_own[0])) if len(all_own) else len(qpos) - 1
+            best = None
+            for candidate in range(decision, end + 1):
+                data.qpos[:], data.qvel[:] = qpos[candidate - 1, -1], qvel[candidate - 1, -1]
+                q, v = layout.canonical(data)
+                hypothetical = SimpleNamespace(
+                    qpos=q, qvel=v, frame=19, last_own_foot_contact_time_sec=None
+                )
+                feat = np.asarray(ReceivingTemporalMotorExpert.features(hypothetical))
+                distance = float(np.min(np.linalg.norm(models["17"].support - feat, axis=1)))
+                if best is None or distance < best["distance"]:
+                    best = dict(control=candidate, distance=distance)
+            item["oracle_best_prefoot"] = best
         rows.append(item)
         write_once(args.output / f"course-{record['index']}.json", item)
     if any(digest(p) != h for p, h in zip(paths, hashes, strict=True)):
@@ -172,6 +190,13 @@ def main():
                 )
                 for seed in models
             },
+            oracle_prefoot_available=sum(r.get("oracle_best_prefoot") is not None for r in rows),
+            oracle_prefoot_within_support=sum(
+                r.get("oracle_best_prefoot") is not None
+                and r["oracle_best_prefoot"]["distance"] <= models["17"].radius
+                for r in rows
+            ),
+            oracle_scan_is_future_looking_not_deployable=True,
             physical_integrations=0,
             actor_installed=False,
             simulation_transfer_proven=False,
