@@ -6,6 +6,7 @@ from rosclaw_soccer.rsi.receiving_foot_observation import (
     first_contact_control_entry,
     measure_foot_ball_kinematics,
 )
+from scripts.rsi_audit_relay_foot_entry import finite_difference
 
 
 def model_fixture():
@@ -49,3 +50,25 @@ def test_event_selection_uses_previous_control_not_future_substep():
     assert q[1, -1, 0] == 1
     forces[:] = 0
     assert first_contact_control_entry(q, v, forces, np.zeros(79), np.zeros(76)) is None
+
+
+def test_independent_finite_difference_auditor():
+    model = mujoco.MjModel.from_xml_string("""
+    <mujoco><worldbody>
+      <body name="soccer_ball" pos="0.6 0 0.2"><freejoint/>
+        <geom type="sphere" size="0.1" mass="1"/></body>
+      <body name="b/left_ankle_roll_link" pos="0 0.1 0.1">
+        <joint type="hinge" axis="0 0 1"/><geom type="sphere" size="0.05" mass="1"/></body>
+      <body name="b/right_ankle_roll_link" pos="0 -0.1 0.1">
+        <joint type="hinge" axis="0 0 1"/><geom type="sphere" size="0.05" mass="1"/></body>
+    </worldbody></mujoco>""")
+    q, v = model.qpos0.copy(), np.array([0.5, -0.1, 0.2, 0, 0, 0.3, 0.7, -0.4])
+    actual = measure_foot_ball_kinematics(
+        model,
+        q,
+        v,
+        foot_body_names=("b/left_ankle_roll_link", "b/right_ankle_roll_link"),
+        ball_body_name="soccer_ball",
+        ball_dofadr=0,
+    )
+    assert np.allclose(finite_difference(model, q, v), actual, rtol=0, atol=1e-6)
