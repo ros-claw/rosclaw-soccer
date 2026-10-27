@@ -53,6 +53,7 @@ def main():
         action_offsets=dataset["actions"],
         rewards=dataset["rewards"],
         safe=dataset["safe"],
+        eligible=dataset["eligible"],
     )
     if digest(args.source) != source_bytes_hash:
         raise ValueError("source report changed during export")
@@ -69,6 +70,7 @@ def main():
             physical_trace_hashes=dataset["trace_hashes"],
             rewards=dataset["rewards"].tolist(),
             safe=dataset["safe"].tolist(),
+            eligible=dataset["eligible"].tolist(),
             source_raw_trajectories_available=False,
             independent_replay_verified=False,
             promotion_authorized=False,

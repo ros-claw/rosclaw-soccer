@@ -34,7 +34,7 @@ def import_team_action_map(report: dict[str, Any]) -> dict[str, Any]:
         or len(actions) != 15
     ):
         raise ValueError("complete original twelve-course fifteen-action map required")
-    features, courses, traces = [], [], []
+    features, courses, traces, eligible = [], [], [], []
     rewards = np.zeros((12, 16), np.float32)
     safe = np.zeros((12, 16), np.bool_)
     action_offsets = [np.zeros(12, np.float64)]
@@ -70,6 +70,12 @@ def import_team_action_map(report: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("complete measured pre-decision observation required")
         features.append(obs)
         courses.append(row["course"])
+        if (
+            type(row.get("protected_episode")) is not bool
+            or type(row.get("activation_enabled")) is not bool
+        ):
+            raise ValueError("explicit protection and activation fields required")
+        eligible.append(row["activation_enabled"] and not row["protected_episode"])
         value, is_safe = label(row)
         rewards[i, 0], safe[i, 0] = value, is_safe
         traces.append([row["physical_trace_hash"]])
@@ -107,6 +113,7 @@ def import_team_action_map(report: dict[str, Any]) -> dict[str, Any]:
         actions=np.stack(action_offsets),
         rewards=rewards,
         safe=safe,
+        eligible=np.asarray(eligible, dtype=np.bool_),
         courses=courses,
         action_ids=ids,
         trace_hashes=traces,
