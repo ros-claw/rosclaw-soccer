@@ -49,7 +49,12 @@ class TeamCoverageMotor(ReceivingSmoothResidualMotor):
         )
 
     def propose(self, observation: ReceivingFeedbackObservation) -> tuple[float, ...]:
-        if not self.activation_decided and observation.frame >= 19 and not self.protected_episode:
+        self.ensure_protection_decided(observation)
+        if (
+            not self.activation_decided
+            and observation.frame >= 19
+            and self.protected_episode is False
+        ):
             measured = ReceivingTemporalMotorExpert.features(observation)
             distances = [
                 np.linalg.norm(np.asarray(measured) - np.asarray(row))

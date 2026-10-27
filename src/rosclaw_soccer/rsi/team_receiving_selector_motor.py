@@ -48,6 +48,7 @@ class TeamReceivingSelectorMotor(ReceivingSmoothResidualMotor):
         )
 
     def propose(self, observation: ReceivingFeedbackObservation) -> tuple[float, ...]:
+        self.ensure_protection_decided(observation)
         if not self.activation_decided and observation.frame >= 19:
             measured = ReceivingTemporalMotorExpert.features(observation)
             self.activation_features = measured
@@ -72,7 +73,7 @@ class TeamReceivingSelectorMotor(ReceivingSmoothResidualMotor):
                 base = np.asarray(self.candidate_neural_weights.output_bias)
                 refined = np.asarray(self.refined_neural_weights.output_bias)
                 assert self.selector is not None
-                if not self.protected_episode:
+                if self.protected_episode is False:
                     self.selected_action, self.selector_out_of_support = self.selector.select(
                         measured
                     )

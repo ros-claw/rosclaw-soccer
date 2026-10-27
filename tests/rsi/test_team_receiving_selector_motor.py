@@ -6,6 +6,7 @@ import pytest
 from test_receiving_smooth_residual_motor import _actor
 
 from rosclaw_soccer.rsi.receiving_foot_servo_phase_motor import ReceivingFootServoPhaseMotor
+from rosclaw_soccer.rsi.receiving_kinematic_temporal_expert import ReceivingKinematicTemporalExpert
 from rosclaw_soccer.rsi.receiving_temporal_motor_expert import ReceivingTemporalMotorExpert
 from rosclaw_soccer.rsi.team_receiving_selector import TeamReceivingSelector
 from rosclaw_soccer.rsi.team_receiving_selector_motor import TeamReceivingSelectorMotor
@@ -37,6 +38,9 @@ def make_motor(action):
 
 def test_parent_fallback_and_learned_action_respect_activation(monkeypatch):
     monkeypatch.setattr(ReceivingFootServoPhaseMotor, "propose", lambda self, obs: (0.0,) * 29)
+    monkeypatch.setattr(
+        ReceivingKinematicTemporalExpert, "features", staticmethod(lambda obs: (0.0,) * 48)
+    )
     monkeypatch.setattr(
         ReceivingTemporalMotorExpert,
         "features",

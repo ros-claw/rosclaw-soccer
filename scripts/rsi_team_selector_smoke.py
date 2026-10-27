@@ -163,6 +163,7 @@ def main():
     parser.add_argument("--coverage-probe", action="store_true")
     parser.add_argument("--coverage-learned-dir", type=Path)
     parser.add_argument("--coverage-full-retention", action="store_true")
+    parser.add_argument("--protected-smoke", action="store_true")
     parser.add_argument("--coverage-audit", type=Path)
     parser.add_argument("--learned-proof", type=Path)
     parser.add_argument("--learned-audit", type=Path)
@@ -181,6 +182,10 @@ def main():
     neighbor = args.neighbor_bank is not None
     if args.coverage_full_retention and not learned_coverage:
         raise ValueError("full learned retention requires trained coverage actors")
+    if args.protected_smoke and (
+        not learned_coverage or args.coverage_full_retention or args.coverage_probe or neighbor
+    ):
+        raise ValueError("protected smoke requires only the frozen learned actors")
     if neighbor and (not learned_coverage or args.coverage_full_retention or args.coverage_probe):
         raise ValueError("neighbor development requires the frozen learned actors only")
     if args.output.exists() or args.output.resolve().is_relative_to(Path.cwd()):
@@ -397,6 +402,11 @@ def main():
         if neighbor
         else [
             next(row for row in baseline if row["course"]["seed"] == seed)
+            for seed in (223003, 259010)
+        ]
+        if args.protected_smoke
+        else [
+            next(row for row in baseline if row["course"]["seed"] == seed)
             for seed in coverage_seeds
         ]
         if coverage_mode and not args.coverage_full_retention
@@ -559,6 +569,8 @@ def main():
             partition=(
                 "CONSUMED_COVERAGE_PROBE"
                 if args.coverage_probe
+                else "CONSUMED_PROTECTION_ORDER_SMOKE"
+                if args.protected_smoke
                 else "NEW_NEIGHBOR_DEVELOPMENT_NOT_FRESH"
                 if neighbor
                 else "CONSUMED_COVERAGE_LEARNED_FULL_RETENTION"
@@ -654,6 +666,8 @@ def main():
             status=(
                 "TEAM_RECEIVING_COVERAGE_PROBE_NOT_PROMOTED"
                 if args.coverage_probe
+                else "TEAM_RECEIVING_PROTECTION_ORDER_SMOKE_NOT_PROMOTED"
+                if args.protected_smoke
                 else "TEAM_RECEIVING_NEIGHBOR_DEVELOPMENT_NOT_PROMOTED"
                 if neighbor
                 else "TEAM_RECEIVING_COVERAGE_LEARNED_FULL_RETENTION_NOT_PROMOTED"
@@ -674,6 +688,7 @@ def main():
             coverage_probe=args.coverage_probe,
             coverage_learned=learned_coverage,
             coverage_full_retention=args.coverage_full_retention,
+            protected_smoke=args.protected_smoke,
             neighbor_development=neighbor,
             full_retention=args.full_retention,
             historical_parent_all_exact=all_historical_exact,

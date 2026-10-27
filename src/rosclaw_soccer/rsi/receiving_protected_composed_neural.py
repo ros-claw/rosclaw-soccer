@@ -50,13 +50,17 @@ class ReceivingProtectedComposedNeural(ReceivingComposedNeuralResidual):
             }
         )
 
-    def propose(self, observation: ReceivingFeedbackObservation) -> tuple[float, ...]:
+    def ensure_protection_decided(self, observation: ReceivingFeedbackObservation) -> None:
+        """Decide protection before any outer selector can change its policy."""
         if self.protected_episode is None and observation.frame >= 19:
             measured = np.asarray(ReceivingKinematicTemporalExpert.features(observation)[:10])
             self.protected_episode = any(
                 np.linalg.norm(measured - np.asarray(row)) <= self.protection_radius
                 for row in self.protected_initial_features
             )
+
+    def propose(self, observation: ReceivingFeedbackObservation) -> tuple[float, ...]:
+        self.ensure_protection_decided(observation)
         if self.protected_episode:
             return ReceivingComposedContactRouter.propose(self, observation)
         return super().propose(observation)
