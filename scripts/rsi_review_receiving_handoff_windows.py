@@ -9,6 +9,18 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+STUDY_STATUSES = {
+    "PREALIGNED_FOOT_CAPTURE_TEACHER32_COLLECTED_PENDING_OWN_REPLAY": (
+        "PREALIGNED_FOOT_CAPTURE32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
+    ),
+    **{
+        f"CAPTURE_{kind}_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY": (
+            f"CAPTURE_{kind}_SWEEP_DEVELOPMENT32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
+        )
+        for kind in ("GEOMETRY", "PRIORITY", "BILATERAL", "LONG_HORIZON")
+    },
+}
+
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
@@ -36,8 +48,8 @@ def main():
         raise ValueError("unused output and exact complete source/own audit required")
     source, audit, decl = [json.loads(p.read_text()) for p in (sp, ap, dp)]
     if (
-        source["status"] != "PREALIGNED_FOOT_CAPTURE_TEACHER32_COLLECTED_PENDING_OWN_REPLAY"
-        or audit["status"] != "PREALIGNED_FOOT_CAPTURE32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
+        source["status"] not in STUDY_STATUSES
+        or audit["status"] != STUDY_STATUSES.get(source["status"])
         or audit["source_head"] != a.audit_head
         or audit["producer_hash"] != digest(sp)
         or source["declaration_hash"] != digest(dp)
