@@ -43,6 +43,16 @@ BANDIT_CASES = {
     "yplus-vminus": "98a3a3644148f3b72780f1ea55e7ac4da5c8031b66d508a75a6d02fd3c5c3a94",
     "yplus-vplus": "b62e6864bab721d5e7410ae32cae8d0caf14c785483d8af0d3abd08280536532",
 }
+GRID_CASES = {
+    "yminus-far-vminus": "6828be3be9c84c2168a3a2c39031cf11e74131dbfe04430715f56c93e6d4544b",
+    "yminus-far-vplus": "2fb939db43e670b13016831ea0104daa968746575f9530311cdc5258e38755bb",
+    "yminus-near-vminus": "362fd5a6232eac1c357293ca395e40d137725f08d9c99a194ac018d4a9ef2535",
+    "yminus-near-vplus": "d19e7c0e92542b99c3af7bfebad2cc1b1fac221091d60e1d1360a3f89b9f13bb",
+    "yplus-far-vminus": "264b95b8242b33bf44e390885aabec2edd3c2034fae4652c6826602f7efe24c2",
+    "yplus-far-vplus": "ada436f85facfce0290bbdd478e1a6b1bacccb87e3f0de69e7f7603cb440d9be",
+    "yplus-near-vminus": "ec56a6629b4dd2da9144034269b1ea11ec7fa6a5848d2a790d55da5c01846f43",
+    "yplus-near-vplus": "e13ec24c084e35bbc13123476a02295f77578c6dc64fd5080e7b786f9490f58b",
+}
 
 
 def main():
@@ -51,10 +61,19 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--training", action="store_true")
     parser.add_argument("--bandit", action="store_true")
+    parser.add_argument("--grid", action="store_true")
     args = parser.parse_args()
-    if args.bandit and args.training:
-        raise ValueError("training and bandit audit are different splits")
-    selected_cases = BANDIT_CASES if args.bandit else TRAINING_CASES if args.training else CASES
+    if sum((args.bandit, args.training, args.grid)) > 1:
+        raise ValueError("training, grid and bandit audit are different splits")
+    selected_cases = (
+        GRID_CASES
+        if args.grid
+        else BANDIT_CASES
+        if args.bandit
+        else TRAINING_CASES
+        if args.training
+        else CASES
+    )
     if args.bandit:
         bandit_path = ROOT / "rsi-contact-bandit-training-20261027/complete.json"
         if (
@@ -98,6 +117,7 @@ def main():
         dict(
             cases=selected_cases,
             bandit_split=args.bandit,
+            grid_training_split=args.grid,
             training_split=args.training,
             source_head=args.expected_head,
             raw_hashes_verified=True,
@@ -110,10 +130,12 @@ def main():
     results = {}
     for case, expected_hash in selected_cases.items():
         prefix = (
-            "rsi-bandit-eval"
+            "rsi-contact-grid"
+            if args.grid
+            else "rsi-bandit-eval"
             if args.bandit
             else "rsi-approach-train"
-            if args.training
+            if args.training or args.grid
             else "rsi-static-holdout"
         )
         root = ROOT / f"{prefix}-{case}-20261027"
@@ -125,10 +147,10 @@ def main():
             "OFFLINE_BANDIT_PAIRED_PRIVATE_HOLDOUT_NOT_PROMOTED"
             if args.bandit
             else "CFTRACK_STATIC_APPROACH_TRAINING_DATA_NOT_PROMOTED"
-            if args.training
+            if args.training or args.grid
             else "STATIC_CONTACT_PAIRED_HOLDOUT_NOT_PROMOTED"
         )
-        case_key = "training_case" if args.training else "holdout_id"
+        case_key = "training_case" if args.training or args.grid else "holdout_id"
         if report["status"] != expected_status or report[case_key] != case:
             raise ValueError("matching unpromoted holdout identity required")
         arms = {}
@@ -137,7 +159,7 @@ def main():
             ["parent", "seed-17", "seed-43", "seed-71"]
             if args.bandit
             else ["parent", *(f"hg{i}-{side}" for i in range(4) for side in ("minus", "plus"))]
-            if args.training
+            if args.training or args.grid
             else ["parent", "candidate"]
         )
         for arm in arm_names:
@@ -228,6 +250,8 @@ def main():
             status=(
                 "STATIC_BANDIT_HASH_ACTOR_FORCE_READBACK_NOT_EXECUTION"
                 if args.bandit
+                else "STATIC_GRID_HASH_FORCE_GEOMETRY_READBACK_NOT_EXECUTION"
+                if args.grid
                 else "STATIC_TRAINING_HASH_FORCE_GEOMETRY_READBACK_NOT_EXECUTION"
                 if args.training
                 else "STATIC_HOLDOUT_HASH_FORCE_GEOMETRY_READBACK_NOT_EXECUTION"
