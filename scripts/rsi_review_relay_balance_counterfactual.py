@@ -57,6 +57,41 @@ def bind(root: Path, row: dict, name: str) -> Path | None:
     return path
 
 
+def verify_same_handoff(root: Path, baseline: dict, candidate: dict) -> None:
+    """Bind all arms to one real pre-intervention trajectory and private state."""
+    b, c = baseline["handoff"], candidate["handoff"]
+    if (b is None) != (c is None):
+        raise ValueError("teacher cannot alter pre-handoff readiness")
+    if baseline["artifacts"]["initial"]["hash"] != candidate["artifacts"]["initial"]["hash"]:
+        raise ValueError("paired initial physical state differs")
+    if b is None:
+        for name in baseline["artifacts"]:
+            old, new = baseline["artifacts"][name], candidate["artifacts"][name]
+            if (old is None) != (new is None) or old is not None and old["hash"] != new["hash"]:
+                raise ValueError("teacher changed a world without a handoff")
+        return
+    if (
+        b["control"] != c["control"]
+        or b["boundary"]["hash"] != c["boundary"]["hash"]
+        or b["return_goal"] != c["return_goal"]
+        or b["kick_origin"] != c["kick_origin"]
+    ):
+        raise ValueError("paired physical and private handoff state differs")
+    count = b["control"]
+    for name in ("physics", "passer_nn", "receiver_velocity", "receiver_shadow"):
+        left, right = bind(root, baseline, name), bind(root, candidate, name)
+        if left is None or right is None:
+            raise ValueError("complete pre-handoff trace required")
+        with np.load(left, allow_pickle=False) as x, np.load(right, allow_pickle=False) as y:
+            if set(x.files) != set(y.files) or any(
+                x[key].shape[0] < count
+                or y[key].shape[0] < count
+                or not np.array_equal(x[key][:count], y[key][:count])
+                for key in x.files
+            ):
+                raise ValueError("physical, target or private neural prefix differs")
+
+
 def measured(root: Path, row: dict) -> dict:
     physics = bind(root, row, "physics")
     if physics is None:
@@ -186,7 +221,9 @@ def main() -> None:
                 raise ValueError("old baseline handoff changed")
             parent = measured(root, base)
             for teacher in (0, 1, 2):
-                candidate = measured(root, new[(context, side, teacher)])
+                candidate_row = new[(context, side, teacher)]
+                verify_same_handoff(root, base, candidate_row)
+                candidate = measured(root, candidate_row)
                 comparisons[teacher].append((parent, candidate))
                 detail.append(
                     dict(
@@ -220,6 +257,7 @@ def main() -> None:
             summaries={str(k): compare_balance_outcomes(v) for k, v in comparisons.items()},
             records=detail,
             original_baselines_raw_byte_identical=True,
+            paired_physical_and_private_handoff_prefix_exact=True,
             teachers_are_not_learned_actor=True,
             optimization_updates=0,
             independent_fresh=False,
