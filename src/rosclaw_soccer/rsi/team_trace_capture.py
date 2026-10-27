@@ -23,7 +23,22 @@ def extract_team_trace(trace: Mapping[str, Any]) -> dict[str, np.ndarray]:
     if ball.ndim != 2 or ball.shape[1] != 7 or not 1 <= len(ball) <= 100000:
         raise ValueError("bounded ball pose timeline required")
     frames = len(ball)
-    expected = {"time": (frames,), "ball_pose": (frames, 7), "ball_velocity": (frames, 6)}
+    expected = {
+        "time": (frames,),
+        "ball_pose": (frames, 7),
+        "ball_velocity": (frames, 6),
+        **{
+            key: (frames,)
+            for key in (
+                "ball_contact_agent_code",
+                "ball_contact_effector_code",
+                "ball_contact_force_n",
+                "ball_nonfoot_contact_agent_code",
+                "ball_nonfoot_contact_force_n",
+                "robot_robot_contact_count",
+            )
+        },
+    }
     for agent in ROSTER:
         expected.update(
             {
@@ -31,6 +46,9 @@ def extract_team_trace(trace: Mapping[str, Any]) -> dict[str, np.ndarray]:
                 f"{agent}_joint_position": (frames, 29),
                 f"{agent}_joint_velocity": (frames, 29),
                 f"{agent}_joint_torque": (frames, 29),
+                f"{agent}_joint_safety_margin_rad": (frames, 29),
+                f"{agent}_left_foot_position": (frames, 3),
+                f"{agent}_right_foot_position": (frames, 3),
             }
         )
     result = {}

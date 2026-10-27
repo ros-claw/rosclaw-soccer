@@ -287,8 +287,8 @@ def main():
             source_pins=pins,
             raw_trace_keys=PHYSICAL_KEYS,
             full_team_snapshot_fields=(
-                "time, ball pose/velocity and each player's pelvis/joint "
-                "position, velocity and torque"
+                "time, ball pose/velocity/contact, robot collision, each player's "
+                "pelvis, joint position/velocity/torque/margin and feet"
             ),
             historical_physical_hash_covers_only_raw_trace_keys=True,
             partition="CONSUMED_FULL_RETENTION" if args.full_retention else "CONSUMED_SMOKE_ONLY",
