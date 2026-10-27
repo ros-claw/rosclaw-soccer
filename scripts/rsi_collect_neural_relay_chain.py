@@ -25,6 +25,10 @@ def main():
     p.add_argument("--balance-expanded", action="store_true")
     p.add_argument("--receiver-follow-study", action="store_true")
     p.add_argument("--receiver-whole-identity", action="store_true")
+    p.add_argument("--receiver-exploration", action="store_true")
+    p.add_argument("--identity-review", type=Path)
+    p.add_argument("--identity-review-hash")
+    p.add_argument("--identity-review-head")
     p.add_argument("--balance-pilot-review", type=Path)
     p.add_argument("--balance-pilot-review-hash")
     p.add_argument("--balance-pilot-review-head")
@@ -33,6 +37,23 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.receiver_exploration and (
+        a.new_context_block is None
+        or a.balance_teacher_pair is not None
+        or a.balance_expanded
+        or a.receiver_follow_study
+        or a.receiver_whole_identity
+        or a.successor_alignment_study
+        or a.reference_bridge_controls != [0]
+        or not a.identity_review
+        or not a.identity_review_hash
+        or not a.identity_review_head
+    ):
+        p.error("receiver exploration requires one isolated block and exact identity review")
+    if not a.receiver_exploration and any(
+        (a.identity_review, a.identity_review_hash, a.identity_review_head)
+    ):
+        p.error("identity review inputs belong only to receiver exploration")
     if a.receiver_whole_identity and (
         a.new_context_block is None
         or a.balance_teacher_pair is not None
@@ -89,6 +110,24 @@ def main():
     pins, base_hash, candidates, contexts = admit_frontier(
         a.frontier_root, a.frontier_head, a.frontier_hash
     )
+    if a.receiver_exploration:
+        if a.identity_review.is_symlink() or digest(a.identity_review) != a.identity_review_hash:
+            raise ValueError("exact independent whole-receiver identity review required")
+        identity = json.loads(a.identity_review.read_text())
+        if (
+            identity.get("status") != "RELAY_WHOLE_RECEIVER_ZERO_IDENTITY_QUALIFIED"
+            or identity.get("source_head") != a.identity_review_head
+            or identity.get("conditions") != 24
+            or len(identity.get("records", [])) != 24
+            or identity.get("identity_passed") is not True
+            or identity.get("own_physics_and_neural_replay_complete") is not True
+            or any(
+                identity.get(k) is not False
+                for k in ("trained", "promotion_authorized", "hardware_authorized")
+            )
+        ):
+            raise ValueError("all 24 strict zero-identity own-replayed conditions required")
+        pins[str(a.identity_review)] = a.identity_review_hash
     if [c["seed"] for c in candidates] != [65023]:
         raise ValueError("same loss-free frozen neural motor required")
     blocks = ((2, 3, 5, 7), (8, 9, 11, 13), (15, 16, 17, 18))
@@ -197,6 +236,17 @@ def main():
             )
             for whole in (False, True)
         ]
+    if a.receiver_exploration:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                receiver_whole=True,
+                exploration_seed=seed,
+            )
+            for seed in (None, 92117, 92143, 92171)
+        ]
     if a.successor_alignment_study:
         arms = [
             arm | dict(assigned_receiver_pass=assigned, align_successor=align)
@@ -213,7 +263,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_whole_receiver_identity.development.v8"
+                "soccer.neural_relay_receiver_exploration.development.v9"
+                if a.receiver_exploration
+                else "soccer.neural_relay_whole_receiver_identity.development.v8"
                 if a.receiver_whole_identity
                 else "soccer.neural_relay_post_touch_follow.development.v7"
                 if a.receiver_follow_study
@@ -236,6 +288,9 @@ def main():
             balance_pilot_review=str(a.balance_pilot_review) if a.balance_expanded else None,
             balance_pilot_review_hash=a.balance_pilot_review_hash,
             balance_pilot_review_head=a.balance_pilot_review_head,
+            identity_review=str(a.identity_review) if a.receiver_exploration else None,
+            identity_review_hash=a.identity_review_hash,
+            identity_review_head=a.identity_review_head,
             receiver_lateral_offsets_m=list(sides),
             balance_teacher_is_not_learned_actor=a.balance_teacher_pair is not None,
             candidate=candidates[0],
@@ -250,7 +305,8 @@ def main():
             assigned_receiver_goal_is_fixed_communicated_forefoot=a.successor_alignment_study,
             aligned_entry_consecutive_measured_controls=10,
             prior_closed_relay=prior,
-            joint_targets_remain_actual_neural_outputs=a.balance_teacher_pair is None,
+            joint_targets_remain_actual_neural_outputs=a.balance_teacher_pair is None
+            and not a.receiver_exploration,
             bounded_teacher_added_after_neural=a.balance_teacher_pair is not None,
             all_bodies_initialized_once=True,
             no_ball_reposition=True,
@@ -259,6 +315,9 @@ def main():
             geometry_role_selector_is_teacher=True,
             post_touch_velocity_follow_is_unlearned_teacher=a.receiver_follow_study,
             whole_receiver_identity_not_trained=a.receiver_whole_identity,
+            receiver_exploration_is_stochastic_not_training=a.receiver_exploration,
+            receiver_sampling_profile="contact-v1" if a.receiver_exploration else None,
+            receiver_sampling_law="box-truncated-ar1" if a.receiver_exploration else None,
             actual_actor_calls_are_body_proposals_not_auxiliary_forward_passes=True,
             receiver_velocity_original_H300_preserved=True,
             longer_dual_neural_standing_is_NEW_UNQUALIFIED_PROFILE=True,
@@ -273,8 +332,10 @@ def main():
         ),
     )
     counts = dict(native_steps=0, actual_actor_calls=0, shadow_actor_calls=0)
-    if a.receiver_whole_identity:
+    if a.receiver_whole_identity or a.receiver_exploration:
         counts.update(receiver_onnx_calls=0, receiver_plastic_calls=0, receiver_anchor_calls=0)
+    if a.receiver_exploration:
+        counts["receiver_stochastic_calls"] = 0
     records = []
     try:
         import mujoco
@@ -284,6 +345,7 @@ def main():
         from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
         from rosclaw_soccer.rsi.neural_relay_incoming import incoming_delivery
         from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
+        from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
         from rosclaw_soccer.rsi.receiving_handoff_opportunity import body_contact_kind
         from rosclaw_soccer.rsi.receiving_successor_alignment import (
             SuccessorAlignmentGate,
@@ -318,7 +380,11 @@ def main():
             checkpoint_kind=candidate["kind"],
         )
         setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor, context_indices=indices)
-        whole_actor = zero_receiver_actor(setup) if a.receiver_whole_identity else None
+        whole_actor = (
+            zero_receiver_actor(setup)
+            if a.receiver_whole_identity or a.receiver_exploration
+            else None
+        )
         (a.output / "scene.xml").write_text(setup.xml)
         typed = []
         for i in indices:
@@ -349,6 +415,11 @@ def main():
                     expected_config_hash=pins[str(setup.velocity_config)],
                     horizon_controls=300,
                 )
+                if course["arm"].get("exploration_seed") is not None:
+                    ReceiverExplorationStream(
+                        np.asarray(setup.velocity_parameters.action_scale, dtype=np.float32),
+                        seed=course["arm"]["exploration_seed"],
+                    )
             teacher_index = course["arm"].get("balance_teacher", -1)
             if teacher_index >= 0:
                 RelayBalanceTeacher(balance_latents[teacher_index], scale=ep.scale, order=ep.order)
@@ -400,6 +471,7 @@ def main():
             )
             velocity = setup.velocity()
             whole_receiver = None
+            receiver_sampler = None
             if course["arm"].get("receiver_whole", False):
                 if whole_actor is None:
                     raise ValueError("qualified zero whole receiver required")
@@ -413,6 +485,11 @@ def main():
                     expected_config_hash=pins[str(setup.velocity_config)],
                     horizon_controls=300,
                 )
+                if course["arm"].get("exploration_seed") is not None:
+                    receiver_sampler = ReceiverExplorationStream(
+                        np.asarray(setup.velocity_parameters.action_scale, dtype=np.float32),
+                        seed=course["arm"]["exploration_seed"],
+                    )
             shadow = SharedShadowMotor(
                 w,
                 "b/",
@@ -540,7 +617,17 @@ def main():
                     else:
                         anchor3 = np.array([anchor[0], anchor[1], 0.11], dtype=np.float64)
                         target_b, trace_v = whole_receiver.propose(command, anchor3, frame=step)
-                    if a.receiver_whole_identity:
+                        if receiver_sampler is not None:
+                            from rosclaw_soccer.providers.g1.velocity_policy import target29
+
+                            sampled_action, sample_trace = receiver_sampler.propose(
+                                trace_v["action"], trace_v["reference_action"], control=step
+                            )
+                            target_b = target29(sampled_action, whole_receiver.params)
+                            trace_v.update({"SAM_" + k: v for k, v in sample_trace.items()})
+                            trace_v["SAM_executed_action"] = sampled_action.copy()
+                            counts["receiver_stochastic_calls"] += 1
+                    if a.receiver_whole_identity or a.receiver_exploration:
                         counts["receiver_onnx_calls"] += 1
                         if whole_receiver is not None:
                             counts["receiver_plastic_calls"] += 1
@@ -565,7 +652,11 @@ def main():
                 passer.commit()
                 if receiver is None:
                     if whole_receiver is not None:
-                        whole_receiver.commit()
+                        whole_receiver.commit(
+                            executed_action=sampled_action if receiver_sampler is not None else None
+                        )
+                        if receiver_sampler is not None:
+                            receiver_sampler.commit(sampled_action)
                     shadow.commit_actual()
                     receiving_ready = readiness.update()
                     current_q, current_v = w.layouts["b/"].canonical(w.data)
@@ -695,7 +786,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_WHOLE_RECEIVER_IDENTITY16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_RECEIVER_EXPLORATION32_PENDING_OWN_REPLAY"
+                    if a.receiver_exploration
+                    else "NEURAL_RELAY_WHOLE_RECEIVER_IDENTITY16_PENDING_OWN_REPLAY"
                     if a.receiver_whole_identity
                     else "NEURAL_RELAY_POST_TOUCH_FOLLOW32_COLLECTED_PENDING_OWN_REPLAY"
                     if a.receiver_follow_study

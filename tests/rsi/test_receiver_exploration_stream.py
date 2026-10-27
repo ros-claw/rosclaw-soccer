@@ -1,6 +1,10 @@
+import math
+
 import numpy as np
 import pytest
+import torch
 
+from rosclaw_soccer.rsi.motor_sampling_law import history_motor_logp
 from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
 
 
@@ -32,3 +36,25 @@ def test_double_proposal_is_terminal():
         stream.propose(mean, mean, control=0)
     with pytest.raises(ValueError, match="latched"):
         stream.commit(action)
+
+
+def test_sampling_log_density_matches_complete_executed_history():
+    scale = np.full(29, 0.25, np.float32)
+    means = np.zeros((6, 29), np.float32)
+    stream = ReceiverExplorationStream(scale, seed=18)
+    actions, logps = [], []
+    for t in range(len(means)):
+        action, trace = stream.propose(means[t], means[t], control=t)
+        stream.commit(action)
+        actions.append(action)
+        logps.append(trace["logp"])
+    density = history_motor_logp(
+        "box-truncated-ar1",
+        torch.from_numpy(means),
+        torch.from_numpy(np.stack(actions)),
+        torch.from_numpy(means),
+        torch.from_numpy(scale),
+        torch.full((29,), math.log(0.02), dtype=torch.float32),
+        rho=0.9,
+    )
+    assert np.allclose(density.numpy(), np.stack(logps), atol=1e-4, rtol=0)

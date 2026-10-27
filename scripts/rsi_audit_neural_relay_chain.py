@@ -31,6 +31,7 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
+    exploration = dec["protocol"] == "soccer.neural_relay_receiver_exploration.development.v9"
     whole_identity = dec["protocol"] == "soccer.neural_relay_whole_receiver_identity.development.v8"
     follow_study = dec["protocol"] == "soccer.neural_relay_post_touch_follow.development.v7"
     balance_expanded = dec["protocol"] == "soccer.neural_relay_balance_expanded.development.v6"
@@ -38,7 +39,8 @@ def main():
         balance_expanded or dec["protocol"] == "soccer.neural_relay_balance_teacher.development.v5"
     )
     development_study = (
-        whole_identity
+        exploration
+        or whole_identity
         or follow_study
         or balance_study
         or dec["protocol"] == "soccer.neural_relay_development_contexts.v4"
@@ -55,7 +57,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_WHOLE_RECEIVER_IDENTITY16_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_RECEIVER_EXPLORATION32_PENDING_OWN_REPLAY"
+        if exploration
+        else "NEURAL_RELAY_WHOLE_RECEIVER_IDENTITY16_PENDING_OWN_REPLAY"
         if whole_identity
         else "NEURAL_RELAY_POST_TOUCH_FOLLOW32_COLLECTED_PENDING_OWN_REPLAY"
         if follow_study
@@ -85,6 +89,7 @@ def main():
             "soccer.neural_relay_balance_expanded.development.v6",
             "soccer.neural_relay_post_touch_follow.development.v7",
             "soccer.neural_relay_whole_receiver_identity.development.v8",
+            "soccer.neural_relay_receiver_exploration.development.v9",
         )
         or len(s["records"]) != expected_worlds
         or len(dec["courses"]) != expected_worlds
@@ -105,6 +110,17 @@ def main():
             raise ValueError("exact development context identity and reference required")
         arms = (
             [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_whole=True,
+                    exploration_seed=seed,
+                )
+                for seed in (None, 92117, 92143, 92171)
+            ]
+            if exploration
+            else [
                 dict(
                     start=80,
                     memory="own_shadow_carry",
@@ -141,6 +157,14 @@ def main():
             ]
         )
         sides = (-0.75, -0.35, 0.35, 0.75) if balance_expanded else (-0.55, 0.55)
+        if exploration and (
+            dec.get("receiver_exploration_is_stochastic_not_training") is not True
+            or dec.get("receiver_sampling_profile") != "contact-v1"
+            or dec.get("receiver_sampling_law") != "box-truncated-ar1"
+            or dec.get("joint_targets_remain_actual_neural_outputs") is not False
+            or dec.get("bounded_teacher_added_after_neural") is not False
+        ):
+            raise ValueError("exact bounded stochastic receiver provenance required")
         if whole_identity and (
             dec.get("whole_receiver_identity_not_trained") is not True
             or dec.get("actual_actor_calls_are_body_proposals_not_auxiliary_forward_passes")
@@ -176,6 +200,28 @@ def main():
     else:
         indices = (1, 4, 20, 21)
     pins = dict(s["input_file_hashes"])
+    if exploration:
+        review = Path(dec["identity_review"])
+        if (
+            review.is_symlink()
+            or pins.get(str(review)) != dec["identity_review_hash"]
+            or digest(review) != dec["identity_review_hash"]
+        ):
+            raise ValueError("exact pinned zero identity review required")
+        identity = json.loads(review.read_text())
+        if (
+            identity.get("status") != "RELAY_WHOLE_RECEIVER_ZERO_IDENTITY_QUALIFIED"
+            or identity.get("source_head") != dec.get("identity_review_head")
+            or identity.get("conditions") != 24
+            or len(identity.get("records", [])) != 24
+            or identity.get("identity_passed") is not True
+            or identity.get("own_physics_and_neural_replay_complete") is not True
+            or any(
+                identity.get(k) is not False
+                for k in ("trained", "promotion_authorized", "hardware_authorized")
+            )
+        ):
+            raise ValueError("complete strict own-replayed zero identity review required")
     balance_latents = []
     if balance_study:
         from rosclaw_soccer.rsi.relay_balance_evidence import admit_relay_balance_teachers
@@ -243,8 +289,10 @@ def main():
         ),
     )
     counts = dict(native_steps=0, actual_actor_calls=0, shadow_actor_calls=0)
-    if whole_identity:
+    if whole_identity or exploration:
         counts.update(receiver_onnx_calls=0, receiver_plastic_calls=0, receiver_anchor_calls=0)
+    if exploration:
+        counts["receiver_stochastic_calls"] = 0
     records = []
     try:
         import mujoco
@@ -254,6 +302,7 @@ def main():
         from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
         from rosclaw_soccer.rsi.neural_relay_incoming import incoming_delivery
         from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
+        from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
         from rosclaw_soccer.rsi.receiving_handoff_opportunity import body_contact_kind
         from rosclaw_soccer.rsi.receiving_successor_alignment import (
             SuccessorAlignmentGate,
@@ -300,7 +349,7 @@ def main():
             checkpoint_kind=candidate["kind"],
         )
         setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor, context_indices=indices)
-        whole_actor = zero_receiver_actor(setup) if whole_identity else None
+        whole_actor = zero_receiver_actor(setup) if whole_identity or exploration else None
         if (a.source_root / "scene.xml").read_text() != setup.xml:
             raise ValueError("scene reconstruction mismatch")
 
@@ -365,6 +414,7 @@ def main():
             )
             velocity = setup.velocity()
             whole_receiver = None
+            receiver_sampler = None
             if course["arm"].get("receiver_whole", False):
                 if whole_actor is None:
                     raise ValueError("qualified zero whole receiver required")
@@ -378,6 +428,11 @@ def main():
                     expected_config_hash=pins[str(setup.velocity_config)],
                     horizon_controls=300,
                 )
+                if course["arm"].get("exploration_seed") is not None:
+                    receiver_sampler = ReceiverExplorationStream(
+                        np.asarray(setup.velocity_parameters.action_scale, dtype=np.float32),
+                        seed=course["arm"]["exploration_seed"],
+                    )
             readiness = OnlineReceivingBoundary(w, "b/")
             entry = SuccessorAlignmentGate(enabled=course["arm"].get("align_successor", False))
             receiver = None
@@ -485,7 +540,17 @@ def main():
                     else:
                         anchor3 = np.array([anchor[0], anchor[1], 0.11], dtype=np.float64)
                         target_b, trace_v = whole_receiver.propose(command, anchor3, frame=step)
-                    if whole_identity:
+                        if receiver_sampler is not None:
+                            from rosclaw_soccer.providers.g1.velocity_policy import target29
+
+                            sampled_action, sample_trace = receiver_sampler.propose(
+                                trace_v["action"], trace_v["reference_action"], control=step
+                            )
+                            target_b = target29(sampled_action, whole_receiver.params)
+                            trace_v.update({"SAM_" + k: v for k, v in sample_trace.items()})
+                            trace_v["SAM_executed_action"] = sampled_action.copy()
+                            counts["receiver_stochastic_calls"] += 1
+                    if whole_identity or exploration:
                         counts["receiver_onnx_calls"] += 1
                         if whole_receiver is not None:
                             counts["receiver_plastic_calls"] += 1
@@ -526,7 +591,11 @@ def main():
                 passer.commit()
                 if receiver is None:
                     if whole_receiver is not None:
-                        whole_receiver.commit()
+                        whole_receiver.commit(
+                            executed_action=sampled_action if receiver_sampler is not None else None
+                        )
+                        if receiver_sampler is not None:
+                            receiver_sampler.commit(sampled_action)
                     shadow.commit_actual()
                     receiving_ready = readiness.update()
                     current_q, current_v = w.layouts["b/"].canonical(w.data)
@@ -577,6 +646,33 @@ def main():
                 or len(nn["receiver_return_nn"].get("control", [])) != bi
             ):
                 raise ValueError("complete neural horizons or final online transition differ")
+            if receiver_sampler is not None:
+                import math
+
+                import torch
+
+                from rosclaw_soccer.rsi.motor_sampling_law import history_motor_logp
+
+                saved_velocity = nn["receiver_velocity"]
+                density = (
+                    history_motor_logp(
+                        "box-truncated-ar1",
+                        torch.from_numpy(saved_velocity["action"]),
+                        torch.from_numpy(saved_velocity["SAM_executed_action"]),
+                        torch.from_numpy(saved_velocity["reference_action"]),
+                        torch.from_numpy(
+                            np.asarray(setup.velocity_parameters.action_scale, dtype=np.float32)
+                        ),
+                        torch.full((29,), math.log(0.02), dtype=torch.float32),
+                        rho=0.9,
+                    )
+                    .detach()
+                    .numpy()
+                )
+                if not np.allclose(density, saved_velocity["SAM_logp"], rtol=0, atol=1e-4):
+                    raise ValueError(
+                        "independent full-history normalized receiver sampling density differs"
+                    )
             result = dict(
                 handoff_executed=handoff_control is not None,
                 outgoing_foot_strike=False,
