@@ -38,15 +38,26 @@ def main():
     ):
         raise ValueError("exact source and unused external output required")
     report, training = (json.loads(p.read_text()) for p in paths)
+    guard = report["status"] == "TEAM_RECEIVING_NEIGHBOR_RADIUS_GUARD_NOT_PROMOTED"
     if (
-        report["status"] != "TEAM_RECEIVING_NEIGHBOR_DEVELOPMENT_NOT_PROMOTED"
+        report["status"]
+        not in (
+            "TEAM_RECEIVING_NEIGHBOR_DEVELOPMENT_NOT_PROMOTED",
+            "TEAM_RECEIVING_NEIGHBOR_RADIUS_GUARD_NOT_PROMOTED",
+        )
         or report["physical_runs"] != 48
         or report["fresh_exam"] is not False
         or report["promotion_authorized"] is not False
-        or report["learned_coverage_training_hash"] != args.models_hash
+        or report.get("effective_coverage_model_hash", report["learned_coverage_training_hash"])
+        != args.models_hash
         or report["course_bank_hash"]
         != "sha256:60a30fe74e052a141dd295f00b74cec71ef8c708612adfbd6c068f3c34359398"
-        or training["status"] != "TEAM_COVERAGE_SUPERVISED_ACTORS_NOT_EVALUATED"
+        or training["status"]
+        != (
+            "TEAM_COVERAGE_FAILURE_DERIVED_RADIUS_NOT_EVALUATED"
+            if guard
+            else "TEAM_COVERAGE_SUPERVISED_ACTORS_NOT_EVALUATED"
+        )
     ):
         raise ValueError("exact new development and frozen actor lineage required")
     models = {}
@@ -159,6 +170,7 @@ def main():
             rows=rows,
             parent_success=parent_success,
             candidates=statistics,
+            posthoc_failure_guard=guard,
             trace_count=len(rows),
             physical_integrations=0,
             global_safety_not_independently_recomputed=True,

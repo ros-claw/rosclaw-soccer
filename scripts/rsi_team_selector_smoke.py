@@ -171,6 +171,8 @@ def main():
     parser.add_argument("--learned-audit", type=Path)
     parser.add_argument("--neighbor-bank", type=Path)
     parser.add_argument("--neighbor-bank-hash")
+    parser.add_argument("--radius-guard-dir", type=Path)
+    parser.add_argument("--radius-guard-hash")
     parser.add_argument("--full-retention-report", type=Path)
     parser.add_argument("--full-retention-audit", type=Path)
     parser.add_argument("--admission-proof", type=Path)
@@ -182,6 +184,11 @@ def main():
     learned_coverage = args.coverage_learned_dir is not None
     coverage_mode = args.coverage_probe or learned_coverage
     neighbor = args.neighbor_bank is not None
+    guard_mode = args.radius_guard_dir is not None
+    if guard_mode and (not neighbor or not args.radius_guard_hash):
+        raise ValueError("failure-derived guard requires paired consumed neighbor development")
+    if not guard_mode and args.radius_guard_hash is not None:
+        raise ValueError("guard hash requires an explicit guard directory")
     if args.coverage_full_retention and not learned_coverage:
         raise ValueError("full learned retention requires trained coverage actors")
     if args.protected_smoke and (
@@ -518,6 +525,41 @@ def main():
             models[f"learned-{row['seed']}"] = json.loads(path.read_text())
             TeamCoverageActor.from_dict(models[f"learned-{row['seed']}"])
             pins[str(path)] = row["model_hash"]
+    if guard_mode:
+        guard_path = args.radius_guard_dir / "complete.json"
+        if guard_path.is_symlink() or digest(guard_path) != args.radius_guard_hash:
+            raise ValueError("exact failure-derived guard receipt required")
+        guard = json.loads(guard_path.read_text())
+        if (
+            guard["status"] != "TEAM_COVERAGE_FAILURE_DERIVED_RADIUS_NOT_EVALUATED"
+            or guard["models_hash"] != digest(learned_path)
+            or guard["development_hash"]
+            != "sha256:6c013e4f8a469f0ed7496eb0e60abb9e88aaa1c467160e81fd65fa41b2e7300e"
+            or guard["audit_hash"]
+            != "sha256:e73f4bbeb86fe86e4cb8b339f4f9a804b0bd7dc386d67b0f09c331726ebfba2f"
+            or [r["seed"] for r in guard["records"]] != [17, 43, 71]
+            or guard["promotion_authorized"] is not False
+        ):
+            raise ValueError("bound failed development and three original actors required")
+        pins[str(guard_path)] = args.radius_guard_hash
+        for record in guard["records"]:
+            path = args.radius_guard_dir / record["model_path"]
+            arm = f"learned-{record['seed']}"
+            if (
+                path.is_symlink()
+                or path.parent != args.radius_guard_dir
+                or digest(path) != record["model_hash"]
+            ):
+                raise ValueError("exact confined radius-guard actor required")
+            value = json.loads(path.read_text())
+            old = models[arm]
+            if {k: v for k, v in value.items() if k != "radius"} != {
+                k: v for k, v in old.items() if k != "radius"
+            } or not 0 < value["radius"] < old["radius"]:
+                raise ValueError("guard may only reduce original actor support radius")
+            TeamCoverageActor.from_dict(value)
+            models[arm] = value
+            pins[str(path)] = record["model_hash"]
     for name in (
         "parent_report",
         "right_report",
@@ -564,6 +606,11 @@ def main():
             source_head=args.expected_head,
             training_hash=TRAINING_HASH,
             learned_coverage_training_hash=digest(learned_path) if learned_coverage else None,
+            effective_coverage_model_hash=digest(guard_path)
+            if guard_mode
+            else digest(learned_path)
+            if learned_coverage
+            else None,
             parent_report_hash=PARENT_HASH,
             course_bank_hash=bank_hash,
             course_seeds=[c.seed for c in courses],
@@ -597,6 +644,8 @@ def main():
                 if args.coverage_probe
                 else "CONSUMED_PROTECTION_ORDER_SMOKE"
                 if args.protected_smoke
+                else "CONSUMED_NEIGHBOR_FAILURE_RADIUS_GUARD"
+                if guard_mode
                 else "NEW_NEIGHBOR_DEVELOPMENT_NOT_FRESH"
                 if neighbor
                 else "CONSUMED_COVERAGE_LEARNED_FULL_RETENTION"
@@ -694,6 +743,8 @@ def main():
                 if args.coverage_probe
                 else "TEAM_RECEIVING_PROTECTION_ORDER_SMOKE_NOT_PROMOTED"
                 if args.protected_smoke
+                else "TEAM_RECEIVING_NEIGHBOR_RADIUS_GUARD_NOT_PROMOTED"
+                if guard_mode
                 else "TEAM_RECEIVING_NEIGHBOR_DEVELOPMENT_NOT_PROMOTED"
                 if neighbor
                 else "TEAM_RECEIVING_COVERAGE_LEARNED_FULL_RETENTION_NOT_PROMOTED"
@@ -707,6 +758,11 @@ def main():
             source_head=args.expected_head,
             training_hash=TRAINING_HASH,
             learned_coverage_training_hash=digest(learned_path) if learned_coverage else None,
+            effective_coverage_model_hash=digest(guard_path)
+            if guard_mode
+            else digest(learned_path)
+            if learned_coverage
+            else None,
             parent_report_hash=PARENT_HASH,
             course_bank_hash=bank_hash,
             results=summary,
@@ -716,6 +772,7 @@ def main():
             coverage_full_retention=args.coverage_full_retention,
             protected_smoke=args.protected_smoke,
             neighbor_development=neighbor,
+            failure_derived_radius_guard=guard_mode,
             full_retention=args.full_retention,
             historical_parent_all_exact=all_historical_exact,
             current_parent_success_retained_by_seed=per_seed_retained,
