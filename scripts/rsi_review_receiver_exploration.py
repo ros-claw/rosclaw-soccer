@@ -51,7 +51,7 @@ def main() -> None:
         )
     ):
         raise ValueError("strict own-replayed untrained zero identity required")
-    blocks, rows, frozen = set(), [], []
+    blocks, rows, frozen, provenance = set(), [], [], []
     for sr, ar, ir, ia in a.group:
         root, own, old, old_own = map(Path, (sr, ar, ir, ia))
         dec = json.loads((root / "declaration.json").read_text())
@@ -158,6 +158,15 @@ def main() -> None:
         frozen.extend(
             ((root / "complete.json", sh), (own, ah), (old / "complete.json", ph), (old_own, ih))
         )
+        provenance.append(
+            dict(
+                block=block,
+                source_hash=sh,
+                own_audit_hash=ah,
+                identity_source_hash=ph,
+                identity_audit_hash=ih,
+            )
+        )
     if (
         blocks != {0, 1, 2}
         or len(rows) != 72
@@ -186,6 +195,7 @@ def main() -> None:
             conditions=24,
             summaries=summaries,
             records=rows,
+            source_pins=provenance,
             zero_parent_byte_identical=True,
             own_physics_neural_and_density_audited=True,
             optimizer_authorized=False,
