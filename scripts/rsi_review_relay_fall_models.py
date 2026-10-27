@@ -21,14 +21,19 @@ def confusion(prediction: np.ndarray, truth: np.ndarray) -> dict[str, int]:
 
 
 def episode_detection(
-    prediction: np.ndarray, truth: np.ndarray, episodes: np.ndarray
-) -> dict[str, int]:
+    prediction: np.ndarray, truth: np.ndarray, episodes: np.ndarray, controls: np.ndarray
+) -> dict:
     positive = detected = negative = false_alarms = 0
+    lead_controls = []
     for episode in np.unique(episodes):
         mask = episodes == episode
         if truth[mask].any():
             positive += 1
             detected += bool((prediction[mask] & truth[mask]).any())
+            if (prediction[mask] & truth[mask]).any():
+                failure_control = int(controls[mask][truth[mask]].max())
+                first_alarm = int(controls[mask][prediction[mask] & truth[mask]].min())
+                lead_controls.append(failure_control + 1 - first_alarm)
         else:
             negative += 1
             false_alarms += bool(prediction[mask].any())
@@ -37,6 +42,7 @@ def episode_detection(
         detected_positive_episodes=detected,
         no_observed_b_failure_episodes=negative,
         no_observed_b_failure_episodes_with_alarm=false_alarms,
+        detected_warning_lead_controls=lead_controls,
     )
 
 
@@ -65,11 +71,12 @@ def main() -> None:
     if digest(data_file) != dataset["dataset_hash"]:
         raise ValueError("exact dataset hash required")
     with np.load(data_file, allow_pickle=False) as f:
-        x, y, groups, episodes = (
+        x, y, groups, episodes, controls = (
             f["features"].copy(),
             f["label"].copy(),
             f["group"].copy() // 2,
             f["episode"].copy(),
+            f["control"].copy(),
         )
     all_contexts = sorted(int(v) for v in set(groups))
     if len(all_contexts) != 12 or x.shape != (len(y), 104) or y.dtype != np.bool_:
@@ -132,7 +139,7 @@ def main() -> None:
                     episodes=len(set(episodes[mask].tolist())),
                     threshold_050=standard,
                     threshold_050_episode_detection=episode_detection(
-                        probability >= 0.5, actual, episodes[mask]
+                        probability >= 0.5, actual, episodes[mask], controls[mask]
                     ),
                     threshold_020_exploratory=confusion(probability >= 0.2, actual),
                     threshold_010_exploratory=confusion(probability >= 0.1, actual),
