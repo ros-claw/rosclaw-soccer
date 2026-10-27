@@ -161,13 +161,18 @@ def main():
     parser.add_argument("--repeat-proof", type=Path)
     parser.add_argument("--coverage-probe", action="store_true")
     parser.add_argument("--coverage-learned-dir", type=Path)
+    parser.add_argument("--coverage-full-retention", action="store_true")
     parser.add_argument("--coverage-audit", type=Path)
+    parser.add_argument("--learned-proof", type=Path)
+    parser.add_argument("--learned-audit", type=Path)
     parser.add_argument("--retention-proof", type=Path)
     parser.add_argument("--retention-audit", type=Path)
     args = parser.parse_args()
     clean(args.expected_head)
     learned_coverage = args.coverage_learned_dir is not None
     coverage_mode = args.coverage_probe or learned_coverage
+    if args.coverage_full_retention and not learned_coverage:
+        raise ValueError("full learned retention requires trained coverage actors")
     if args.output.exists() or args.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("unused external evidence directory required")
     if coverage_mode:
@@ -206,6 +211,46 @@ def main():
             raise ValueError("exact independently rescored coverage audit required")
     elif args.coverage_audit is not None:
         raise ValueError("coverage audit applies only to learned coverage")
+    if args.coverage_full_retention:
+        if (
+            args.learned_proof is None
+            or args.learned_audit is None
+            or args.learned_proof.is_symlink()
+            or args.learned_audit.is_symlink()
+            or digest(args.learned_proof)
+            != "sha256:2c5e91667e279c623ff1ba05f29b7d183f314d134e4cada1c3b24f1433f3d3f9"
+            or digest(args.learned_audit)
+            != "sha256:559063c0fabfd5c8493ed8a262950b22e11e396d40ec683115b84138253260d7"
+        ):
+            raise ValueError("exact learned-course simulation and audit required")
+        learned_proof = json.loads(args.learned_proof.read_text())
+        learned_audit = json.loads(args.learned_audit.read_text())
+        if (
+            learned_proof["status"] != "TEAM_RECEIVING_COVERAGE_LEARNED_NOT_PROMOTED"
+            or learned_audit["source_hash"] != digest(args.learned_proof)
+            or learned_audit["learned_coverage"] is not True
+            or len(learned_audit["rows"]) != 24
+            or any(not g["parent_matches_current_retention"] for g in learned_proof["results"])
+            or any(
+                sum(
+                    is_clean(r) and r["controlled_reception"]
+                    for g in learned_proof["results"]
+                    for r in g["rows"]
+                    if r["arm"] == arm
+                )
+                != 5
+                or any(
+                    not is_clean(r)
+                    for g in learned_proof["results"]
+                    for r in g["rows"]
+                    if r["arm"] == arm
+                )
+                for arm in ("learned-17", "learned-43", "learned-71")
+            )
+        ):
+            raise ValueError("all seed training-course physical and safety gates required")
+    elif args.learned_proof is not None or args.learned_audit is not None:
+        raise ValueError("learned proof applies only to full learned retention")
     if args.full_retention:
         smoke_hash = "sha256:c17b889563ab27fa762929bf159204b565b19e44e043c66fbfc2b60ef2bc0793"
         if (
@@ -286,9 +331,9 @@ def main():
     coverage_seeds = (223003, 238004, 252008, 255004, 258005, 258007)
     chosen = (
         [next(row for row in baseline if row["course"]["seed"] == seed) for seed in coverage_seeds]
-        if coverage_mode
+        if coverage_mode and not args.coverage_full_retention
         else baseline
-        if args.full_retention
+        if args.full_retention or args.coverage_full_retention
         else [baseline[0], baseline[53]]
     )
     courses = tuple(ReceivingCourse(**row["course"]) for row in chosen)
@@ -299,7 +344,9 @@ def main():
     ):
         raise ValueError("exact preregistered consumed smoke courses required")
     bank_hash = preflight_receiving_courses(courses)
-    if args.full_retention and bank_hash != v261["course_bank_hash"]:
+    if (args.full_retention or args.coverage_full_retention) and bank_hash != v261[
+        "course_bank_hash"
+    ]:
         raise ValueError("exact original complete retention bank required")
     models = {}
     pins = {
@@ -323,6 +370,9 @@ def main():
                 or parent_row["protected_episode"]
             ):
                 raise ValueError("known unprotected action-gated failed training courses required")
+    if args.coverage_full_retention:
+        pins[str(args.learned_proof)] = digest(args.learned_proof)
+        pins[str(args.learned_audit)] = digest(args.learned_audit)
     for row in training["records"]:
         path = args.training_dir / row["model_path"]
         if path.is_symlink() or digest(path) != row["model_hash"]:
@@ -433,6 +483,8 @@ def main():
             partition=(
                 "CONSUMED_COVERAGE_PROBE"
                 if args.coverage_probe
+                else "CONSUMED_COVERAGE_LEARNED_FULL_RETENTION"
+                if args.coverage_full_retention
                 else "CONSUMED_COVERAGE_LEARNED"
                 if learned_coverage
                 else "CONSUMED_FULL_RETENTION"
@@ -524,6 +576,8 @@ def main():
             status=(
                 "TEAM_RECEIVING_COVERAGE_PROBE_NOT_PROMOTED"
                 if args.coverage_probe
+                else "TEAM_RECEIVING_COVERAGE_LEARNED_FULL_RETENTION_NOT_PROMOTED"
+                if args.coverage_full_retention
                 else "TEAM_RECEIVING_COVERAGE_LEARNED_NOT_PROMOTED"
                 if learned_coverage
                 else "TEAM_RECEIVING_EIGHT_BODY_FULL_CONSUMED_NOT_PROMOTED"
@@ -539,9 +593,18 @@ def main():
             physical_runs=(17 if args.coverage_probe else 4) * len(courses),
             coverage_probe=args.coverage_probe,
             coverage_learned=learned_coverage,
+            coverage_full_retention=args.coverage_full_retention,
             full_retention=args.full_retention,
             historical_parent_all_exact=all_historical_exact,
             current_parent_success_retained_by_seed=per_seed_retained,
+            current_parent_success_count=sum(item["parent_success"] for item in summary),
+            candidate_success_count={
+                arm: sum(is_clean(r) and r["controlled_reception"] for r in rows if r["arm"] == arm)
+                for arm in compared_arms
+            },
+            candidate_safety_failure_count={
+                arm: sum(not is_clean(r) for r in rows if r["arm"] == arm) for arm in compared_arms
+            },
             coverage_action_success_counts=(
                 {
                     arm: sum(
