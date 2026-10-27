@@ -61,3 +61,23 @@ def summarize_reward_purity(rows: list[dict]) -> dict:
                 )
                 counts[key][field] += 1
     return counts
+
+
+def validate_reward_purity_profile(summary: dict, profile: str) -> None:
+    """Explicit legacy use or reject positive examples with nonfoot prefix contact."""
+    if profile not in ("legacy-mixed", "no-nonfoot-positive-prefix"):
+        raise ValueError("explicit research contact profile required")
+    try:
+        positive = summary["positive_reward"]
+        total = positive["total"]
+        nonfoot = positive["nonfoot_in_prefix"]
+        clear = positive["no_nonfoot_observed_in_prefix"]
+    except (KeyError, TypeError) as error:
+        raise ValueError("complete measured reward purity summary required") from error
+    if (
+        any(type(x) is not int or x < 0 for x in (total, nonfoot, clear))
+        or total != nonfoot + clear
+    ):
+        raise ValueError("consistent non-negative reward purity counts required")
+    if profile == "no-nonfoot-positive-prefix" and (not total or nonfoot):
+        raise ValueError("positive episodes without nonfoot contact in the prefix required")

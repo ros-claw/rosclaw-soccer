@@ -12,6 +12,7 @@ from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
 from rosclaw_soccer.rsi.anchored_receiving_motor import AnchoredReceivingMotor
 from rosclaw_soccer.rsi.receiver_actor_critic import ReceiverCritic, episode_balanced_value_loss
 from rosclaw_soccer.rsi.receiver_bounded_update import bounded_actor_update
+from rosclaw_soccer.rsi.receiver_reward_purity import validate_reward_purity_profile
 from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
@@ -26,6 +27,11 @@ def main() -> None:
         p.add_argument("--" + name, required=True)
     p.add_argument("--device", choices=("cpu", "cuda:0"), default="cpu")
     p.add_argument("--actor-step", type=float, choices=(1e-7, 1e-4), default=1e-7)
+    p.add_argument("--purity-receipt", type=Path, required=True)
+    p.add_argument("--purity-hash", required=True)
+    p.add_argument(
+        "--contact-profile", choices=("legacy-mixed", "no-nonfoot-positive-prefix"), required=True
+    )
     a = p.parse_args()
     clean(a.expected_head)
     dp, ap = a.dataset / "complete.json", a.admission / "complete.json"
@@ -35,9 +41,12 @@ def main() -> None:
         or any(x.is_symlink() for x in (dp, ap))
         or digest(dp) != a.dataset_hash
         or digest(ap) != a.admission_hash
+        or a.purity_receipt.is_symlink()
+        or digest(a.purity_receipt) != a.purity_hash
     ):
         raise ValueError("exact admitted receipts and unused external output required")
     data, admission = json.loads(dp.read_text()), json.loads(ap.read_text())
+    purity = json.loads(a.purity_receipt.read_text())
     anchor_path = a.admission / "healthy-anchors.npz"
     if (
         admission.get("status") != "RECEIVER_RESEARCH_TRAINING_DATA_ADMITTED_NOT_TRAINED"
@@ -53,6 +62,17 @@ def main() -> None:
         or digest(anchor_path) != admission.get("healthy_anchor_hash")
     ):
         raise ValueError("exact independent research admission and anchors required")
+    if (
+        purity.get("status") != "RECEIVER_SAMPLING_PREFIX_REWARD_PURITY_READBACK"
+        or purity.get("dataset_hash") != a.dataset_hash
+        or purity.get("dataset_audit_hash") != admission.get("audit_hash")
+        or purity.get("episodes") != 72
+        or purity.get("historical_rewards_modified") is not False
+        or purity.get("promotion_authorized") is not False
+        or purity.get("hardware_authorized") is not False
+    ):
+        raise ValueError("exact original sampled-prefix physical purity audit required")
+    validate_reward_purity_profile(purity["summary"], a.contact_profile)
     if a.device.startswith("cuda") and not torch.cuda.is_available():
         raise ValueError("requested GPU unavailable")
     torch.manual_seed(92301)
@@ -154,6 +174,7 @@ def main() -> None:
             (anchor_path, admission["healthy_anchor_hash"]),
             (Path(model), model_hash),
             (Path(config), config_hash),
+            (a.purity_receipt, a.purity_hash),
         )
     ):
         raise ValueError("evidence changed during offline computation")
@@ -172,6 +193,8 @@ def main() -> None:
             physical_retention_proven=False,
             promotion_authorized=False,
             hardware_authorized=False,
+            purity_hash=a.purity_hash,
+            contact_profile=a.contact_profile,
         ),
         checkpoint,
     )
@@ -189,6 +212,9 @@ def main() -> None:
             critic_updates=3,
             critic_losses=critic_losses,
             declared_initial_actor_step=a.actor_step,
+            purity_hash=a.purity_hash,
+            contact_profile=a.contact_profile,
+            no_nonfoot_after_prefix_proven=False,
             **result,
             actual_new_physics=False,
             online_rl=False,

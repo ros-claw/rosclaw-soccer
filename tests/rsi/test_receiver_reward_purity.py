@@ -4,6 +4,7 @@ import pytest
 from rosclaw_soccer.rsi.receiver_reward_purity import (
     receiver_contact_prefix,
     summarize_reward_purity,
+    validate_reward_purity_profile,
 )
 
 
@@ -28,3 +29,10 @@ def test_purity_counts_keep_positive_failure_and_original_labels_separate():
     assert result["handoff"] == dict(total=2, nonfoot_in_prefix=1, no_nonfoot_observed_in_prefix=1)
     assert result["precise_healthy"]["nonfoot_in_prefix"] == 1
     assert result["positive_reward"]["total"] == 1
+    validate_reward_purity_profile(result, "legacy-mixed")
+    with pytest.raises(ValueError, match="positive episodes"):
+        validate_reward_purity_profile(result, "no-nonfoot-positive-prefix")
+    with pytest.raises(ValueError, match="profile"):
+        validate_reward_purity_profile(result, "silently-clean")
+    rows[0]["nonfoot_contact_over_1n"] = False
+    validate_reward_purity_profile(summarize_reward_purity(rows), "no-nonfoot-positive-prefix")
