@@ -23,6 +23,7 @@ from rsi_r1_smooth_residual_development_v261 import _run_smooth
 from rsi_r1_velocity_gated_fresh_v238 import ANCHOR
 
 from rosclaw_soccer.rsi.team_coverage_actor import TeamCoverageActor
+from rosclaw_soccer.rsi.team_coverage_admission import assess_coverage_retention
 from rosclaw_soccer.rsi.team_coverage_motor import TeamCoverageMotor
 from rosclaw_soccer.rsi.team_receiving_selector import TeamReceivingSelector
 from rosclaw_soccer.rsi.team_receiving_selector_motor import TeamReceivingSelectorMotor
@@ -165,14 +166,23 @@ def main():
     parser.add_argument("--coverage-audit", type=Path)
     parser.add_argument("--learned-proof", type=Path)
     parser.add_argument("--learned-audit", type=Path)
+    parser.add_argument("--neighbor-bank", type=Path)
+    parser.add_argument("--neighbor-bank-hash")
+    parser.add_argument("--full-retention-report", type=Path)
+    parser.add_argument("--full-retention-audit", type=Path)
+    parser.add_argument("--admission-proof", type=Path)
+    parser.add_argument("--admission-hash")
     parser.add_argument("--retention-proof", type=Path)
     parser.add_argument("--retention-audit", type=Path)
     args = parser.parse_args()
     clean(args.expected_head)
     learned_coverage = args.coverage_learned_dir is not None
     coverage_mode = args.coverage_probe or learned_coverage
+    neighbor = args.neighbor_bank is not None
     if args.coverage_full_retention and not learned_coverage:
         raise ValueError("full learned retention requires trained coverage actors")
+    if neighbor and (not learned_coverage or args.coverage_full_retention or args.coverage_probe):
+        raise ValueError("neighbor development requires the frozen learned actors only")
     if args.output.exists() or args.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("unused external evidence directory required")
     if coverage_mode:
@@ -251,6 +261,59 @@ def main():
             raise ValueError("all seed training-course physical and safety gates required")
     elif args.learned_proof is not None or args.learned_audit is not None:
         raise ValueError("learned proof applies only to full learned retention")
+    if neighbor:
+        required = (
+            args.neighbor_bank,
+            args.full_retention_report,
+            args.full_retention_audit,
+            args.admission_proof,
+        )
+        if (
+            any(path is None or path.is_symlink() for path in required)
+            or not args.neighbor_bank_hash
+            or not args.admission_hash
+            or digest(args.neighbor_bank) != args.neighbor_bank_hash
+            or digest(args.admission_proof) != args.admission_hash
+        ):
+            raise ValueError("pinned new development and audited admission required")
+        manifest = json.loads(args.neighbor_bank.read_text())
+        admission = json.loads(args.admission_proof.read_text())
+        if (
+            manifest.get("schema") != "soccer.coverage_neighbor_development.v1"
+            or manifest.get("status") != "PREDECLARED_NOT_EXECUTED"
+            or manifest.get("fresh_exam") is not False
+            or manifest.get("promotion_authorized") is not False
+            or manifest.get("hardware_authorized") is not False
+            or len(manifest.get("courses", [])) != 12
+            or admission.get("status") != "TEAM_COVERAGE_RETENTION_ASSESSED_NOT_PROMOTED"
+            or digest(args.full_retention_report) != admission["source_hash"]
+            or digest(args.full_retention_audit) != admission["audit_hash"]
+        ):
+            raise ValueError("unopened development bank and bound admission required")
+        full_report = json.loads(args.full_retention_report.read_text())
+        full_audit = json.loads(args.full_retention_audit.read_text())
+        reassessed = assess_coverage_retention(full_report, full_audit, admission["source_hash"])
+        if (
+            reassessed != admission["result"]
+            or not reassessed["development_generalization_admitted"]
+        ):
+            raise ValueError("all seeded nonregression, gain and hazard gates required")
+        if (
+            full_report.get("learned_coverage_training_hash")
+            != "sha256:cd9e8cd98f4a6d19dc9a47ef72e80893d556338bea8256b06fd81004af3dbeaa"
+        ):
+            raise ValueError("admitted and tested model lineage must match")
+    elif any(
+        value is not None
+        for value in (
+            args.neighbor_bank_hash,
+            args.full_retention_report,
+            args.full_retention_audit,
+            args.admission_proof,
+            args.admission_hash,
+        )
+    ):
+        raise ValueError("neighbor evidence only applies to development")
     if args.full_retention:
         smoke_hash = "sha256:c17b889563ab27fa762929bf159204b565b19e44e043c66fbfc2b60ef2bc0793"
         if (
@@ -330,7 +393,12 @@ def main():
         raise ValueError("complete original 55-course retention cohort required")
     coverage_seeds = (223003, 238004, 252008, 255004, 258005, 258007)
     chosen = (
-        [next(row for row in baseline if row["course"]["seed"] == seed) for seed in coverage_seeds]
+        [dict(course=course, physical_trace_hash=None) for course in manifest["courses"]]
+        if neighbor
+        else [
+            next(row for row in baseline if row["course"]["seed"] == seed)
+            for seed in coverage_seeds
+        ]
         if coverage_mode and not args.coverage_full_retention
         else baseline
         if args.full_retention or args.coverage_full_retention
@@ -344,6 +412,11 @@ def main():
     ):
         raise ValueError("exact preregistered consumed smoke courses required")
     bank_hash = preflight_receiving_courses(courses)
+    if (
+        neighbor
+        and bank_hash != "sha256:60a30fe74e052a141dd295f00b74cec71ef8c708612adfbd6c068f3c34359398"
+    ):
+        raise ValueError("exact preregistered twelve-course development bank required")
     if (args.full_retention or args.coverage_full_retention) and bank_hash != v261[
         "course_bank_hash"
     ]:
@@ -373,6 +446,9 @@ def main():
     if args.coverage_full_retention:
         pins[str(args.learned_proof)] = digest(args.learned_proof)
         pins[str(args.learned_audit)] = digest(args.learned_audit)
+    if neighbor:
+        for path in required:
+            pins[str(path)] = digest(path)
     for row in training["records"]:
         path = args.training_dir / row["model_path"]
         if path.is_symlink() or digest(path) != row["model_hash"]:
@@ -483,6 +559,8 @@ def main():
             partition=(
                 "CONSUMED_COVERAGE_PROBE"
                 if args.coverage_probe
+                else "NEW_NEIGHBOR_DEVELOPMENT_NOT_FRESH"
+                if neighbor
                 else "CONSUMED_COVERAGE_LEARNED_FULL_RETENTION"
                 if args.coverage_full_retention
                 else "CONSUMED_COVERAGE_LEARNED"
@@ -551,7 +629,7 @@ def main():
                     == next(r for r in matched[course.seed]["rows"] if r["arm"] == "parent")[
                         "physical_trace_hash"
                     ]
-                    if coverage_mode
+                    if coverage_mode and not neighbor
                     else None
                 ),
                 parent_success=bool(is_clean(parent) and parent["controlled_reception"]),
@@ -576,6 +654,8 @@ def main():
             status=(
                 "TEAM_RECEIVING_COVERAGE_PROBE_NOT_PROMOTED"
                 if args.coverage_probe
+                else "TEAM_RECEIVING_NEIGHBOR_DEVELOPMENT_NOT_PROMOTED"
+                if neighbor
                 else "TEAM_RECEIVING_COVERAGE_LEARNED_FULL_RETENTION_NOT_PROMOTED"
                 if args.coverage_full_retention
                 else "TEAM_RECEIVING_COVERAGE_LEARNED_NOT_PROMOTED"
@@ -594,6 +674,7 @@ def main():
             coverage_probe=args.coverage_probe,
             coverage_learned=learned_coverage,
             coverage_full_retention=args.coverage_full_retention,
+            neighbor_development=neighbor,
             full_retention=args.full_retention,
             historical_parent_all_exact=all_historical_exact,
             current_parent_success_retained_by_seed=per_seed_retained,
