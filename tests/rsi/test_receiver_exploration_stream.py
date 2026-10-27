@@ -1,0 +1,34 @@
+import numpy as np
+import pytest
+
+from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
+
+
+def test_seeded_samples_match_and_feedback_is_mandatory():
+    scale = np.full(29, 0.25, np.float32)
+    mean = np.zeros(29, np.float32)
+    a, b = ReceiverExplorationStream(scale, seed=12), ReceiverExplorationStream(scale, seed=12)
+    for t in range(3):
+        x, trace_x = a.propose(mean, mean, control=t)
+        y, trace_y = b.propose(mean, mean, control=t)
+        assert np.array_equal(x, y)
+        assert np.array_equal(trace_x["rng_after"], trace_y["rng_after"])
+        assert np.max(np.abs(x * scale)) < 0.2
+        a.commit(x)
+        b.commit(y)
+    x, _ = a.propose(mean, mean, control=3)
+    with pytest.raises(ValueError):
+        a.commit(x + np.float32(0.01))
+    with pytest.raises(ValueError, match="latched"):
+        a.propose(mean, mean, control=4)
+
+
+def test_double_proposal_is_terminal():
+    scale = np.full(29, 0.25, np.float32)
+    mean = np.zeros(29, np.float32)
+    stream = ReceiverExplorationStream(scale, seed=2)
+    action, _ = stream.propose(mean, mean, control=0)
+    with pytest.raises(ValueError):
+        stream.propose(mean, mean, control=0)
+    with pytest.raises(ValueError, match="latched"):
+        stream.commit(action)
