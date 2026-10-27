@@ -97,15 +97,17 @@ def main() -> None:
                 np.load(pp, allow_pickle=False) as data,
                 np.load(ip, allow_pickle=False) as initial,
             ):
+                positions, velocities = data["qpos"], data["qvel"]
+                initial_position, initial_velocity = initial["qpos"], initial["qvel"]
                 stop = min(
-                    300, len(data["qpos"]), trial["handoff"]["control"] if trial["handoff"] else 300
+                    300, len(positions), trial["handoff"]["control"] if trial["handoff"] else 300
                 )
                 force = data["ball_forces"][:stop]
                 labels = future_first_contact_labels(force, horizon=5)
                 start = len(x)
                 for t, label in enumerate(labels):
-                    q = initial["qpos"] if t == 0 else data["qpos"][t - 1, -1]
-                    v = initial["qvel"] if t == 0 else data["qvel"][t - 1, -1]
+                    q = initial_position if t == 0 else positions[t - 1, -1]
+                    v = initial_velocity if t == 0 else velocities[t - 1, -1]
                     obs = measure_foot_ball_kinematics(
                         model,
                         q,

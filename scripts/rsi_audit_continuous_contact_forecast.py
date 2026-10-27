@@ -137,8 +137,10 @@ def main() -> None:
                 np.load(pp, allow_pickle=False) as data,
                 np.load(ip, allow_pickle=False) as initial,
             ):
+                positions, velocities, forces = data["qpos"], data["qvel"], data["ball_forces"]
+                initial_position, initial_velocity = initial["qpos"], initial["qvel"]
                 stop = min(
-                    300, len(data["qpos"]), trial["handoff"]["control"] if trial["handoff"] else 300
+                    300, len(positions), trial["handoff"]["control"] if trial["handoff"] else 300
                 )
                 start, count = row["first_sample"], row["sample_count"]
                 if (
@@ -156,9 +158,9 @@ def main() -> None:
                     if index in used:
                         raise ValueError("sample coverage overlap")
                     used.add(index)
-                    label = independent_first_label(data["ball_forces"][t : t + 5, :, 1, :])
-                    q = initial["qpos"] if t == 0 else data["qpos"][t - 1, -1]
-                    v = initial["qvel"] if t == 0 else data["qvel"][t - 1, -1]
+                    label = independent_first_label(forces[t : t + 5, :, 1, :])
+                    q = initial_position if t == 0 else positions[t - 1, -1]
+                    v = initial_velocity if t == 0 else velocities[t - 1, -1]
                     value = finite_difference(model, q, v).reshape(12)
                     error = float(np.max(np.abs(value - x[index])))
                     max_error = max(max_error, error)
