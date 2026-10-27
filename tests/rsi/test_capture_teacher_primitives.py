@@ -36,6 +36,8 @@ def test_capture_teacher_rejects_unbounded_or_nonfinite_declarations(field, valu
 
 def test_predictive_clearance_requires_enabled_shin_constraint():
     CaptureTeacherConfig(clearance_profile="anticipatory-priority-v1").validate()
+    CaptureTeacherConfig(clearance_profile="long-horizon-v1", bilateral_clearance=True).validate()
+    CaptureTeacherConfig(clearance_profile="long-horizon-v2", bilateral_clearance=True).validate()
     with pytest.raises(ValueError):
         CaptureTeacherConfig(
             shin_clearance=False, clearance_profile="anticipatory-priority-v1"

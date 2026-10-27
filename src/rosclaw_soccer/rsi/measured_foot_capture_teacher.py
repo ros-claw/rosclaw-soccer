@@ -46,7 +46,8 @@ class CaptureTeacherConfig:
             )
             or type(self.shin_clearance) is not bool
             or type(self.clearance_profile) is not str
-            or self.clearance_profile not in ("standard-v1", "anticipatory-priority-v1")
+            or self.clearance_profile
+            not in ("standard-v1", "anticipatory-priority-v1", "long-horizon-v1", "long-horizon-v2")
             or self.clearance_profile != "standard-v1"
             and not self.shin_clearance
             or type(self.bilateral_clearance) is not bool

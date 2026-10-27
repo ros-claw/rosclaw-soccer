@@ -21,6 +21,7 @@ def main():
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--priority", action="store_true")
     modes.add_argument("--bilateral", action="store_true")
+    modes.add_argument("--long-horizon", action="store_true")
     args = parser.parse_args()
     clean(args.expected_head)
     if (
@@ -63,7 +64,9 @@ def main():
             if (
                 report.get("status")
                 != (
-                    "CAPTURE_BILATERAL_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                    "CAPTURE_LONG_HORIZON_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                    if args.long_horizon
+                    else "CAPTURE_BILATERAL_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
                     if args.bilateral
                     else "CAPTURE_PRIORITY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
                     if args.priority
