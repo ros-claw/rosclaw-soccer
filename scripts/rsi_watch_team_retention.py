@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--retention-proof", type=Path)
     parser.add_argument("--retention-hash")
     parser.add_argument("--neighbor", action="store_true")
+    parser.add_argument("--radius-guard", action="store_true")
     parser.add_argument("--admission-proof", type=Path)
     parser.add_argument("--timeout-sec", type=int, default=43200)
     args = parser.parse_args()
@@ -37,6 +38,8 @@ def main():
         raise ValueError("retention proof required only for full retention audit")
     if args.admission_proof and not args.neighbor:
         raise ValueError("admission proof only applies to neighbor audit")
+    if args.radius_guard and not args.neighbor:
+        raise ValueError("radius guard is a consumed neighbor development audit")
     if (
         not 1 <= args.timeout_sec <= 43200
         or not args.unit.startswith("rosclaw-team-")
@@ -78,7 +81,9 @@ def main():
             if (
                 report.get("status")
                 != (
-                    "TEAM_RECEIVING_NEIGHBOR_DEVELOPMENT_NOT_PROMOTED"
+                    "TEAM_RECEIVING_NEIGHBOR_RADIUS_GUARD_NOT_PROMOTED"
+                    if args.radius_guard
+                    else "TEAM_RECEIVING_NEIGHBOR_DEVELOPMENT_NOT_PROMOTED"
                     if args.neighbor
                     else "TEAM_RECEIVING_COVERAGE_LEARNED_FULL_RETENTION_NOT_PROMOTED"
                 )

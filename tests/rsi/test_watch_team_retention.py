@@ -131,3 +131,31 @@ def test_neighbor_rejection_is_intentionally_skipped(monkeypatch, tmp_path):
     args.extend(["--neighbor", "--admission-proof", str(proof)])
     watch.main()
     assert len(calls) == 1
+
+
+def test_watcher_audits_failure_derived_guard(monkeypatch, tmp_path):
+    calls = setup(
+        monkeypatch,
+        tmp_path,
+        "ActiveState=inactive\nResult=success\nExecMainStatus=0\n",
+        complete=True,
+    )
+    path = tmp_path / "source" / "complete.json"
+    path.write_text(
+        json.dumps(
+            dict(
+                status="TEAM_RECEIVING_NEIGHBOR_RADIUS_GUARD_NOT_PROMOTED",
+                source_head="abc",
+                physical_runs=48,
+                promotion_authorized=False,
+            )
+        )
+    )
+    args = watch.sys.argv
+    for option in ("--retention-proof", "--retention-hash"):
+        i = args.index(option)
+        del args[i : i + 2]
+    args.extend(["--neighbor", "--radius-guard"])
+    watch.main()
+    assert len(calls) == 2
+    assert calls[1][1] == "scripts/rsi_audit_team_coverage_neighbor.py"
