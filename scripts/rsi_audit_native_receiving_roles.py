@@ -31,14 +31,22 @@ def main():
     ):
         raise ValueError("unused audit and exact completed receiver course source required")
     s, declaration = [json.loads(p.read_text()) for p in (rp, dp)]
-    prealigned_study = declaration["protocol"] == "dual256.actual_pass.prealigned_foot_teacher.v3"
+    development_study = (
+        declaration["protocol"] == "dual256.actual_pass.prealigned_foot_teacher.development.v4"
+    )
+    prealigned_study = (
+        development_study
+        or declaration["protocol"] == "dual256.actual_pass.prealigned_foot_teacher.v3"
+    )
     capture_study = (
         prealigned_study
         or declaration["protocol"] == "dual256.actual_pass.measured_foot_teacher.v2"
     )
     expected_worlds = 32 if prealigned_study else 24
     producer_status = (
-        "PREALIGNED_FOOT_CAPTURE_TEACHER32_COLLECTED_PENDING_OWN_REPLAY"
+        "PREALIGNED_FOOT_CAPTURE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+        if development_study
+        else "PREALIGNED_FOOT_CAPTURE_TEACHER32_COLLECTED_PENDING_OWN_REPLAY"
         if prealigned_study
         else "ACTUAL_PASS_FOOT_CAPTURE_TEACHER24_COLLECTED_PENDING_OWN_REPLAY"
         if capture_study
@@ -55,9 +63,22 @@ def main():
             "dual256.actual_pass.velocity_receiver.teacher_screen.v1",
             "dual256.actual_pass.measured_foot_teacher.v2",
             "dual256.actual_pass.prealigned_foot_teacher.v3",
+            "dual256.actual_pass.prealigned_foot_teacher.development.v4",
         )
     ):
         raise ValueError("exact complete preregistered24 paired worlds required")
+    context_blocks = ((2, 3, 5, 7), (8, 9, 11, 13), (15, 16, 17, 18))
+    if development_study:
+        block = declaration.get("new_context_block")
+        if (
+            type(block) is not int
+            or block not in (0, 1, 2)
+            or declaration.get("context_indices") != list(context_blocks[block])
+        ):
+            raise ValueError("exact predeclared development context block required")
+        indices = context_blocks[block]
+    else:
+        indices = (1, 4, 20, 21)
     pins = dict(s["input_file_hashes"])
     pins[str(rp)], pins[str(dp)] = a.source_hash, digest(dp)
     for index, row in enumerate(s["records"]):
@@ -120,7 +141,7 @@ def main():
         if digest(old_dp) != native["declaration_hash"] or pins[str(old_dp)] != digest(old_dp):
             raise ValueError("exact original consumed TRAIN context data required")
         contexts = json.loads(old_dp.read_text())["contexts"]
-        bench, baseline = open_motor(pins, base_hash, {i: contexts[i] for i in (1, 4, 20, 21)})
+        bench, baseline = open_motor(pins, base_hash, {i: contexts[i] for i in indices})
         candidate = declaration["candidate"]
         _, training = receipt(pins, candidate["training_hash"])
         actor, _ = load_dual_candidate_for_sim_audit(
@@ -153,7 +174,7 @@ def main():
             )
         paths = [Path(p) for p in pins if p.endswith("/velocity/v0/exported/policy.onnx")]
         configs = [Path(p) for p in pins if p.endswith("/velocity/v0/params/deploy.yaml")]
-        episodes = {i: make_episode(bench, contexts[i]) for i in (1, 4, 20, 21)}
+        episodes = {i: make_episode(bench, contexts[i]) for i in indices}
         capture_configs = {
             key: CaptureTeacherConfig(**value)
             for key, value in declaration.get("capture_teacher_configs", {}).items()
@@ -478,7 +499,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "PREALIGNED_FOOT_CAPTURE32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
+                    "PREALIGNED_FOOT_CAPTURE_DEVELOPMENT32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
+                    if development_study
+                    else "PREALIGNED_FOOT_CAPTURE32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
                     if prealigned_study
                     else "ACTUAL_PASS_FOOT_CAPTURE24_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
                     if capture_study

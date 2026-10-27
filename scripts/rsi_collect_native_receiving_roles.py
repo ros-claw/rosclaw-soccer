@@ -19,9 +19,12 @@ def main():
         p.add_argument("--" + key, required=True)
     p.add_argument("--teacher-screen", action="store_true")
     p.add_argument("--prealign", action="store_true")
+    p.add_argument("--new-context-block", type=int, choices=(0, 1, 2))
     a = p.parse_args()
     if a.prealign and not a.teacher_screen:
         p.error("prealignment is a separately declared foot-teacher protocol")
+    if a.new_context_block is not None and not (a.prealign and a.teacher_screen):
+        p.error("new-context development requires the explicit prealigned teacher protocol")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import admit_frontier, clean, receipt, source_pins
@@ -47,7 +50,17 @@ def main():
     )
     if a.prealign:
         arms = ("reactive_intercept",) + arms
-    indices = [1, 4, 20, 21]
+    context_blocks = ((2, 3, 5, 7), (8, 9, 11, 13), (15, 16, 17, 18))
+    indices = (
+        list(context_blocks[a.new_context_block])
+        if a.new_context_block is not None
+        else [1, 4, 20, 21]
+    )
+    if a.new_context_block is not None:
+        frontier = json.loads((a.frontier_root / "complete.json").read_text())
+        report = next(r for r in frontier["reports"] if r["seed"] == 65023)
+        if not set(indices).issubset(report["achieved_contexts"]):
+            raise ValueError("new receiver contexts must be in the acquired passer TRAIN frontier")
     courses = [
         dict(context=i, lateral_m=side, arm=arm)
         for i in indices
@@ -69,7 +82,9 @@ def main():
     )
     declaration = dict(
         protocol=(
-            "dual256.actual_pass.prealigned_foot_teacher.v3"
+            "dual256.actual_pass.prealigned_foot_teacher.development.v4"
+            if a.new_context_block is not None
+            else "dual256.actual_pass.prealigned_foot_teacher.v3"
             if a.prealign
             else "dual256.actual_pass.measured_foot_teacher.v2"
             if a.teacher_screen
@@ -80,6 +95,8 @@ def main():
         candidate=candidates[0],
         baseline_training_hash=base_hash,
         courses=courses,
+        context_indices=indices,
+        new_context_block=a.new_context_block,
         horizon_controls=300,
         receiver_forward_m=4.0,
         source_motion_world_rotation_rad=3.141592653589793,
@@ -414,7 +431,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "PREALIGNED_FOOT_CAPTURE_TEACHER32_COLLECTED_PENDING_OWN_REPLAY"
+                    "PREALIGNED_FOOT_CAPTURE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                    if a.new_context_block is not None
+                    else "PREALIGNED_FOOT_CAPTURE_TEACHER32_COLLECTED_PENDING_OWN_REPLAY"
                     if a.prealign
                     else "ACTUAL_PASS_FOOT_CAPTURE_TEACHER24_COLLECTED_PENDING_OWN_REPLAY"
                     if a.teacher_screen
