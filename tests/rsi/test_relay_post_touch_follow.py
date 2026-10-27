@@ -32,3 +32,34 @@ def test_follow_is_bounded_and_does_not_override_yaw():
     assert action[0] > 0 and action[1] < 0
     with pytest.raises(ValueError):
         run(gain=0.4)
+
+
+def test_world_rotation_preserves_body_command():
+    baseline = np.array([0.1, -0.2, 0.3], np.float32)
+    root = np.array([2.0, 1.0])
+    ball = np.array([2.3, 1.1])
+    velocity = np.array([0.8, -0.1])
+    forward = np.array([1.0, 0])
+    angle = 1.1
+    rotation = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+    first = post_touch_follow(
+        baseline,
+        root_xy=root,
+        yaw=0,
+        ball_xy=ball,
+        ball_velocity_xy=velocity,
+        pass_direction=forward,
+        contact_seen=True,
+        gain=0.5,
+    )
+    rotated = post_touch_follow(
+        baseline,
+        root_xy=rotation @ root,
+        yaw=angle,
+        ball_xy=rotation @ ball,
+        ball_velocity_xy=rotation @ velocity,
+        pass_direction=rotation @ forward,
+        contact_seen=True,
+        gain=0.5,
+    )
+    assert np.allclose(first, rotated, atol=1e-6, rtol=0)
