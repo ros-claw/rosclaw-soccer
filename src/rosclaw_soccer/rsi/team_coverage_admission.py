@@ -25,7 +25,11 @@ def recorded_hazard(row: dict) -> bool:
 
 def assess_coverage_retention(report: dict, audit: dict, source_hash: str) -> dict:
     if (
-        report.get("status") != "TEAM_RECEIVING_COVERAGE_LEARNED_FULL_RETENTION_NOT_PROMOTED"
+        report.get("status")
+        not in (
+            "TEAM_RECEIVING_COVERAGE_LEARNED_FULL_RETENTION_NOT_PROMOTED",
+            "TEAM_RECEIVING_COVERAGE_RADIUS_FULL_RETENTION_NOT_PROMOTED",
+        )
         or report.get("physical_runs") != 220
         or report.get("promotion_authorized") is not False
         or report.get("fresh_exam") is not False

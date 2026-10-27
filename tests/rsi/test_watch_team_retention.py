@@ -182,3 +182,29 @@ def test_watcher_audits_guarded_full_retention(monkeypatch, tmp_path):
     watch.sys.argv.append("--radius-guard")
     watch.main()
     assert calls[1][1] == "scripts/rsi_audit_team_coverage_retention.py"
+
+
+def test_watcher_audits_new_guard_development(monkeypatch, tmp_path):
+    calls = setup(
+        monkeypatch,
+        tmp_path,
+        "ActiveState=inactive\nResult=success\nExecMainStatus=0\n",
+        complete=True,
+    )
+    (tmp_path / "source" / "complete.json").write_text(
+        json.dumps(
+            dict(
+                status="TEAM_RECEIVING_RADIUS_GUARD_NEW_DEVELOPMENT_NOT_PROMOTED",
+                source_head="abc",
+                physical_runs=48,
+                promotion_authorized=False,
+            )
+        )
+    )
+    args = watch.sys.argv
+    for option in ("--retention-proof", "--retention-hash"):
+        i = args.index(option)
+        del args[i : i + 2]
+    args.extend(["--neighbor", "--radius-guard", "--guard-new-development"])
+    watch.main()
+    assert calls[1][1] == "scripts/rsi_audit_team_coverage_neighbor.py"

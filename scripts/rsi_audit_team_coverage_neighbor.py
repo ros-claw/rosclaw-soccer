@@ -38,12 +38,14 @@ def main():
     ):
         raise ValueError("exact source and unused external output required")
     report, training = (json.loads(p.read_text()) for p in paths)
-    guard = report["status"] == "TEAM_RECEIVING_NEIGHBOR_RADIUS_GUARD_NOT_PROMOTED"
+    new_guard_dev = report["status"] == "TEAM_RECEIVING_RADIUS_GUARD_NEW_DEVELOPMENT_NOT_PROMOTED"
+    guard = new_guard_dev or report["status"] == "TEAM_RECEIVING_NEIGHBOR_RADIUS_GUARD_NOT_PROMOTED"
     if (
         report["status"]
         not in (
             "TEAM_RECEIVING_NEIGHBOR_DEVELOPMENT_NOT_PROMOTED",
             "TEAM_RECEIVING_NEIGHBOR_RADIUS_GUARD_NOT_PROMOTED",
+            "TEAM_RECEIVING_RADIUS_GUARD_NEW_DEVELOPMENT_NOT_PROMOTED",
         )
         or report["physical_runs"] != 48
         or report["fresh_exam"] is not False
@@ -51,7 +53,11 @@ def main():
         or report.get("effective_coverage_model_hash", report["learned_coverage_training_hash"])
         != args.models_hash
         or report["course_bank_hash"]
-        != "sha256:60a30fe74e052a141dd295f00b74cec71ef8c708612adfbd6c068f3c34359398"
+        != (
+            "sha256:1919af2c823638018fe0415d0bb7878c003d1f695385e1431ead37aa7c335e3d"
+            if new_guard_dev
+            else "sha256:60a30fe74e052a141dd295f00b74cec71ef8c708612adfbd6c068f3c34359398"
+        )
         or training["status"]
         != (
             "TEAM_COVERAGE_FAILURE_DERIVED_RADIUS_NOT_EVALUATED"
@@ -70,7 +76,7 @@ def main():
         )
     if set(models) != {"learned-17", "learned-43", "learned-71"} or [
         g["course_seed"] for g in report["results"]
-    ] != list(range(410001, 410013)):
+    ] != (list(range(420101, 420113)) if new_guard_dev else list(range(410001, 410013))):
         raise ValueError("all actors and exact preregistered development seeds required")
     args.output.mkdir()
     write_once(
@@ -171,6 +177,7 @@ def main():
             parent_success=parent_success,
             candidates=statistics,
             posthoc_failure_guard=guard,
+            new_guard_development=new_guard_dev,
             trace_count=len(rows),
             physical_integrations=0,
             global_safety_not_independently_recomputed=True,

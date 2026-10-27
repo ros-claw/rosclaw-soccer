@@ -175,6 +175,9 @@ def main():
     parser.add_argument("--radius-guard-hash")
     parser.add_argument("--guard-proof", type=Path)
     parser.add_argument("--guard-audit", type=Path)
+    parser.add_argument("--guard-new-development", action="store_true")
+    parser.add_argument("--guard-retention-report", type=Path)
+    parser.add_argument("--guard-retention-audit", type=Path)
     parser.add_argument("--full-retention-report", type=Path)
     parser.add_argument("--full-retention-audit", type=Path)
     parser.add_argument("--admission-proof", type=Path)
@@ -187,6 +190,8 @@ def main():
     coverage_mode = args.coverage_probe or learned_coverage
     neighbor = args.neighbor_bank is not None
     guard_mode = args.radius_guard_dir is not None
+    if args.guard_new_development and (not neighbor or not guard_mode):
+        raise ValueError("new guard development requires neighbor bank and guarded models")
     if guard_mode and (
         not (neighbor or args.coverage_full_retention) or not args.radius_guard_hash
     ):
@@ -373,6 +378,30 @@ def main():
             != "sha256:cd9e8cd98f4a6d19dc9a47ef72e80893d556338bea8256b06fd81004af3dbeaa"
         ):
             raise ValueError("admitted and tested model lineage must match")
+        if args.guard_new_development:
+            if (
+                args.guard_retention_report is None
+                or args.guard_retention_audit is None
+                or args.guard_retention_report.is_symlink()
+                or args.guard_retention_audit.is_symlink()
+                or digest(args.guard_retention_report)
+                != "sha256:05a9b847fd8ad070d2df8a6b32ac5c59cffa17e92f2b83393d6e7fdc88088415"
+                or digest(args.guard_retention_audit)
+                != "sha256:dd8cf679cc47a6e64ad71166ec766ae1f4f64e46ea30e224e0eb9b163c067a3b"
+            ):
+                raise ValueError("exact audited guarded full retention required")
+            guard_retention = json.loads(args.guard_retention_report.read_text())
+            guard_retention_audit = json.loads(args.guard_retention_audit.read_text())
+            guard_result = assess_coverage_retention(
+                guard_retention, guard_retention_audit, digest(args.guard_retention_report)
+            )
+            if (
+                guard_retention.get("effective_coverage_model_hash") != args.radius_guard_hash
+                or guard_retention_audit.get("models_hash") != args.radius_guard_hash
+                or guard_retention_audit.get("posthoc_failure_guard") is not True
+                or not guard_result["development_generalization_admitted"]
+            ):
+                raise ValueError("all-seed guarded retention and risk gates required")
     elif any(
         value is not None
         for value in (
@@ -384,6 +413,10 @@ def main():
         )
     ):
         raise ValueError("neighbor evidence only applies to development")
+    if not args.guard_new_development and (
+        args.guard_retention_report or args.guard_retention_audit
+    ):
+        raise ValueError("guard retention evidence only applies to new guard development")
     if args.full_retention:
         smoke_hash = "sha256:c17b889563ab27fa762929bf159204b565b19e44e043c66fbfc2b60ef2bc0793"
         if (
@@ -487,10 +520,12 @@ def main():
     ):
         raise ValueError("exact preregistered consumed smoke courses required")
     bank_hash = preflight_receiving_courses(courses)
-    if (
-        neighbor
-        and bank_hash != "sha256:60a30fe74e052a141dd295f00b74cec71ef8c708612adfbd6c068f3c34359398"
-    ):
+    expected_neighbor_hash = (
+        "sha256:1919af2c823638018fe0415d0bb7878c003d1f695385e1431ead37aa7c335e3d"
+        if args.guard_new_development
+        else "sha256:60a30fe74e052a141dd295f00b74cec71ef8c708612adfbd6c068f3c34359398"
+    )
+    if neighbor and bank_hash != expected_neighbor_hash:
         raise ValueError("exact preregistered twelve-course development bank required")
     if (args.full_retention or args.coverage_full_retention) and bank_hash != v261[
         "course_bank_hash"
@@ -529,6 +564,9 @@ def main():
     if neighbor:
         for path in required:
             pins[str(path)] = digest(path)
+    if args.guard_new_development:
+        pins[str(args.guard_retention_report)] = digest(args.guard_retention_report)
+        pins[str(args.guard_retention_audit)] = digest(args.guard_retention_audit)
     for row in training["records"]:
         path = args.training_dir / row["model_path"]
         if path.is_symlink() or digest(path) != row["model_hash"]:
@@ -682,7 +720,9 @@ def main():
                 else "CONSUMED_PROTECTION_ORDER_SMOKE"
                 if args.protected_smoke
                 else "CONSUMED_NEIGHBOR_FAILURE_RADIUS_GUARD"
-                if guard_mode and neighbor
+                if guard_mode and neighbor and not args.guard_new_development
+                else "NEW_RADIUS_GUARD_DEVELOPMENT_NOT_FRESH"
+                if args.guard_new_development
                 else "CONSUMED_FULL_RETENTION_FAILURE_RADIUS_GUARD"
                 if guard_mode
                 else "NEW_NEIGHBOR_DEVELOPMENT_NOT_FRESH"
@@ -783,7 +823,9 @@ def main():
                 else "TEAM_RECEIVING_PROTECTION_ORDER_SMOKE_NOT_PROMOTED"
                 if args.protected_smoke
                 else "TEAM_RECEIVING_NEIGHBOR_RADIUS_GUARD_NOT_PROMOTED"
-                if guard_mode and neighbor
+                if guard_mode and neighbor and not args.guard_new_development
+                else "TEAM_RECEIVING_RADIUS_GUARD_NEW_DEVELOPMENT_NOT_PROMOTED"
+                if args.guard_new_development
                 else "TEAM_RECEIVING_COVERAGE_RADIUS_FULL_RETENTION_NOT_PROMOTED"
                 if guard_mode
                 else "TEAM_RECEIVING_NEIGHBOR_DEVELOPMENT_NOT_PROMOTED"
@@ -814,6 +856,7 @@ def main():
             protected_smoke=args.protected_smoke,
             neighbor_development=neighbor,
             failure_derived_radius_guard=guard_mode,
+            guard_new_development=args.guard_new_development,
             full_retention=args.full_retention,
             historical_parent_all_exact=all_historical_exact,
             current_parent_success_retained_by_seed=per_seed_retained,

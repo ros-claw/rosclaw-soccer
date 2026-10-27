@@ -58,6 +58,10 @@ def test_admission_separates_missing_contact_from_safety():
     assert result["candidates"]["learned-17"]["gains"] == 2
     assert result["candidates"]["learned-17"]["new_recorded_hazards"] == 0
     assert not result["fresh_exam_authorized"]
+    report["status"] = "TEAM_RECEIVING_COVERAGE_RADIUS_FULL_RETENTION_NOT_PROMOTED"
+    assert assess_coverage_retention(report, audit, "sha256:source")[
+        "development_generalization_admitted"
+    ]
 
 
 def test_admission_rejects_new_hazards_and_wrong_proof():
