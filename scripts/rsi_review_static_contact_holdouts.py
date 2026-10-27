@@ -15,6 +15,11 @@ from rosclaw_soccer.rsi.first_touch_outcome import label_first_touch
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
 from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
+from rosclaw_soccer.rsi.sim_contact_bandit import (
+    ACTION_NAMES,
+    contact_features,
+    select_contact_action,
+)
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_native_context_recovery_common import digest
 from scripts.rsi_native_fresh_common import clean
@@ -32,6 +37,12 @@ TRAINING_CASES = {
     "yplus-vminus": "065a32238ba31763f933ee865cf1028f94370271dfebd983c79082616a2a735b",
     "yplus-vplus": "92f7e2eae3b09400c08d7e493900d339d7139cbb668ba915285b0fa0d52dc8f5",
 }
+BANDIT_CASES = {
+    "yminus-vminus": "65d11cf4f99646c536cce5f70a53e7626858f287c2a9d62b7e704dd278b476d7",
+    "yminus-vplus": "4c1a7fd772ec6de4a3e4d30dc2e99b2cf420943843a73c0d1702c66624779e6c",
+    "yplus-vminus": "98a3a3644148f3b72780f1ea55e7ac4da5c8031b66d508a75a6d02fd3c5c3a94",
+    "yplus-vplus": "b62e6864bab721d5e7410ae32cae8d0caf14c785483d8af0d3abd08280536532",
+}
 
 
 def main():
@@ -39,7 +50,31 @@ def main():
     parser.add_argument("--expected-head", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--training", action="store_true")
+    parser.add_argument("--bandit", action="store_true")
     args = parser.parse_args()
+    if args.bandit and args.training:
+        raise ValueError("training and bandit audit are different splits")
+    selected_cases = BANDIT_CASES if args.bandit else TRAINING_CASES if args.training else CASES
+    if args.bandit:
+        bandit_path = ROOT / "rsi-contact-bandit-training-20261027/complete.json"
+        if (
+            digest(bandit_path)
+            != "sha256:541d80cd4b8f87753a60b1f0cbff0e56097e1b74dbff199005b49a954d4e921f"
+        ):
+            raise ValueError("exact actor training report required")
+        bandit = json.loads(bandit_path.read_text())
+        models = {}
+        for row in bandit["records"]:
+            model_path = bandit_path.parent / row["model_path"]
+            if (
+                model_path.is_symlink()
+                or model_path.parent != bandit_path.parent
+                or digest(model_path) != row["model_hash"]
+            ):
+                raise ValueError("exact audited actor seed required")
+            models[row["seed"]] = json.loads(model_path.read_text())
+        if set(models) != {17, 43, 71}:
+            raise ValueError("all three seeds required")
     clean(args.expected_head)
     if args.output.exists():
         raise ValueError("unused output required")
@@ -61,7 +96,8 @@ def main():
     write_once(
         args.output / "declaration.json",
         dict(
-            cases=TRAINING_CASES if args.training else CASES,
+            cases=selected_cases,
+            bandit_split=args.bandit,
             training_split=args.training,
             source_head=args.expected_head,
             raw_hashes_verified=True,
@@ -72,15 +108,23 @@ def main():
         ),
     )
     results = {}
-    for case, expected_hash in (TRAINING_CASES if args.training else CASES).items():
-        prefix = "rsi-approach-train" if args.training else "rsi-static-holdout"
+    for case, expected_hash in selected_cases.items():
+        prefix = (
+            "rsi-bandit-eval"
+            if args.bandit
+            else "rsi-approach-train"
+            if args.training
+            else "rsi-static-holdout"
+        )
         root = ROOT / f"{prefix}-{case}-20261027"
         report_path = root / "complete.json"
         if report_path.is_symlink() or digest(report_path) != "sha256:" + expected_hash:
             raise ValueError(f"exact holdout report required: {case}")
         report = json.loads(report_path.read_text())
         expected_status = (
-            "CFTRACK_STATIC_APPROACH_TRAINING_DATA_NOT_PROMOTED"
+            "OFFLINE_BANDIT_PAIRED_PRIVATE_HOLDOUT_NOT_PROMOTED"
+            if args.bandit
+            else "CFTRACK_STATIC_APPROACH_TRAINING_DATA_NOT_PROMOTED"
             if args.training
             else "STATIC_CONTACT_PAIRED_HOLDOUT_NOT_PROMOTED"
         )
@@ -90,7 +134,9 @@ def main():
         arms = {}
         traces = {}
         arm_names = (
-            ["parent", *(f"hg{i}-{side}" for i in range(4) for side in ("minus", "plus"))]
+            ["parent", "seed-17", "seed-43", "seed-71"]
+            if args.bandit
+            else ["parent", *(f"hg{i}-{side}" for i in range(4) for side in ("minus", "plus"))]
             if args.training
             else ["parent", "candidate"]
         )
@@ -115,6 +161,22 @@ def main():
                 if arrays[key].shape != shape or not np.isfinite(arrays[key]).all():
                     raise ValueError("complete finite native arrays required")
             traces[arm] = arrays
+            if args.bandit and arm != "parent":
+                context = contact_features(
+                    float(arrays["qpos"][1069, lo.bq + 1]),
+                    float(arrays["qpos"][1069, lo.rq + 1]),
+                    float(arrays["qvel"][1069, lo.bv + 1]),
+                )
+                seed = int(arm.split("-")[1])
+                chosen = select_contact_action(
+                    context,
+                    np.asarray(models[seed]["actor_weight"]),
+                    np.asarray(models[seed]["actor_bias"]),
+                )
+                if ACTION_NAMES[chosen] != record["selected_action"] or not np.array_equal(
+                    context, np.asarray(report["features"], dtype=np.float32)
+                ):
+                    raise ValueError("actor decision or actual state features mismatch")
             q = arrays["qpos"].reshape(300, 10, model.nq)
             force = arrays["ball_forces"].reshape(300, 10, 1, 3).max(axis=1)
             force6 = np.zeros((300, 1, 6), np.float64)
@@ -164,7 +226,9 @@ def main():
         args.output / "complete.json",
         dict(
             status=(
-                "STATIC_TRAINING_HASH_FORCE_GEOMETRY_READBACK_NOT_EXECUTION"
+                "STATIC_BANDIT_HASH_ACTOR_FORCE_READBACK_NOT_EXECUTION"
+                if args.bandit
+                else "STATIC_TRAINING_HASH_FORCE_GEOMETRY_READBACK_NOT_EXECUTION"
                 if args.training
                 else "STATIC_HOLDOUT_HASH_FORCE_GEOMETRY_READBACK_NOT_EXECUTION"
             ),
