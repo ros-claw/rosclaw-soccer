@@ -21,6 +21,10 @@ from rosclaw_soccer.rsi.cftrack_measured_history_install import install_owned_cf
 from rosclaw_soccer.rsi.cftrack_motor_residual_plan import CFtrackMotorResidualPlan
 from rosclaw_soccer.rsi.contact_reach_teacher import bounded_contact_reach
 from rosclaw_soccer.rsi.first_touch_outcome import label_first_touch
+from rosclaw_soccer.rsi.measured_contact_response import (
+    fit_measured_contact_response,
+    propose_bounded_response,
+)
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.omnicontact_policy_copy import cftrack_state_hash
 from rosclaw_soccer.rsi.shared_cftrack_forecast import SharedCFtrackForecaster
@@ -46,6 +50,7 @@ def main():
     parser.add_argument("--exclude-both-ankles-after-rejection", action="store_true")
     parser.add_argument("--calibrate-hip-knee-response", action="store_true")
     parser.add_argument("--replay-contact-arm", choices=("hg7-plus", "hg9-minus"))
+    parser.add_argument("--measured-response-candidate", action="store_true")
     args = parser.parse_args()
     clean(args.expected_head)
     source_dir = ROOT / "rsi-cftrack-predicted-ball-h300-20261027"
@@ -58,6 +63,22 @@ def main():
     ):
         raise ValueError("unused output and exact completed source and independent review required")
     rejection = ROOT / "rsi-contact-reach-forecast-20261027/complete.json"
+    if args.measured_response_candidate:
+        if (
+            args.replay_contact_arm
+            or args.calibrate_hip_knee_response
+            or args.exclude_both_ankles_after_rejection
+            or args.exclude_right_ankle_roll_after_rejection
+        ):
+            raise ValueError("response-model candidate is a separate experiment")
+        response_report = ROOT / "rsi-hip-knee-response-20261027/complete.json"
+        response_hash = "sha256:765c411cfde3d7f5716dc57d30df5cf8a30b44695db7b094aba38047ddbeb29a"
+        if digest(response_report) != response_hash:
+            raise ValueError("exact measured response source required")
+        response_model = fit_measured_contact_response(
+            json.loads(response_report.read_text()), source_hash=response_hash
+        )
+        learned_delta, response_receipt = propose_bounded_response(response_model)
     if args.exclude_right_ankle_roll_after_rejection:
         if (
             digest(rejection)
@@ -172,6 +193,7 @@ def main():
                 else "one damped Jacobian candidate against same-state parent"
             ),
             actual_replay_arm=args.replay_contact_arm,
+            measured_response_candidate=args.measured_response_candidate,
             calibration_artifact_hash=(
                 arm_hashes[args.replay_contact_arm] if args.replay_contact_arm else None
             ),
@@ -399,12 +421,16 @@ def main():
         gap = mujoco.mj_geomDistance(model, scratch, ball_geom, foot, 2.0, points)
         candidates.append((gap, foot, points.copy()))
     gap, foot, points = min(candidates, key=lambda x: x[0])
+    if args.measured_response_candidate and not np.array_equal(
+        points[:3] - points[3:], np.asarray(response_model.origin_relative_xyz_m)
+    ):
+        raise ValueError("measured response model must match the exact donor witness")
     jac = np.zeros((3, model.nv))
     mujoco.mj_jac(model, scratch, jac, None, points[3:], model.geom_bodyid[foot])
     active = np.arange(
         6,
         10
-        if args.exclude_both_ankles_after_rejection
+        if args.exclude_both_ankles_after_rejection or args.measured_response_candidate
         else 11
         if args.exclude_right_ankle_roll_after_rejection
         else 12,
@@ -414,6 +440,10 @@ def main():
     )
     delta = np.zeros(29)
     delta[active] = proposal.delta
+    if args.measured_response_candidate:
+        active = np.arange(6, 10)
+        delta[:] = 0.0
+        delta[active] = learned_delta
     plan = CFtrackMotorResidualPlan(
         origin_counter=83,
         start_control=83,
@@ -523,11 +553,13 @@ def main():
             source_head=args.expected_head,
             witness_gap_m=float(gap),
             witness_points=points.tolist(),
-            raw_delta=proposal.raw_delta.tolist(),
-            delta=proposal.delta.tolist(),
+            geometric_raw_delta_not_necessarily_applied=proposal.raw_delta.tolist(),
+            geometric_bounded_delta_not_necessarily_applied=proposal.delta.tolist(),
             active_hg_indices=active.tolist(),
             jacobian=jac[:, lo.vi[active]].tolist(),
             predicted_linear_displacement=proposal.predicted_displacement.tolist(),
+            response_model_receipt=response_receipt if args.measured_response_candidate else None,
+            applied_delta_hg=delta.tolist(),
             records=records,
             counters=forecaster.counters(),
             actual_native_steps=1400,
