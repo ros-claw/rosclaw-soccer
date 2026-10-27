@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.rsi.actual_pass_contact_risk import (
+    body_relative_pass_features,
     contact_risk_data,
     context_shard,
     training_recall_threshold,
@@ -80,3 +81,25 @@ def test_shards_cover_all_contexts_without_overlap_or_selection():
     assert sum(len(shard) for shard in shards) == 16
     with pytest.raises(ValueError):
         context_shard(contexts, index=4, count=4)
+
+
+def test_body_relative_features_are_translation_and_yaw_invariant():
+    q = np.zeros((2, 79))
+    v = np.zeros((2, 76))
+    q[0, 46] = 1.0
+    q[0, :3] = (1.0, 0.0, 0.1)
+    q[1, 43:46] = (2.0, 3.0, 0.0)
+    q[1, 46:50] = (2**-0.5, 0.0, 0.0, 2**-0.5)
+    q[1, :3] = (2.0, 4.0, 0.1)
+    data = dict(
+        qpos_before=q,
+        qvel_before=v,
+        receiver_observation=np.zeros((2, 98)),
+        receiver_action_applied=np.zeros((2, 29)),
+    )
+    features = body_relative_pass_features(data, robot_q=43, robot_v=41, ball_q=0, ball_v=0)
+    assert features.shape == (2, 135)
+    assert features[0] == pytest.approx(features[1])
+    q[1, 46:50] = 0
+    with pytest.raises(ValueError, match="quaternion"):
+        body_relative_pass_features(data, robot_q=43, robot_v=41, ball_q=0, ball_v=0)

@@ -18,6 +18,8 @@ def main():
     for name in ("unit", "dataset-hash", "training-head", "expected-head"):
         parser.add_argument(f"--{name}", required=True)
     parser.add_argument("--shard-index", type=int, required=True)
+    parser.add_argument("--scene", type=Path)
+    parser.add_argument("--scene-hash")
     parser.add_argument("--timeout-sec", type=int, default=43200)
     args = parser.parse_args()
     clean(args.expected_head)
@@ -70,31 +72,42 @@ def main():
                 or report.get("promotion_authorized") is not False
             ):
                 raise ValueError("exact completed unpromoted context shard required")
+            if report.get("feature_frame", "world") == "body":
+                if (
+                    args.scene is None
+                    or args.scene_hash is None
+                    or args.scene.is_symlink()
+                    or digest(args.scene) != args.scene_hash
+                    or report.get("scene_hash") != args.scene_hash
+                ):
+                    raise ValueError("exact scene required for body-relative audit")
+            elif args.scene is not None or args.scene_hash is not None:
+                raise ValueError("scene only applies to body-relative audit")
             break
         if state.get("ActiveState") in ("failed", "inactive") and not source.exists():
             raise ValueError("training exited without completion; no retry")
         if time.monotonic() >= deadline:
             raise TimeoutError("bounded watcher expired without complete training shard")
         time.sleep(15)
-    subprocess.run(
-        [
-            sys.executable,
-            "scripts/rsi_audit_actual_pass_contact_risk.py",
-            "--source",
-            str(args.source),
-            "--source-hash",
-            source_hash,
-            "--dataset",
-            str(args.dataset),
-            "--dataset-hash",
-            args.dataset_hash,
-            "--output",
-            str(args.output),
-            "--expected-head",
-            args.expected_head,
-        ],
-        check=True,
-    )
+    command = [
+        sys.executable,
+        "scripts/rsi_audit_actual_pass_contact_risk.py",
+        "--source",
+        str(args.source),
+        "--source-hash",
+        source_hash,
+        "--dataset",
+        str(args.dataset),
+        "--dataset-hash",
+        args.dataset_hash,
+        "--output",
+        str(args.output),
+        "--expected-head",
+        args.expected_head,
+    ]
+    if args.scene is not None:
+        command.extend(["--scene", str(args.scene), "--scene-hash", args.scene_hash])
+    subprocess.run(command, check=True)
 
 
 if __name__ == "__main__":

@@ -40,6 +40,53 @@ def training_recall_threshold(probabilities: np.ndarray, labels: np.ndarray) -> 
     return float(min(0.5, positives[index]))
 
 
+def body_relative_pass_features(
+    data: Mapping[str, np.ndarray], *, robot_q: int, robot_v: int, ball_q: int, ball_v: int
+) -> np.ndarray:
+    """Measured ball/body geometry in receiver frame, plus proprioception/action.
+
+    Addresses must come from the verified simulator model, not guessed layout.
+    This transformation does not create a motor or confer safety authority.
+    """
+    q, v = np.asarray(data["qpos_before"]), np.asarray(data["qvel_before"])
+    obs, action = (
+        np.asarray(data["receiver_observation"]),
+        np.asarray(data["receiver_action_applied"]),
+    )
+    n = len(q)
+    addresses = (robot_q, robot_v, ball_q, ball_v)
+    if (
+        q.shape != (n, 79)
+        or v.shape != (n, 76)
+        or obs.shape != (n, 98)
+        or action.shape != (n, 29)
+        or any(type(i) is not int or i < 0 for i in addresses)
+        or robot_q + 7 > 79
+        or ball_q + 7 > 79
+        or robot_v + 6 > 76
+        or ball_v + 6 > 76
+        or set(range(robot_q, robot_q + 7)) & set(range(ball_q, ball_q + 7))
+        or set(range(robot_v, robot_v + 6)) & set(range(ball_v, ball_v + 6))
+        or any(not np.isfinite(a).all() for a in (q, v, obs, action))
+    ):
+        raise ValueError("finite recorded state and explicit bounded model addresses required")
+    quat = q[:, robot_q + 3 : robot_q + 7]
+    if not np.allclose(np.linalg.norm(quat, axis=1), 1.0, rtol=0, atol=1e-5):
+        raise ValueError("measured unit receiver quaternion required")
+    rotation_vector = -quat[:, 1:4]
+
+    def rotate_inverse(vector: np.ndarray) -> np.ndarray:
+        t = 2 * np.cross(rotation_vector, vector)
+        return vector + quat[:, :1] * t + np.cross(rotation_vector, t)
+
+    relative_position = rotate_inverse(q[:, ball_q : ball_q + 3] - q[:, robot_q : robot_q + 3])
+    relative_velocity = rotate_inverse(v[:, ball_v : ball_v + 3] - v[:, robot_v : robot_v + 3])
+    heights = np.stack((q[:, ball_q + 2], q[:, robot_q + 2]), axis=1)
+    return np.concatenate(
+        (relative_position, relative_velocity, heights, obs, action), axis=1
+    ).astype(np.float32)
+
+
 def contact_risk_data(
     data: Mapping[str, np.ndarray], courses: list[dict]
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

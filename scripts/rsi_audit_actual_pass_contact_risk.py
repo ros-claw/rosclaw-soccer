@@ -7,7 +7,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from rosclaw_soccer.rsi.actual_pass_contact_risk import contact_risk_data, context_shard
+from rosclaw_soccer.rsi.actual_pass_contact_risk import (
+    body_relative_pass_features,
+    contact_risk_data,
+    context_shard,
+)
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_native_context_recovery_common import digest
 from scripts.rsi_native_fresh_common import clean
@@ -19,6 +23,8 @@ def main():
         parser.add_argument(f"--{name}", type=Path, required=True)
     for name in ("source-hash", "dataset-hash", "expected-head"):
         parser.add_argument(f"--{name}", required=True)
+    parser.add_argument("--scene", type=Path)
+    parser.add_argument("--scene-hash")
     args = parser.parse_args()
     clean(args.expected_head)
     source, receipt = args.source / "complete.json", args.dataset / "complete.json"
@@ -42,7 +48,39 @@ def main():
     ):
         raise ValueError("complete unpromoted model and bound dataset required")
     with np.load(path, allow_pickle=False) as f:
-        x, y, groups = contact_risk_data({k: f[k].copy() for k in f.files}, dataset["courses"])
+        recorded = {k: f[k].copy() for k in f.files}
+    x, y, groups = contact_risk_data(recorded, dataset["courses"])
+    if training.get("feature_frame", "world") == "body":
+        if (
+            args.scene is None
+            or args.scene_hash is None
+            or args.scene.is_symlink()
+            or digest(args.scene) != args.scene_hash
+            or training.get("scene_hash") != args.scene_hash
+        ):
+            raise ValueError("exact body-relative scene required")
+        import mujoco
+
+        from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+
+        model = mujoco.MjModel.from_xml_path(str(args.scene))
+        layout = NativeVelocityLayout(
+            model, robot_prefix="b/", ball_body_name="soccer_ball", player_count=2
+        )
+        layout_contract = dict(
+            robot_q=layout.rq, robot_v=layout.rv, ball_q=layout.bq, ball_v=layout.bv
+        )
+        if training.get("layout") != layout_contract:
+            raise ValueError("exact simulator-derived layout required")
+        x = body_relative_pass_features(recorded, **layout_contract)
+    elif (
+        training.get("feature_frame", "world") != "world"
+        or args.scene is not None
+        or args.scene_hash is not None
+    ):
+        raise ValueError("explicit valid feature-frame and scene pairing required")
+    if training.get("input_dimensions", x.shape[1]) != x.shape[1]:
+        raise ValueError("trained feature dimension must match reconstructed input")
     contexts = {int(v) for v in set(groups)}
     all_contexts = tuple(sorted(contexts))
     shard_count = training.get("shard_count", 1)
@@ -70,9 +108,9 @@ def main():
         with np.load(checkpoint, allow_pickle=False) as f:
             weights = {k: f[k].copy() for k in f.files}
         expected_shapes = {
-            "center": (282,),
-            "scale": (282,),
-            "weight1": (64, 282),
+            "center": (x.shape[1],),
+            "scale": (x.shape[1],),
+            "weight1": (64, x.shape[1]),
             "bias1": (64,),
             "weight2": (1, 64),
             "bias2": (1,),
@@ -90,7 +128,7 @@ def main():
             raise ValueError("normalization must use training contexts only")
         z = np.clip((x[test] - center) / scale, -10, 10).astype(np.float32)
         network = torch.nn.Sequential(
-            torch.nn.Linear(282, 64), torch.nn.Tanh(), torch.nn.Linear(64, 1)
+            torch.nn.Linear(x.shape[1], 64), torch.nn.Tanh(), torch.nn.Linear(64, 1)
         )
         with torch.no_grad():
             network[0].weight.copy_(torch.from_numpy(weights["weight1"]))
@@ -119,6 +157,8 @@ def main():
         digest(source) != args.source_hash
         or digest(receipt) != args.dataset_hash
         or digest(path) != dataset["dataset_hash"]
+        or args.scene is not None
+        and digest(args.scene) != args.scene_hash
     ):
         raise ValueError("source changed during readback")
     args.output.mkdir()
@@ -133,6 +173,8 @@ def main():
             checkpoint_predictions_replayed=True,
             optimizer_retrained=False,
             same_feature_implementation=True,
+            feature_frame=training.get("feature_frame", "world"),
+            scene_hash=training.get("scene_hash"),
             safety_certificate=False,
             controller_interface=False,
             promotion_authorized=False,

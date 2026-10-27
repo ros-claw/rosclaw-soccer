@@ -7,7 +7,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from rosclaw_soccer.rsi.actual_pass_contact_risk import contact_risk_data, context_shard
+from rosclaw_soccer.rsi.actual_pass_contact_risk import (
+    body_relative_pass_features,
+    contact_risk_data,
+    context_shard,
+)
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_native_context_recovery_common import digest
 from scripts.rsi_native_fresh_common import clean
@@ -21,6 +25,9 @@ def main():
         parser.add_argument(f"--{name}", required=True)
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--shard-count", type=int, choices=(1, 4), default=1)
+    parser.add_argument("--feature-frame", choices=("world", "body"), default="world")
+    parser.add_argument("--scene", type=Path)
+    parser.add_argument("--scene-hash")
     args = parser.parse_args()
     clean(args.expected_head)
     receipt_path, audit_path = args.dataset / "complete.json", args.audit / "complete.json"
@@ -47,7 +54,31 @@ def main():
             "exact source-readback dataset, explicit zero successful episodes required"
         )
     with np.load(path, allow_pickle=False) as f:
-        x, y, groups = contact_risk_data({k: f[k].copy() for k in f.files}, receipt["courses"])
+        recorded = {k: f[k].copy() for k in f.files}
+    x, y, groups = contact_risk_data(recorded, receipt["courses"])
+    layout_contract = None
+    if args.feature_frame == "body":
+        if (
+            args.scene is None
+            or args.scene_hash is None
+            or args.scene.is_symlink()
+            or digest(args.scene) != args.scene_hash
+        ):
+            raise ValueError("exact simulator scene required for body-relative model")
+        import mujoco
+
+        from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+
+        model = mujoco.MjModel.from_xml_path(str(args.scene))
+        layout = NativeVelocityLayout(
+            model, robot_prefix="b/", ball_body_name="soccer_ball", player_count=2
+        )
+        layout_contract = dict(
+            robot_q=layout.rq, robot_v=layout.rv, ball_q=layout.bq, ball_v=layout.bv
+        )
+        x = body_relative_pass_features(recorded, **layout_contract)
+    elif args.scene is not None or args.scene_hash is not None:
+        raise ValueError("scene arguments only apply to body-relative model")
     if len(x) != receipt["transitions"] or not 0 < int(y.sum()) < len(y):
         raise ValueError("exact declared grouped contact dataset required")
     all_folds = tuple(sorted(int(value) for value in set(groups)))
@@ -64,12 +95,16 @@ def main():
             shard_index=args.shard_index,
             shard_count=args.shard_count,
             seeds=[17, 43, 71],
-            training="supervised binary classifier, 282-64-tanh-1, 200 full-batch Adam steps",
+            training=f"supervised {x.shape[1]}-64-tanh-1 classifier, 200 full-batch Adam steps",
             label="receiver recorded non-foot contact >1N within next 10 native substeps",
             inputs=(
-                "before-action 79 qpos, 76 qvel, 98 velocity observations "
-                "and 29 actual applied normalized actions"
+                "receiver-relative ball geometry, heights, proprioception and applied action"
+                if args.feature_frame == "body"
+                else "before-action qpos, qvel, proprioception and applied action"
             ),
+            feature_frame=args.feature_frame,
+            scene_hash=args.scene_hash,
+            layout=layout_contract,
             split="leave one shared starting context out, all paired arms held together",
             scale="training context mean/std only, floor 0.01, clip 10",
             threshold=0.5,
@@ -97,7 +132,7 @@ def main():
         for seed in (17, 43, 71):
             torch.manual_seed(seed)
             network = torch.nn.Sequential(
-                torch.nn.Linear(282, 64), torch.nn.Tanh(), torch.nn.Linear(64, 1)
+                torch.nn.Linear(x.shape[1], 64), torch.nn.Tanh(), torch.nn.Linear(64, 1)
             )
             optimizer = torch.optim.Adam(network.parameters(), lr=0.003)
             for _ in range(200):
@@ -140,6 +175,8 @@ def main():
         digest(receipt_path) != args.dataset_hash
         or digest(audit_path) != args.audit_hash
         or digest(path) != receipt["dataset_hash"]
+        or args.scene is not None
+        and digest(args.scene) != args.scene_hash
     ):
         raise ValueError("training source changed")
     write_once(
@@ -154,6 +191,10 @@ def main():
             all_contexts=all_folds,
             shard_index=args.shard_index,
             shard_count=args.shard_count,
+            feature_frame=args.feature_frame,
+            input_dimensions=x.shape[1],
+            scene_hash=args.scene_hash,
+            layout=layout_contract,
             offline=True,
             online_rl=False,
             physics_evaluated_as_controller=False,
