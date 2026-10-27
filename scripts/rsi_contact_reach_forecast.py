@@ -52,7 +52,17 @@ def main():
     parser.add_argument("--replay-contact-arm", choices=("hg7-plus", "hg9-minus"))
     parser.add_argument("--measured-response-candidate", action="store_true")
     parser.add_argument("--static-contact-calibration", action="store_true")
+    parser.add_argument("--replay-static-contact", action="store_true")
     args = parser.parse_args()
+    if args.replay_static_contact and (
+        args.static_contact_calibration
+        or args.measured_response_candidate
+        or args.replay_contact_arm
+        or args.calibrate_hip_knee_response
+        or args.exclude_both_ankles_after_rejection
+        or args.exclude_right_ankle_roll_after_rejection
+    ):
+        raise ValueError("static actual replay is a separate experiment")
     if args.static_contact_calibration and (
         args.measured_response_candidate
         or args.replay_contact_arm
@@ -61,7 +71,8 @@ def main():
         or args.exclude_right_ankle_roll_after_rejection
     ):
         raise ValueError("static-contact calibration is a separate experiment")
-    origin = 50 if args.static_contact_calibration else 83
+    static_context = args.static_contact_calibration or args.replay_static_contact
+    origin = 50 if static_context else 83
     horizon = 243 - origin
     prefix_controls = 57 + origin
     calibration_axes = list(range(4)) if args.static_contact_calibration else list(range(6, 10))
@@ -76,6 +87,25 @@ def main():
     ):
         raise ValueError("unused output and exact completed source and independent review required")
     rejection = ROOT / "rsi-contact-reach-forecast-20261027/complete.json"
+    if args.replay_static_contact:
+        static_dir = ROOT / "rsi-static-approach-calibration-20261027"
+        static_report_path = static_dir / "complete.json"
+        static_hash = "sha256:c5a375a56713fd21b304ffb86a3ae8802c1fac1daa7b939e5f739daca527884e"
+        if digest(static_report_path) != static_hash:
+            raise ValueError("exact static paired calibration required")
+        static_report = json.loads(static_report_path.read_text())
+        static_record = static_report["records"]["hg1-plus"]
+        static_arm_hash = "sha256:e85855ae8f52511f2f760dc7abffd6762c3870cdde5e2f9810eb71a7e1809ffc"
+        arm_path = static_dir / "hg1-plus.npz"
+        if (
+            static_report["status"] != "CFTRACK_STATIC_APPROACH_CONTACT_CALIBRATION_NOT_PROMOTED"
+            or static_record["artifact_hash"] != static_arm_hash
+            or digest(arm_path) != static_arm_hash
+            or static_record["outcome"]["task_pass"] is not True
+        ):
+            raise ValueError("complete hashed candidate with original task pass required")
+        with np.load(arm_path, allow_pickle=False) as f:
+            replay_source = {key: f[key].copy() for key in f.files}
     if args.measured_response_candidate:
         if (
             args.replay_contact_arm
@@ -190,9 +220,9 @@ def main():
     bridge = load_artifact(
         bridge_report, json.loads(bridge_report.read_text())["records"][0]["artifact"]
     )
-    source_record = source["records"][0 if args.static_contact_calibration else 1]
+    source_record = source["records"][0 if static_context else 1]
     prior = load_artifact(source_path, source_record["actual_execution"]["artifact"])
-    if args.static_contact_calibration:
+    if static_context:
         outcome = source_record["actual_execution"]["absolute_h300_outcome"]
         if outcome["first_foot_contact_frame"] != 120 or outcome["task_pass"] is not False:
             raise ValueError("exact failed approach-contact baseline required")
@@ -205,12 +235,13 @@ def main():
             source_head=args.expected_head,
             experiment=(
                 "actual deterministic replay"
-                if args.replay_contact_arm
+                if args.replay_contact_arm or args.replay_static_contact
                 else "paired dynamics calibration"
                 if args.calibrate_hip_knee_response or args.static_contact_calibration
                 else "one damped Jacobian candidate against same-state parent"
             ),
             actual_replay_arm=args.replay_contact_arm,
+            actual_static_replay=args.replay_static_contact,
             measured_response_candidate=args.measured_response_candidate,
             static_approach_contact_calibration=args.static_contact_calibration,
             calibration_artifact_hash=(
@@ -218,7 +249,7 @@ def main():
             ),
             actual_prefix_controls=prefix_controls,
             candidate_count=0
-            if args.replay_contact_arm
+            if args.replay_contact_arm or args.replay_static_contact
             else 8
             if args.calibrate_hip_knee_response or args.static_contact_calibration
             else 1,
@@ -231,7 +262,7 @@ def main():
             ),
             forecast_controls_per_arm=horizon,
             native_step_budget=3000
-            if args.replay_contact_arm
+            if args.replay_contact_arm or args.replay_static_contact
             else 18440
             if args.static_contact_calibration
             else 15800
@@ -317,7 +348,7 @@ def main():
         bridge["candidate_root"],
         bridge["candidate_joint"],
         expected_model_hash=MODEL_HASH,
-        ball_prediction_horizon_s=None if args.static_contact_calibration else 1.74,
+        ball_prediction_horizon_s=None if static_context else 1.74,
     )
     if (
         receipt["conditioned_reference_hash"]
@@ -338,14 +369,20 @@ def main():
             raise ValueError("measured donor failed")
     if world.control_steps != prefix_controls or policy.counter_step != origin:
         raise ValueError("exact causal donor clock required")
-    if args.replay_contact_arm:
-        axis, amount = (7, 0.08) if args.replay_contact_arm == "hg7-plus" else (9, -0.08)
+    if args.replay_contact_arm or args.replay_static_contact:
+        axis, amount = (
+            (1, 0.08)
+            if args.replay_static_contact
+            else (7, 0.08)
+            if args.replay_contact_arm == "hg7-plus"
+            else (9, -0.08)
+        )
         residual = np.zeros(29)
         residual[axis] = amount
         player.install_motor_plan(
             CFtrackMotorResidualPlan(
-                origin_counter=83,
-                start_control=83,
+                origin_counter=origin,
+                start_control=origin,
                 peak_control=12,
                 delta_hg=tuple(float(x) for x in residual),
                 donor_policy_hash=cftrack_state_hash(policy),
@@ -364,11 +401,16 @@ def main():
                 return result
 
         policy.ort_session = Capture()
-        for step in range(160):
+        for step in range(horizon):
             target, _ = player.propose()
             row = world.advance({"a/": target})
             if not np.array_equal(target, replay_source["targets"][step]) or any(
-                not np.array_equal(row[k], replay_source[k][1400 + step * 10 : 1410 + step * 10])
+                not np.array_equal(
+                    row[k],
+                    replay_source[k][
+                        prefix_controls * 10 + step * 10 : prefix_controls * 10 + (step + 1) * 10
+                    ],
+                )
                 for k in raw
             ):
                 raise ValueError(
@@ -406,15 +448,23 @@ def main():
             args.output / "complete.json",
             dict(
                 status="ACTUAL_CALIBRATION_CONTACT_REPLAY_NOT_PROMOTED",
-                arm=args.replay_contact_arm,
+                arm="static-hg1-plus" if args.replay_static_contact else args.replay_contact_arm,
                 source=SOURCE_HASH,
-                calibration_hash="sha256:765c411cfde3d7f5716dc57d30df5cf8a30b44695db7b094aba38047ddbeb29a",
-                calibration_artifact_hash=arm_hashes[args.replay_contact_arm],
+                calibration_hash=(
+                    static_hash
+                    if args.replay_static_contact
+                    else "sha256:765c411cfde3d7f5716dc57d30df5cf8a30b44695db7b094aba38047ddbeb29a"
+                ),
+                calibration_artifact_hash=(
+                    static_arm_hash
+                    if args.replay_static_contact
+                    else arm_hashes[args.replay_contact_arm]
+                ),
                 source_head=args.expected_head,
                 actual_artifact_hash=digest(path),
                 actual_controls=300,
                 native_steps=3000,
-                neural_calls=160,
+                neural_calls=horizon,
                 private_future_exact=True,
                 first_contact_reference_phase=phase,
                 outcome=outcome,
