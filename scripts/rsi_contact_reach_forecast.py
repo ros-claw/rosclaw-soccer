@@ -45,6 +45,7 @@ def main():
     parser.add_argument("--exclude-right-ankle-roll-after-rejection", action="store_true")
     parser.add_argument("--exclude-both-ankles-after-rejection", action="store_true")
     parser.add_argument("--calibrate-hip-knee-response", action="store_true")
+    parser.add_argument("--replay-contact-arm", choices=("hg7-plus", "hg9-minus"))
     args = parser.parse_args()
     clean(args.expected_head)
     source_dir = ROOT / "rsi-cftrack-predicted-ball-h300-20261027"
@@ -97,6 +98,28 @@ def main():
         failed = json.loads(prior_hip.read_text())["records"]["candidate"]
         if not failed["complete"] or failed["outcome"]["task_pass"]:
             raise ValueError("completed but unsuccessful hip-knee candidate required")
+    if args.replay_contact_arm:
+        if (
+            args.calibrate_hip_knee_response
+            or args.exclude_both_ankles_after_rejection
+            or args.exclude_right_ankle_roll_after_rejection
+        ):
+            raise ValueError("actual replay is a separate experiment")
+        calibration_dir = ROOT / "rsi-hip-knee-response-20261027"
+        if (
+            digest(calibration_dir / "complete.json")
+            != "sha256:765c411cfde3d7f5716dc57d30df5cf8a30b44695db7b094aba38047ddbeb29a"
+        ):
+            raise ValueError("exact completed calibration required")
+        arm_hashes = {
+            "hg7-plus": "sha256:54ea1ceb0d6d28f9096c3272e9c398fd41303c2d738ad7320e9bc7285ba8960f",
+            "hg9-minus": "sha256:10c18e9b6a9988626587894ff0ed454437055c32445f84dfeaffc20b6c6bcfb9",
+        }
+        arm_path = calibration_dir / f"{args.replay_contact_arm}.npz"
+        if arm_path.is_symlink() or digest(arm_path) != arm_hashes[args.replay_contact_arm]:
+            raise ValueError("exact independently captured private arm artifact required")
+        with np.load(arm_path, allow_pickle=False) as f:
+            replay_source = {key: f[key].copy() for key in f.files}
     source = json.loads(source_path.read_text())
     if source["status"] != "CFTRACK_PREDICTIVE_BALL_H300_PAIRED_NOT_PROMOTED":
         raise ValueError("expected failed predictive source required")
@@ -141,9 +164,23 @@ def main():
             source=SOURCE_HASH,
             independent_audit=AUDIT_HASH,
             source_head=args.expected_head,
-            experiment="one damped Jacobian candidate against same-state parent",
+            experiment=(
+                "actual deterministic replay"
+                if args.replay_contact_arm
+                else "paired dynamics calibration"
+                if args.calibrate_hip_knee_response
+                else "one damped Jacobian candidate against same-state parent"
+            ),
+            actual_replay_arm=args.replay_contact_arm,
+            calibration_artifact_hash=(
+                arm_hashes[args.replay_contact_arm] if args.replay_contact_arm else None
+            ),
             actual_prefix_controls=140,
-            candidate_count=8 if args.calibrate_hip_knee_response else 1,
+            candidate_count=0
+            if args.replay_contact_arm
+            else 8
+            if args.calibrate_hip_knee_response
+            else 1,
             excluded_hg_indices=(
                 [10, 11]
                 if args.exclude_both_ankles_after_rejection
@@ -152,7 +189,11 @@ def main():
                 else []
             ),
             forecast_controls_per_arm=160,
-            native_step_budget=15800 if args.calibrate_hip_knee_response else 4600,
+            native_step_budget=3000
+            if args.replay_contact_arm
+            else 15800
+            if args.calibrate_hip_knee_response
+            else 4600,
             calibration_axes_hg=[6, 7, 8, 9] if args.calibrate_hip_knee_response else [],
             calibration_delta_rad=0.08 if args.calibrate_hip_knee_response else None,
             damping=0.02,
@@ -250,6 +291,91 @@ def main():
             raise ValueError("measured donor failed")
     if world.control_steps != 140 or policy.counter_step != 83:
         raise ValueError("exact causal donor clock required")
+    if args.replay_contact_arm:
+        axis, amount = (7, 0.08) if args.replay_contact_arm == "hg7-plus" else (9, -0.08)
+        residual = np.zeros(29)
+        residual[axis] = amount
+        player.install_motor_plan(
+            CFtrackMotorResidualPlan(
+                origin_counter=83,
+                start_control=83,
+                peak_control=12,
+                delta_hg=tuple(float(x) for x in residual),
+                donor_policy_hash=cftrack_state_hash(policy),
+            )
+        )
+        phases = policy.ref_phase.copy()
+        actual_targets = []
+        original_session = policy.ort_session
+        obs, actions = [], []
+
+        class Capture:
+            def run(self, outputs, inputs):
+                result = original_session.run(outputs, inputs)
+                obs.append(inputs["obs"].copy())
+                actions.append(result[0].copy())
+                return result
+
+        policy.ort_session = Capture()
+        for step in range(160):
+            target, _ = player.propose()
+            row = world.advance({"a/": target})
+            if not np.array_equal(target, replay_source["targets"][step]) or any(
+                not np.array_equal(row[k], replay_source[k][1400 + step * 10 : 1410 + step * 10])
+                for k in raw
+            ):
+                raise ValueError(
+                    f"independent actual replay differs from private forecast at {step}"
+                )
+            for k in raw:
+                raw[k].append(row[k])
+            actual_targets.append(target.copy())
+            player.commit()
+            if world.failed:
+                raise ValueError("actual replay body failed")
+        arrays = {k: np.concatenate(raw[k]) for k in raw}
+        positions = arrays["qpos"].reshape(300, 10, model.nq)
+        forces = arrays["ball_forces"].reshape(300, 10, 1, 3).max(axis=1)
+        force6 = np.zeros((300, 1, 6), dtype=np.float64)
+        force6[:, :, :3] = forces
+        outcome = label_first_touch(
+            dict(
+                force_n=force6,
+                pelvis_z_per_substep_m=positions[:, :, lo.rq + 2][:, None, :],
+                ball_position_after_step_m=positions[:, -1, lo.bq : lo.bq + 3][:, None, :],
+            )
+        ).to_dict()
+        first = outcome["first_foot_contact_frame"]
+        phase = int(phases[min(first - 57, len(phases) - 1)]) if first is not None else None
+        path = args.output / "actual.npz"
+        np.savez_compressed(
+            path,
+            **arrays,
+            targets=np.stack(actual_targets),
+            neural_obs=np.stack(obs),
+            neural_actions=np.stack(actions),
+        )
+        write_once(
+            args.output / "complete.json",
+            dict(
+                status="ACTUAL_CALIBRATION_CONTACT_REPLAY_NOT_PROMOTED",
+                arm=args.replay_contact_arm,
+                source=SOURCE_HASH,
+                calibration_hash="sha256:765c411cfde3d7f5716dc57d30df5cf8a30b44695db7b094aba38047ddbeb29a",
+                calibration_artifact_hash=arm_hashes[args.replay_contact_arm],
+                source_head=args.expected_head,
+                actual_artifact_hash=digest(path),
+                actual_controls=300,
+                native_steps=3000,
+                neural_calls=160,
+                private_future_exact=True,
+                first_contact_reference_phase=phase,
+                outcome=outcome,
+                task_promoted=False,
+                hardware_authorized=False,
+            ),
+        )
+        return
     forecaster = SharedCFtrackForecaster(
         player,
         expected_policy_type=OmniContact,
@@ -298,13 +424,15 @@ def main():
 
     def summarize(future, arm):
         arrays = {k: np.concatenate([*raw[k], future[k]]) for k in raw}
-        np.savez_compressed(args.output / f"{arm}.npz", **arrays, targets=future["joint_targets"])
+        artifact = args.output / f"{arm}.npz"
+        np.savez_compressed(artifact, **arrays, targets=future["joint_targets"])
         if future["controls"] != 160:
             return dict(
                 complete=False,
                 runtime_failure=future["runtime_failure"],
                 native_steps=future["native_steps"],
                 body_failed=future["body_failed"],
+                artifact_hash=digest(artifact),
             )
         positions = arrays["qpos"].reshape(300, 10, model.nq)
         forces = arrays["ball_forces"].reshape(300, 10, 1, 3).max(axis=1)
@@ -322,6 +450,7 @@ def main():
             runtime_failure=future["runtime_failure"],
             body_failed=future["body_failed"],
             outcome=outcome,
+            artifact_hash=digest(artifact),
         )
 
     if args.calibrate_hip_knee_response:
