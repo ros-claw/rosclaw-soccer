@@ -44,7 +44,7 @@ def run_job(job):
     def capture(*args, **kwargs):
         result, trace = original_simulate(*args, **kwargs)
         arrays = {key: np.asarray(trace[key]) for key in PHYSICAL_KEYS}
-        arrays.update(extract_team_trace(trace))
+        arrays.update(extract_team_trace(trace, require_tactical=True))
         if any(array.dtype.hasobject for array in arrays.values()):
             raise ValueError("non-object physical trace arrays required")
         np.savez_compressed(trace_path, **arrays)
@@ -288,7 +288,7 @@ def main():
             raw_trace_keys=PHYSICAL_KEYS,
             full_team_snapshot_fields=(
                 "time, ball pose/velocity/contact, robot collision, each player's "
-                "pelvis, joint position/velocity/torque/margin and feet"
+                "pelvis, joint position/velocity/torque/margin, feet and tactical decisions"
             ),
             historical_physical_hash_covers_only_raw_trace_keys=True,
             partition="CONSUMED_FULL_RETENTION" if args.full_retention else "CONSUMED_SMOKE_ONLY",

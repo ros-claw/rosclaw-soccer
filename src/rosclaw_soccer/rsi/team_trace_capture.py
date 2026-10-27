@@ -16,7 +16,11 @@ ROSTER = tuple(
 )
 
 
-def extract_team_trace(trace: Mapping[str, Any]) -> dict[str, np.ndarray]:
+def extract_team_trace(
+    trace: Mapping[str, Any], *, require_tactical: bool = False
+) -> dict[str, np.ndarray]:
+    if type(require_tactical) is not bool:
+        raise ValueError("explicit tactical trace mode required")
     if not isinstance(trace, Mapping) or "ball_pose" not in trace:
         raise ValueError("recorded shared-world trace required")
     ball = np.asarray(trace["ball_pose"])
@@ -51,12 +55,36 @@ def extract_team_trace(trace: Mapping[str, Any]) -> dict[str, np.ndarray]:
                 f"{agent}_right_foot_position": (frames, 3),
             }
         )
+    if require_tactical:
+        expected.update(
+            {
+                key: (frames,)
+                for key in (
+                    "possession_agent_code",
+                    "ball_chaser_agent_code",
+                    "receive_lease_agent_code",
+                    "receive_lease_active",
+                    "pass_source_agent_code",
+                    "pass_target_agent_code",
+                    "strike_lease_agent_code",
+                )
+            }
+        )
+        for agent in ROSTER:
+            expected.update(
+                {
+                    f"{agent}_intent_code": (frames,),
+                    f"{agent}_target_position": (frames, 3),
+                    f"{agent}_world_command": (frames, 3),
+                    f"{agent}_movement_active": (frames,),
+                }
+            )
     result = {}
     for key, shape in expected.items():
         if key not in trace:
             raise ValueError(f"missing shared-world trace: {key}")
         value = np.asarray(trace[key])
-        if value.shape != shape or value.dtype.kind not in "fiu" or not np.isfinite(value).all():
+        if value.shape != shape or value.dtype.kind not in "bfiu" or not np.isfinite(value).all():
             raise ValueError(f"invalid shared-world trace: {key}")
         result[key] = value.copy()
     if np.any(np.diff(result["time"]) <= 0):
