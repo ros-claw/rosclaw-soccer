@@ -37,7 +37,8 @@ def main() -> None:
     source = a.output / "source"
     command = [
         sys.executable,
-        "scripts/rsi_collect_neural_relay_chain.py",
+        "-m",
+        "scripts.rsi_collect_neural_relay_chain",
         "--receiver-learned-pair",
         "--new-context-block",
         str(a.new_context_block),
@@ -61,7 +62,8 @@ def main() -> None:
     subprocess.run(
         [
             sys.executable,
-            "scripts/rsi_audit_neural_relay_chain.py",
+            "-m",
+            "scripts.rsi_audit_neural_relay_chain",
             "--source-root",
             str(source),
             "--source-head",
