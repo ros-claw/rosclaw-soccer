@@ -58,3 +58,9 @@ def test_parent_fallback_and_learned_action_respect_activation(monkeypatch):
     blocked.propose(SimpleNamespace(frame=19, lateral=0.8, speed=-0.45))
     assert not blocked.activation_enabled
     assert blocked.selected_action == 0
+
+    protected = make_motor(1)
+    protected.protected_episode = True
+    protected.propose(observation)
+    assert protected.selected_action == 0
+    assert protected.neural_weights == parent.neural_weights
