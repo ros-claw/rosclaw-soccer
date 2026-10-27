@@ -46,12 +46,9 @@ def main():
         )
     with np.load(path, allow_pickle=False) as f:
         x, y, groups = contact_risk_data({k: f[k].copy() for k in f.files}, receipt["courses"])
-    if (
-        len(x) != receipt["transitions"]
-        or not 0 < int(y.sum()) < len(y)
-        or set(groups) != {1, 4, 20, 21}
-    ):
+    if len(x) != receipt["transitions"] or not 0 < int(y.sum()) < len(y):
         raise ValueError("exact declared grouped contact dataset required")
+    folds = sorted(int(value) for value in set(groups))
     args.output.mkdir()
     write_once(
         args.output / "declaration.json",
@@ -59,7 +56,7 @@ def main():
             dataset_hash=args.dataset_hash,
             audit_hash=args.audit_hash,
             source_head=args.expected_head,
-            folds=[1, 4, 20, 21],
+            folds=folds,
             seeds=[17, 43, 71],
             training="supervised binary classifier, 282-64-tanh-1, 200 full-batch Adam steps",
             label="receiver recorded non-foot contact >1N within next 10 native substeps",
@@ -80,7 +77,7 @@ def main():
     torch.set_num_threads(1)
     torch.use_deterministic_algorithms(True)
     rows = []
-    for holdout in (1, 4, 20, 21):
+    for holdout in folds:
         train, test = groups != holdout, groups == holdout
         center = x[train].mean(axis=0)
         scale = np.maximum(x[train].std(axis=0), 0.01)

@@ -58,18 +58,21 @@ def contact_risk_data(
         for k, s in shapes.items()
     ):
         raise ValueError("finite causal feature, action, outcome and course arrays required")
-    if values["course_index"].dtype.kind not in "iu" or len(courses) not in (32, 72):
-        raise ValueError("integer course indices and a declared 32- or 72-course bank required")
+    if values["course_index"].dtype.kind not in "iu" or not 4 <= len(courses) <= 4096:
+        raise ValueError("integer course indices and bounded declared course bank required")
     context_by_course = {entry["index"]: entry["course"]["context"] for entry in courses}
     if (
         len(context_by_course) != len(courses)
         or set(context_by_course) != set(range(len(courses)))
-        or set(context_by_course.values()) != {1, 4, 20, 21}
+        or not 4 <= len(set(context_by_course.values())) <= 64
+        or any(type(value) is not int or value < 0 for value in context_by_course.values())
     ):
         raise ValueError("unique courses across four recorded context groups required")
     if not np.isin(values["course_index"], list(context_by_course)).all():
         raise ValueError("only declared course identities may appear in transitions")
     groups = np.asarray([context_by_course[int(i)] for i in values["course_index"]], dtype=np.int64)
+    if set(groups) != set(context_by_course.values()):
+        raise ValueError("each declared context must have actual transition samples")
     x = np.concatenate(
         [
             values[k]

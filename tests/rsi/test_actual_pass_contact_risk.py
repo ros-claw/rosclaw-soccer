@@ -51,3 +51,19 @@ def test_training_only_threshold_preserves_95_percent_positive_recall():
     assert (p >= threshold).mean() >= 0.95
     with pytest.raises(ValueError, match="positives"):
         training_recall_threshold(p, ~labels)
+
+
+def test_new_context_banks_are_grouped_without_fixed_four_context_assumption():
+    n = 168
+    data = dict(
+        qpos_before=np.zeros((n, 79)),
+        qvel_before=np.zeros((n, 76)),
+        receiver_observation=np.zeros((n, 98)),
+        receiver_action_applied=np.zeros((n, 29)),
+        ball_force_max_after=np.zeros((n, 2, 3)),
+        course_index=np.arange(n),
+    )
+    courses = [dict(index=i, course=dict(context=i % 16)) for i in range(n)]
+    _, _, groups = contact_risk_data(data, courses)
+    assert len(set(groups)) == 16
+    assert groups[0] == groups[16]

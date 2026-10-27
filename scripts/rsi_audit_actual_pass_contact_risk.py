@@ -39,17 +39,19 @@ def main():
         or dataset["status"] != "ACTUAL_PASS_CAUSAL_TRANSITIONS_EXPORTED_NOT_TRAINED"
         or path.is_symlink()
         or digest(path) != dataset["dataset_hash"]
-        or len(training["rows"]) != 12
     ):
         raise ValueError("complete unpromoted model and bound dataset required")
     with np.load(path, allow_pickle=False) as f:
         x, y, groups = contact_risk_data({k: f[k].copy() for k in f.files}, dataset["courses"])
+    contexts = {int(v) for v in set(groups)}
+    if len(training["rows"]) != 3 * len(contexts):
+        raise ValueError("all held-out context/seed checkpoints required")
     torch.set_num_threads(1)
     rows = []
     seen = set()
     for original in training["rows"]:
         holdout, seed = original["heldout_context"], original["seed"]
-        if holdout not in (1, 4, 20, 21) or seed not in (17, 43, 71) or (holdout, seed) in seen:
+        if holdout not in contexts or seed not in (17, 43, 71) or (holdout, seed) in seen:
             raise ValueError("all unique held-out context/seed checkpoints required")
         seen.add((holdout, seed))
         checkpoint = args.source / original["checkpoint"]
