@@ -603,6 +603,17 @@ def main():
                 for arm in compared_arms
             },
             candidate_safety_failure_count={
+                arm: sum(
+                    not r["safe"]
+                    or bool(r["fault_agents"])
+                    or bool(r["own_nonfoot_frames"])
+                    or r["active_substeps"] > 32
+                    for r in rows
+                    if r["arm"] == arm
+                )
+                for arm in compared_arms
+            },
+            candidate_unclean_count={
                 arm: sum(not is_clean(r) for r in rows if r["arm"] == arm) for arm in compared_arms
             },
             coverage_action_success_counts=(
