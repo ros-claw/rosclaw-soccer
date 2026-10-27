@@ -159,3 +159,26 @@ def test_watcher_audits_failure_derived_guard(monkeypatch, tmp_path):
     watch.main()
     assert len(calls) == 2
     assert calls[1][1] == "scripts/rsi_audit_team_coverage_neighbor.py"
+
+
+def test_watcher_audits_guarded_full_retention(monkeypatch, tmp_path):
+    calls = setup(
+        monkeypatch,
+        tmp_path,
+        "ActiveState=inactive\nResult=success\nExecMainStatus=0\n",
+        complete=True,
+    )
+    path = tmp_path / "source" / "complete.json"
+    path.write_text(
+        json.dumps(
+            dict(
+                status="TEAM_RECEIVING_COVERAGE_RADIUS_FULL_RETENTION_NOT_PROMOTED",
+                source_head="abc",
+                physical_runs=220,
+                promotion_authorized=False,
+            )
+        )
+    )
+    watch.sys.argv.append("--radius-guard")
+    watch.main()
+    assert calls[1][1] == "scripts/rsi_audit_team_coverage_retention.py"

@@ -38,8 +38,6 @@ def main():
         raise ValueError("retention proof required only for full retention audit")
     if args.admission_proof and not args.neighbor:
         raise ValueError("admission proof only applies to neighbor audit")
-    if args.radius_guard and not args.neighbor:
-        raise ValueError("radius guard is a consumed neighbor development audit")
     if (
         not 1 <= args.timeout_sec <= 43200
         or not args.unit.startswith("rosclaw-team-")
@@ -82,9 +80,11 @@ def main():
                 report.get("status")
                 != (
                     "TEAM_RECEIVING_NEIGHBOR_RADIUS_GUARD_NOT_PROMOTED"
-                    if args.radius_guard
+                    if args.radius_guard and args.neighbor
                     else "TEAM_RECEIVING_NEIGHBOR_DEVELOPMENT_NOT_PROMOTED"
                     if args.neighbor
+                    else "TEAM_RECEIVING_COVERAGE_RADIUS_FULL_RETENTION_NOT_PROMOTED"
+                    if args.radius_guard
                     else "TEAM_RECEIVING_COVERAGE_LEARNED_FULL_RETENTION_NOT_PROMOTED"
                 )
                 or report.get("source_head") != args.source_head

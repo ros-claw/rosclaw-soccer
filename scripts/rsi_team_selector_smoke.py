@@ -173,6 +173,8 @@ def main():
     parser.add_argument("--neighbor-bank-hash")
     parser.add_argument("--radius-guard-dir", type=Path)
     parser.add_argument("--radius-guard-hash")
+    parser.add_argument("--guard-proof", type=Path)
+    parser.add_argument("--guard-audit", type=Path)
     parser.add_argument("--full-retention-report", type=Path)
     parser.add_argument("--full-retention-audit", type=Path)
     parser.add_argument("--admission-proof", type=Path)
@@ -185,8 +187,10 @@ def main():
     coverage_mode = args.coverage_probe or learned_coverage
     neighbor = args.neighbor_bank is not None
     guard_mode = args.radius_guard_dir is not None
-    if guard_mode and (not neighbor or not args.radius_guard_hash):
-        raise ValueError("failure-derived guard requires paired consumed neighbor development")
+    if guard_mode and (
+        not (neighbor or args.coverage_full_retention) or not args.radius_guard_hash
+    ):
+        raise ValueError("failure-derived guard requires paired neighbor or full retention")
     if not guard_mode and args.radius_guard_hash is not None:
         raise ValueError("guard hash requires an explicit guard directory")
     if args.coverage_full_retention and not learned_coverage:
@@ -236,6 +240,34 @@ def main():
     elif args.coverage_audit is not None:
         raise ValueError("coverage audit applies only to learned coverage")
     if args.coverage_full_retention:
+        if guard_mode:
+            if (
+                args.guard_proof is None
+                or args.guard_audit is None
+                or args.guard_proof.is_symlink()
+                or args.guard_audit.is_symlink()
+                or digest(args.guard_proof)
+                != "sha256:170488c6794d087ab75a2dfc36913e9b9326a621cdcd2f5679795b3f80b912d4"
+                or digest(args.guard_audit)
+                != "sha256:d75fa447bea470c64a14701a3a478340799903ae1d7c440283404ef61db0e23d"
+            ):
+                raise ValueError("exact audited posthoc failure guard development required")
+            guard_proof = json.loads(args.guard_proof.read_text())
+            guard_audit = json.loads(args.guard_audit.read_text())
+            if (
+                guard_proof["status"] != "TEAM_RECEIVING_NEIGHBOR_RADIUS_GUARD_NOT_PROMOTED"
+                or guard_audit["status"]
+                != "TEAM_COVERAGE_NEIGHBOR_WINDOW_RECOMPUTED_NOT_REINTEGRATED"
+                or guard_audit["source_hash"] != digest(args.guard_proof)
+                or guard_audit["models_hash"] != args.radius_guard_hash
+                or guard_audit["posthoc_failure_guard"] is not True
+                or set(guard_audit["candidates"]) != {"learned-17", "learned-43", "learned-71"}
+                or any(
+                    v["gains"] < 2 or v["losses"] or v["new_recorded_hazards"]
+                    for v in guard_audit["candidates"].values()
+                )
+            ):
+                raise ValueError("all seed posthoc guard development gates required")
         if (
             args.protection_proof is None
             or args.protection_audit is None
@@ -297,6 +329,8 @@ def main():
         raise ValueError("learned proof applies only to full learned retention")
     if not args.coverage_full_retention and (args.protection_proof or args.protection_audit):
         raise ValueError("protection proof applies only to full learned retention")
+    if not (guard_mode and args.coverage_full_retention) and (args.guard_proof or args.guard_audit):
+        raise ValueError("guard proof applies only to guarded full retention")
     if neighbor:
         required = (
             args.neighbor_bank,
@@ -489,6 +523,9 @@ def main():
         pins[str(args.learned_audit)] = digest(args.learned_audit)
         pins[str(args.protection_proof)] = digest(args.protection_proof)
         pins[str(args.protection_audit)] = digest(args.protection_audit)
+        if guard_mode:
+            pins[str(args.guard_proof)] = digest(args.guard_proof)
+            pins[str(args.guard_audit)] = digest(args.guard_audit)
     if neighbor:
         for path in required:
             pins[str(path)] = digest(path)
@@ -645,6 +682,8 @@ def main():
                 else "CONSUMED_PROTECTION_ORDER_SMOKE"
                 if args.protected_smoke
                 else "CONSUMED_NEIGHBOR_FAILURE_RADIUS_GUARD"
+                if guard_mode and neighbor
+                else "CONSUMED_FULL_RETENTION_FAILURE_RADIUS_GUARD"
                 if guard_mode
                 else "NEW_NEIGHBOR_DEVELOPMENT_NOT_FRESH"
                 if neighbor
@@ -744,6 +783,8 @@ def main():
                 else "TEAM_RECEIVING_PROTECTION_ORDER_SMOKE_NOT_PROMOTED"
                 if args.protected_smoke
                 else "TEAM_RECEIVING_NEIGHBOR_RADIUS_GUARD_NOT_PROMOTED"
+                if guard_mode and neighbor
+                else "TEAM_RECEIVING_COVERAGE_RADIUS_FULL_RETENTION_NOT_PROMOTED"
                 if guard_mode
                 else "TEAM_RECEIVING_NEIGHBOR_DEVELOPMENT_NOT_PROMOTED"
                 if neighbor

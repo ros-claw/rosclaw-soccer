@@ -38,14 +38,25 @@ def main():
     ):
         raise ValueError("exact source and new external output required")
     report, old, training = (json.loads(p.read_text()) for p in paths)
+    guard = report["status"] == "TEAM_RECEIVING_COVERAGE_RADIUS_FULL_RETENTION_NOT_PROMOTED"
     if (
-        report["status"] != "TEAM_RECEIVING_COVERAGE_LEARNED_FULL_RETENTION_NOT_PROMOTED"
+        report["status"]
+        not in (
+            "TEAM_RECEIVING_COVERAGE_LEARNED_FULL_RETENTION_NOT_PROMOTED",
+            "TEAM_RECEIVING_COVERAGE_RADIUS_FULL_RETENTION_NOT_PROMOTED",
+        )
         or report["physical_runs"] != 220
         or report["fresh_exam"] is not False
         or report["promotion_authorized"] is not False
         or old["status"] != "TEAM_RECEIVING_EIGHT_BODY_FULL_CONSUMED_NOT_PROMOTED"
-        or training["status"] != "TEAM_COVERAGE_SUPERVISED_ACTORS_NOT_EVALUATED"
-        or report["learned_coverage_training_hash"] != args.models_hash
+        or training["status"]
+        != (
+            "TEAM_COVERAGE_FAILURE_DERIVED_RADIUS_NOT_EVALUATED"
+            if guard
+            else "TEAM_COVERAGE_SUPERVISED_ACTORS_NOT_EVALUATED"
+        )
+        or report.get("effective_coverage_model_hash", report["learned_coverage_training_hash"])
+        != args.models_hash
     ):
         raise ValueError("complete and unpromoted 220-run retention lineage required")
     old_groups = {g["course_seed"]: g for g in old["results"]}
@@ -77,6 +88,7 @@ def main():
             trace_count=220,
             physical_integrations=0,
             global_safety_not_independently_recomputed=True,
+            posthoc_failure_guard=guard,
             hardware_authorized=False,
         ),
     )
@@ -160,6 +172,7 @@ def main():
             trace_count=len(rows),
             physical_integrations=0,
             global_safety_not_independently_recomputed=True,
+            posthoc_failure_guard=guard,
             promotion_authorized=False,
             hardware_authorized=False,
         ),
