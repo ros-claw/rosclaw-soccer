@@ -44,6 +44,7 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--exclude-right-ankle-roll-after-rejection", action="store_true")
     parser.add_argument("--exclude-both-ankles-after-rejection", action="store_true")
+    parser.add_argument("--calibrate-hip-knee-response", action="store_true")
     args = parser.parse_args()
     clean(args.expected_head)
     source_dir = ROOT / "rsi-cftrack-predicted-ball-h300-20261027"
@@ -81,6 +82,21 @@ def main():
             "violating_hg_indices"
         ] != [10]:
             raise ValueError("right ankle pitch rejection required")
+    if args.calibrate_hip_knee_response:
+        if (
+            args.exclude_both_ankles_after_rejection
+            or args.exclude_right_ankle_roll_after_rejection
+        ):
+            raise ValueError("calibration is a separate preregistered experiment")
+        prior_hip = ROOT / "rsi-contact-reach-hip-knee-20261027/complete.json"
+        if (
+            digest(prior_hip)
+            != "sha256:eea7cbbe6f37e9d210c0ee42b006637068bf3f2cfcf240615eebf7f566d6c518"
+        ):
+            raise ValueError("exact completed hip-knee failure required")
+        failed = json.loads(prior_hip.read_text())["records"]["candidate"]
+        if not failed["complete"] or failed["outcome"]["task_pass"]:
+            raise ValueError("completed but unsuccessful hip-knee candidate required")
     source = json.loads(source_path.read_text())
     if source["status"] != "CFTRACK_PREDICTIVE_BALL_H300_PAIRED_NOT_PROMOTED":
         raise ValueError("expected failed predictive source required")
@@ -127,7 +143,7 @@ def main():
             source_head=args.expected_head,
             experiment="one damped Jacobian candidate against same-state parent",
             actual_prefix_controls=140,
-            candidate_count=1,
+            candidate_count=8 if args.calibrate_hip_knee_response else 1,
             excluded_hg_indices=(
                 [10, 11]
                 if args.exclude_both_ankles_after_rejection
@@ -136,7 +152,9 @@ def main():
                 else []
             ),
             forecast_controls_per_arm=160,
-            native_step_budget=4600,
+            native_step_budget=15800 if args.calibrate_hip_knee_response else 4600,
+            calibration_axes_hg=[6, 7, 8, 9] if args.calibrate_hip_knee_response else [],
+            calibration_delta_rad=0.08 if args.calibrate_hip_knee_response else None,
             damping=0.02,
             joint_bound_rad=0.18,
             phase14_witness_cftrack_control=95,
@@ -236,7 +254,7 @@ def main():
         player,
         expected_policy_type=OmniContact,
         expected_model_hash=MODEL_HASH,
-        native_step_budget=3200,
+        native_step_budget=14400 if args.calibrate_hip_knee_response else 3200,
     )
     parent = forecaster.forecast(controls=160)
     if parent["controls"] != 160 or any(
@@ -277,7 +295,6 @@ def main():
         delta_hg=tuple(float(x) for x in delta),
         donor_policy_hash=cftrack_state_hash(policy),
     )
-    candidate = forecaster.forecast(controls=160, motor_plan=plan)
 
     def summarize(future, arm):
         arrays = {k: np.concatenate([*raw[k], future[k]]) for k in raw}
@@ -307,6 +324,63 @@ def main():
             outcome=outcome,
         )
 
+    if args.calibrate_hip_knee_response:
+        records = {"parent": summarize(parent, "parent")}
+        for axis in range(6, 10):
+            for sign in (-1, 1):
+                arm = f"hg{axis}-{'minus' if sign < 0 else 'plus'}"
+                perturbation = np.zeros(29)
+                perturbation[axis] = sign * 0.08
+                calibration_plan = CFtrackMotorResidualPlan(
+                    origin_counter=83,
+                    start_control=83,
+                    peak_control=12,
+                    delta_hg=tuple(float(x) for x in perturbation),
+                    donor_policy_hash=cftrack_state_hash(policy),
+                )
+                future = forecaster.forecast(controls=160, motor_plan=calibration_plan)
+                summary = summarize(future, arm)
+                if future["native_steps"] > witness:
+                    scratch.qpos[:], scratch.qvel[:] = (
+                        future["qpos"][witness],
+                        future["qvel"][witness],
+                    )
+                    mujoco.mj_forward(model, scratch)
+                    current_points = np.zeros(6)
+                    current_gap = mujoco.mj_geomDistance(
+                        model, scratch, ball_geom, foot, 2.0, current_points
+                    )
+                    summary["witness_gap_m"] = float(current_gap)
+                    summary["witness_relative_xyz_m"] = (
+                        current_points[:3] - current_points[3:]
+                    ).tolist()
+                summary["delta_hg_index"] = axis
+                summary["delta_rad"] = sign * 0.08
+                records[arm] = summary
+                write_once(args.output / f"{arm}.json", summary)
+        write_once(
+            args.output / "complete.json",
+            dict(
+                status="CFTRACK_HIP_KNEE_PHYSICS_RESPONSE_CALIBRATION_NOT_PROMOTED",
+                source=SOURCE_HASH,
+                audit=AUDIT_HASH,
+                source_head=args.expected_head,
+                witness_cftrack_control=95,
+                witness_parent_gap_m=float(gap),
+                witness_parent_relative_xyz_m=(points[:3] - points[3:]).tolist(),
+                witness_geom_id=int(foot),
+                records=records,
+                counters=forecaster.counters(),
+                actual_native_steps=1400,
+                simulation_privileged_teacher=True,
+                physical_force_is_contact_authority=True,
+                task_promoted=False,
+                hardware_authorized=False,
+            ),
+        )
+        return
+
+    candidate = forecaster.forecast(controls=160, motor_plan=plan)
     records = {
         name: summarize(future, name)
         for name, future in [("parent", parent), ("candidate", candidate)]
