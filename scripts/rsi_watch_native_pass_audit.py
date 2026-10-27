@@ -18,6 +18,7 @@ def main():
     for name in ("unit", "source-head", "expected-head"):
         parser.add_argument(f"--{name}", required=True)
     parser.add_argument("--timeout-sec", type=int, default=43200)
+    parser.add_argument("--priority", action="store_true")
     args = parser.parse_args()
     clean(args.expected_head)
     if (
@@ -60,7 +61,11 @@ def main():
             report = json.loads(source.read_text())
             if (
                 report.get("status")
-                != "CAPTURE_GEOMETRY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                != (
+                    "CAPTURE_PRIORITY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                    if args.priority
+                    else "CAPTURE_GEOMETRY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                )
                 or report.get("source_head") != args.source_head
                 or len(report.get("records", [])) != 32
                 or report.get("promotion_authorized") is not False

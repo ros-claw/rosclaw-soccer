@@ -22,6 +22,7 @@ class CaptureTeacherConfig:
     contact_front_m: float = 0.25
     foot_height_below_ball_m: float = 0.0
     shin_clearance: bool = True
+    clearance_profile: str = "standard-v1"
 
     def validate(self) -> None:
         if (
@@ -43,6 +44,10 @@ class CaptureTeacherConfig:
                 )
             )
             or type(self.shin_clearance) is not bool
+            or type(self.clearance_profile) is not str
+            or self.clearance_profile not in ("standard-v1", "anticipatory-priority-v1")
+            or self.clearance_profile != "standard-v1"
+            and not self.shin_clearance
         ):
             raise ValueError("finite bounded capture-teacher declaration required")
 
@@ -146,6 +151,7 @@ class MeasuredFootCaptureTeacher:
                 offset,
                 shin_clearance=cfg.shin_clearance,
                 observed_shin_clearance=cfg.shin_clearance,
+                clearance_profile=cfg.clearance_profile,
             )
             requested = np.clip(
                 plan["joint_delta_HG"], -cfg.maximum_joint_delta_rad, cfg.maximum_joint_delta_rad

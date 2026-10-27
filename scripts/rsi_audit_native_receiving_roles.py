@@ -31,11 +31,16 @@ def main():
     ):
         raise ValueError("unused audit and exact completed receiver course source required")
     s, declaration = [json.loads(p.read_text()) for p in (rp, dp)]
+    priority_study = (
+        declaration["protocol"] == "dual256.actual_pass.capture_priority_sweep.development.v6"
+    )
     sweep_study = (
         declaration["protocol"] == "dual256.actual_pass.capture_geometry_sweep.development.v5"
     )
-    development_study = sweep_study or (
-        declaration["protocol"] == "dual256.actual_pass.prealigned_foot_teacher.development.v4"
+    development_study = (
+        priority_study
+        or sweep_study
+        or (declaration["protocol"] == "dual256.actual_pass.prealigned_foot_teacher.development.v4")
     )
     prealigned_study = (
         development_study
@@ -47,7 +52,9 @@ def main():
     )
     expected_worlds = 32 if prealigned_study else 24
     producer_status = (
-        "CAPTURE_GEOMETRY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+        "CAPTURE_PRIORITY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+        if priority_study
+        else "CAPTURE_GEOMETRY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
         if sweep_study
         else "PREALIGNED_FOOT_CAPTURE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
         if development_study
@@ -70,6 +77,7 @@ def main():
             "dual256.actual_pass.prealigned_foot_teacher.v3",
             "dual256.actual_pass.prealigned_foot_teacher.development.v4",
             "dual256.actual_pass.capture_geometry_sweep.development.v5",
+            "dual256.actual_pass.capture_priority_sweep.development.v6",
         )
     ):
         raise ValueError("exact complete preregistered24 paired worlds required")
@@ -186,7 +194,9 @@ def main():
             for key, value in declaration.get("capture_teacher_configs", {}).items()
         }
         expected_configs = (
-            {"sweep_early", "sweep_lower", "sweep_early_lower"}
+            {"priority_default", "priority_early", "priority_early_lower"}
+            if priority_study
+            else {"sweep_early", "sweep_lower", "sweep_early_lower"}
             if sweep_study
             else {"velocity_capture", "velocity_capture_clearance"}
         )
@@ -507,7 +517,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "CAPTURE_GEOMETRY_SWEEP_DEVELOPMENT32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
+                    "CAPTURE_PRIORITY_SWEEP_DEVELOPMENT32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
+                    if priority_study
+                    else "CAPTURE_GEOMETRY_SWEEP_DEVELOPMENT32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
                     if sweep_study
                     else "PREALIGNED_FOOT_CAPTURE_DEVELOPMENT32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
                     if development_study

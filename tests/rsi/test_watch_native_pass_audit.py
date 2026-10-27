@@ -70,3 +70,26 @@ def test_failed_sweep_does_not_retry(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match="without completion"):
         watch.main()
     assert len(calls) == 1
+
+
+def test_priority_sweep_replays_only_matching_protocol(monkeypatch, tmp_path):
+    calls = setup(
+        monkeypatch,
+        tmp_path,
+        state="ActiveState=inactive\nResult=success\nExecMainStatus=0\n",
+        complete=True,
+    )
+    source = tmp_path / "source" / "complete.json"
+    source.write_text(
+        json.dumps(
+            dict(
+                status="CAPTURE_PRIORITY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY",
+                source_head="train",
+                records=[{}] * 32,
+                promotion_authorized=False,
+            )
+        )
+    )
+    watch.sys.argv.append("--priority")
+    watch.main()
+    assert len(calls) == 2

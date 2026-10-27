@@ -25,11 +25,20 @@ from rosclaw_soccer.rsi.paid_foot_taskspace import FootTaskSpaceIntent
         ("contact_front_m", 0.19),
         ("foot_height_below_ball_m", -0.1),
         ("shin_clearance", 1),
+        ("clearance_profile", "unknown"),
     ],
 )
 def test_capture_teacher_rejects_unbounded_or_nonfinite_declarations(field, value):
     with pytest.raises(ValueError):
         replace(CaptureTeacherConfig(), **{field: value}).validate()
+
+
+def test_predictive_clearance_requires_enabled_shin_constraint():
+    CaptureTeacherConfig(clearance_profile="anticipatory-priority-v1").validate()
+    with pytest.raises(ValueError):
+        CaptureTeacherConfig(
+            shin_clearance=False, clearance_profile="anticipatory-priority-v1"
+        ).validate()
 
 
 def test_prefixed_kinematic_teacher_keeps_HG_order_and_never_writes_live_state(tmp_path):
