@@ -64,7 +64,20 @@ def main():
     )
     parser.add_argument(
         "--static-training-case",
-        choices=("yminus-vminus", "yminus-vplus", "yplus-vminus", "yplus-vplus"),
+        choices=(
+            "yminus-vminus",
+            "yminus-vplus",
+            "yplus-vminus",
+            "yplus-vplus",
+            "yminus-near-vminus",
+            "yminus-near-vplus",
+            "yminus-far-vminus",
+            "yminus-far-vplus",
+            "yplus-near-vminus",
+            "yplus-near-vplus",
+            "yplus-far-vminus",
+            "yplus-far-vplus",
+        ),
     )
     parser.add_argument(
         "--causal-intercept-training-case",
@@ -195,6 +208,10 @@ def main():
         y_amplitude = (
             0.03
             if args.bandit_eval_case
+            else 0.01
+            if args.static_training_case and "-near-" in args.static_training_case
+            else 0.05
+            if args.static_training_case and "-far-" in args.static_training_case
             else 0.04
             if args.static_training_case or args.causal_intercept_training_case
             else 0.02
@@ -202,12 +219,24 @@ def main():
         v_amplitude = (
             0.015
             if args.bandit_eval_case
+            else 0.005
+            if args.static_training_case
+            and ("-near-" in args.static_training_case or "-far-" in args.static_training_case)
             else 0.01
             if args.static_training_case or args.causal_intercept_training_case
             else 0.02
         )
         y_delta = -y_amplitude if case_name.startswith("yminus") else y_amplitude
         v_delta = -v_amplitude if case_name.endswith("vminus") else v_amplitude
+        if args.static_training_case and (
+            "-near-" in args.static_training_case or "-far-" in args.static_training_case
+        ):
+            previous_audit = ROOT / "rsi-contact-bandit-audit-20261027/complete.json"
+            if (
+                digest(previous_audit)
+                != "sha256:d5f34db14f95ca4a2b10dbd079f36c0d809516b713bde7ec76129a9fd614931c"
+            ):
+                raise ValueError("exact failed-bandit audit required before expanded training")
     if args.bandit_eval_case:
         training_path = ROOT / "rsi-contact-bandit-training-20261027/complete.json"
         training_hash = "sha256:541d80cd4b8f87753a60b1f0cbff0e56097e1b74dbff199005b49a954d4e921f"
