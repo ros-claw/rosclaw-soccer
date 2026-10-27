@@ -24,6 +24,7 @@ def main():
     modes.add_argument("--long-horizon", action="store_true")
     modes.add_argument("--relay-development", action="store_true")
     modes.add_argument("--relay-balance", action="store_true")
+    modes.add_argument("--relay-balance-expanded", action="store_true")
     args = parser.parse_args()
     clean(args.expected_head)
     if (
@@ -66,7 +67,9 @@ def main():
             if (
                 report.get("status")
                 != (
-                    "NEURAL_RELAY_BALANCE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_BALANCE_EXPANDED64_COLLECTED_PENDING_OWN_REPLAY"
+                    if args.relay_balance_expanded
+                    else "NEURAL_RELAY_BALANCE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
                     if args.relay_balance
                     else "NEURAL_RELAY_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
                     if args.relay_development
@@ -79,7 +82,7 @@ def main():
                     else "CAPTURE_GEOMETRY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
                 )
                 or report.get("source_head") != args.source_head
-                or len(report.get("records", [])) != 32
+                or len(report.get("records", [])) != (64 if args.relay_balance_expanded else 32)
                 or report.get("promotion_authorized") is not False
             ):
                 raise ValueError("complete unpromoted native pass sweep required")
@@ -93,7 +96,7 @@ def main():
         [
             sys.executable,
             "scripts/rsi_audit_neural_relay_chain.py"
-            if args.relay_development or args.relay_balance
+            if args.relay_development or args.relay_balance or args.relay_balance_expanded
             else "scripts/rsi_audit_native_receiving_roles.py",
             "--source-root",
             str(args.source),

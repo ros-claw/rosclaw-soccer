@@ -164,3 +164,23 @@ def test_balance_relay_routes_to_relay_replay(monkeypatch, tmp_path):
     watch.sys.argv.append("--relay-balance")
     watch.main()
     assert calls[1][1] == "scripts/rsi_audit_neural_relay_chain.py"
+
+
+def test_expanded_balance_requires_all_64_worlds(monkeypatch, tmp_path):
+    calls = setup(
+        monkeypatch,
+        tmp_path,
+        state="ActiveState=inactive\nResult=success\nExecMainStatus=0\n",
+        complete=True,
+    )
+    source = tmp_path / "source" / "complete.json"
+    report = json.loads(source.read_text())
+    report["status"] = "NEURAL_RELAY_BALANCE_EXPANDED64_COLLECTED_PENDING_OWN_REPLAY"
+    source.write_text(json.dumps(report))
+    watch.sys.argv.append("--relay-balance-expanded")
+    with pytest.raises(ValueError, match="unpromoted"):
+        watch.main()
+    report["records"] = [{}] * 64
+    source.write_text(json.dumps(report))
+    watch.main()
+    assert calls[-1][1] == "scripts/rsi_audit_neural_relay_chain.py"

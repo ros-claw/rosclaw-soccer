@@ -31,13 +31,16 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
-    balance_study = dec["protocol"] == "soccer.neural_relay_balance_teacher.development.v5"
+    balance_expanded = dec["protocol"] == "soccer.neural_relay_balance_expanded.development.v6"
+    balance_study = (
+        balance_expanded or dec["protocol"] == "soccer.neural_relay_balance_teacher.development.v5"
+    )
     development_study = (
         balance_study or dec["protocol"] == "soccer.neural_relay_development_contexts.v4"
     )
     reference_study = dec["protocol"] == "soccer.neural_relay_reference_bridge.v2"
     team_entry_study = dec["protocol"] == "soccer.neural_relay_team_entry.v3"
-    expected_worlds = 32
+    expected_worlds = 64 if balance_expanded else 32
     if reference_study:
         if dec["reference_bridge_controls"] not in ([0], [0, 5, 15, 30]):
             raise ValueError("entire declared reference-bridge ablation required")
@@ -47,7 +50,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_BALANCE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_BALANCE_EXPANDED64_COLLECTED_PENDING_OWN_REPLAY"
+        if balance_expanded
+        else "NEURAL_RELAY_BALANCE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
         if balance_study
         else "NEURAL_RELAY_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
         if development_study
@@ -68,6 +73,7 @@ def main():
             "soccer.neural_relay_team_entry.v3",
             "soccer.neural_relay_development_contexts.v4",
             "soccer.neural_relay_balance_teacher.development.v5",
+            "soccer.neural_relay_balance_expanded.development.v6",
         )
         or len(s["records"]) != expected_worlds
         or len(dec["courses"]) != expected_worlds
@@ -103,6 +109,13 @@ def main():
                 for memory in ("new_skill_zero", "own_shadow_carry")
             ]
         )
+        sides = (-0.75, -0.35, 0.35, 0.75) if balance_expanded else (-0.55, 0.55)
+        if balance_expanded and (
+            dec.get("receiver_lateral_offsets_m") != list(sides)
+            or dec.get("joint_targets_remain_actual_neural_outputs") is not False
+            or dec.get("bounded_teacher_added_after_neural") is not True
+        ):
+            raise ValueError("exact expanded domain and honest motor provenance required")
         expected_courses = [
             dict(
                 context=i,
@@ -110,7 +123,7 @@ def main():
                 arm=arm,
             )
             for i in indices
-            for side in (-0.55, 0.55)
+            for side in sides
             for arm in arms
         ]
         if dec["courses"] != expected_courses:
@@ -127,6 +140,28 @@ def main():
         )
         if any(pins.get(path) != value for path, value in balance_pins.items()):
             raise ValueError("audited balance teachers must match frozen producer pins")
+    if balance_expanded:
+        pilot_path = Path(dec["balance_pilot_review"])
+        pilot_hash = dec["balance_pilot_review_hash"]
+        if (
+            pilot_path.is_symlink()
+            or pins.get(str(pilot_path)) != pilot_hash
+            or digest(pilot_path) != pilot_hash
+        ):
+            raise ValueError("exact paired pilot admission must be pinned")
+        pilot = json.loads(pilot_path.read_text())
+        if (
+            pilot.get("status") != "RELAY_BALANCE_PAIRED_DEVELOPMENT_NOT_PROMOTED"
+            or pilot.get("source_head") != dec.get("balance_pilot_review_head")
+            or pilot.get("paired_physical_and_private_handoff_prefix_exact") is not True
+            or pilot.get("original_baselines_raw_byte_identical") is not True
+            or len(pilot.get("records", [])) != 72
+            or not any(
+                row.get("body_failure_rescues", 0) > 0
+                for row in pilot.get("summaries", {}).values()
+            )
+        ):
+            raise ValueError("exact closed pilot with measured body rescue required")
     pins[str(rp)], pins[str(dp)] = a.source_hash, digest(dp)
     for i, claim in enumerate(s["records"]):
         if claim["index"] != i or claim["course"] != dec["courses"][i]:

@@ -22,6 +22,10 @@ def main():
     p.add_argument("--successor-alignment-study", action="store_true")
     p.add_argument("--new-context-block", type=int, choices=(0, 1, 2))
     p.add_argument("--balance-teacher-pair", nargs=4, action="append")
+    p.add_argument("--balance-expanded", action="store_true")
+    p.add_argument("--balance-pilot-review", type=Path)
+    p.add_argument("--balance-pilot-review-hash")
+    p.add_argument("--balance-pilot-review-head")
     for key in ("prior-relay-root", "prior-audit-root"):
         p.add_argument("--" + key, type=Path)
     for key in ("prior-relay-hash", "prior-audit-hash"):
@@ -39,6 +43,23 @@ def main():
         len(a.balance_teacher_pair) != 3 or a.new_context_block is None
     ):
         p.error("balance study requires all three teacher/audit pairs and a development block")
+    if (
+        a.balance_expanded
+        and (
+            not a.balance_pilot_review
+            or not a.balance_pilot_review_hash
+            or not a.balance_pilot_review_head
+            or a.balance_teacher_pair is None
+        )
+    ) or (
+        not a.balance_expanded
+        and (
+            a.balance_pilot_review is not None
+            or a.balance_pilot_review_hash is not None
+            or a.balance_pilot_review_head is not None
+        )
+    ):
+        p.error("expanded study requires exact closed pilot review and all three teachers")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import admit_frontier, clean, receipt, source_pins
@@ -66,6 +87,28 @@ def main():
         if set(pins) & set(balance_pins):
             raise ValueError("distinct explicit balance teacher inputs required")
         pins.update(balance_pins)
+    if a.balance_expanded:
+        review = a.balance_pilot_review
+        if review.is_symlink() or digest(review) != a.balance_pilot_review_hash:
+            raise ValueError("exact immutable independently replayed pilot review required")
+        pilot = json.loads(review.read_text())
+        if (
+            pilot.get("status") != "RELAY_BALANCE_PAIRED_DEVELOPMENT_NOT_PROMOTED"
+            or pilot.get("source_head") != a.balance_pilot_review_head
+            or pilot.get("original_baselines_raw_byte_identical") is not True
+            or pilot.get("paired_physical_and_private_handoff_prefix_exact") is not True
+            or len(pilot.get("records", [])) != 72
+            or any(
+                pilot.get(k) is not False
+                for k in ("promotion_authorized", "hardware_authorized", "independent_fresh")
+            )
+            or not any(
+                row.get("body_failure_rescues", 0) > 0
+                for row in pilot.get("summaries", {}).values()
+            )
+        ):
+            raise ValueError("complete paired pilot and at least one measured body rescue required")
+        pins[str(review)] = a.balance_pilot_review_hash
     prior = None
     if len(a.reference_bridge_controls) > 1 or a.successor_alignment_study:
         if not all(
@@ -122,18 +165,18 @@ def main():
             for assigned in (False, True)
             for align in (False, True)
         ]
+    sides = (-0.75, -0.35, 0.35, 0.75) if a.balance_expanded else (-0.55, 0.55)
     courses = [
-        dict(context=i, lateral_m=side, arm=arm)
-        for i in indices
-        for side in (-0.55, 0.55)
-        for arm in arms
+        dict(context=i, lateral_m=side, arm=arm) for i in indices for side in sides for arm in arms
     ]
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_balance_teacher.development.v5"
+                "soccer.neural_relay_balance_expanded.development.v6"
+                if a.balance_expanded
+                else "soccer.neural_relay_balance_teacher.development.v5"
                 if a.balance_teacher_pair is not None
                 else "soccer.neural_relay_development_contexts.v4"
                 if a.new_context_block is not None
@@ -147,6 +190,10 @@ def main():
             development_context_block=a.new_context_block,
             context_indices=list(indices),
             balance_teacher_pairs=a.balance_teacher_pair,
+            balance_pilot_review=str(a.balance_pilot_review) if a.balance_expanded else None,
+            balance_pilot_review_hash=a.balance_pilot_review_hash,
+            balance_pilot_review_head=a.balance_pilot_review_head,
+            receiver_lateral_offsets_m=list(sides),
             balance_teacher_is_not_learned_actor=a.balance_teacher_pair is not None,
             candidate=candidates[0],
             baseline_training_hash=base_hash,
@@ -160,7 +207,8 @@ def main():
             assigned_receiver_goal_is_fixed_communicated_forefoot=a.successor_alignment_study,
             aligned_entry_consecutive_measured_controls=10,
             prior_closed_relay=prior,
-            joint_targets_remain_actual_neural_outputs=True,
+            joint_targets_remain_actual_neural_outputs=a.balance_teacher_pair is None,
+            bounded_teacher_added_after_neural=a.balance_teacher_pair is not None,
             all_bodies_initialized_once=True,
             no_ball_reposition=True,
             no_future_readiness=True,
@@ -222,7 +270,7 @@ def main():
         (a.output / "scene.xml").write_text(setup.xml)
         typed = []
         for i in indices:
-            for side in (-0.55, 0.55):
+            for side in sides:
                 _, w, _, _, _ = setup.prepare(i, side)
                 typed.append(
                     NativePassCourse(
@@ -250,7 +298,7 @@ def main():
             a.output / "preflight.json",
             dict(
                 worlds=len(courses),
-                initial_conditions=8,
+                initial_conditions=len(indices) * len(sides),
                 course_binding=binding,
                 ball_dimensions=setup.ball_dimensions,
                 native_steps=0,
@@ -546,7 +594,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_BALANCE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_BALANCE_EXPANDED64_COLLECTED_PENDING_OWN_REPLAY"
+                    if a.balance_expanded
+                    else "NEURAL_RELAY_BALANCE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
                     if a.balance_teacher_pair is not None
                     else "NEURAL_RELAY_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
                     if a.new_context_block is not None
