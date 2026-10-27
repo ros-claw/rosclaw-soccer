@@ -51,7 +51,20 @@ def main():
     parser.add_argument("--calibrate-hip-knee-response", action="store_true")
     parser.add_argument("--replay-contact-arm", choices=("hg7-plus", "hg9-minus"))
     parser.add_argument("--measured-response-candidate", action="store_true")
+    parser.add_argument("--static-contact-calibration", action="store_true")
     args = parser.parse_args()
+    if args.static_contact_calibration and (
+        args.measured_response_candidate
+        or args.replay_contact_arm
+        or args.calibrate_hip_knee_response
+        or args.exclude_both_ankles_after_rejection
+        or args.exclude_right_ankle_roll_after_rejection
+    ):
+        raise ValueError("static-contact calibration is a separate experiment")
+    origin = 50 if args.static_contact_calibration else 83
+    horizon = 243 - origin
+    prefix_controls = 57 + origin
+    calibration_axes = list(range(4)) if args.static_contact_calibration else list(range(6, 10))
     clean(args.expected_head)
     source_dir = ROOT / "rsi-cftrack-predicted-ball-h300-20261027"
     source_path = source_dir / "complete.json"
@@ -177,7 +190,12 @@ def main():
     bridge = load_artifact(
         bridge_report, json.loads(bridge_report.read_text())["records"][0]["artifact"]
     )
-    prior = load_artifact(source_path, source["records"][1]["actual_execution"]["artifact"])
+    source_record = source["records"][0 if args.static_contact_calibration else 1]
+    prior = load_artifact(source_path, source_record["actual_execution"]["artifact"])
+    if args.static_contact_calibration:
+        outcome = source_record["actual_execution"]["absolute_h300_outcome"]
+        if outcome["first_foot_contact_frame"] != 120 or outcome["task_pass"] is not False:
+            raise ValueError("exact failed approach-contact baseline required")
     args.output.mkdir()
     write_once(
         args.output / "declaration.json",
@@ -189,19 +207,20 @@ def main():
                 "actual deterministic replay"
                 if args.replay_contact_arm
                 else "paired dynamics calibration"
-                if args.calibrate_hip_knee_response
+                if args.calibrate_hip_knee_response or args.static_contact_calibration
                 else "one damped Jacobian candidate against same-state parent"
             ),
             actual_replay_arm=args.replay_contact_arm,
             measured_response_candidate=args.measured_response_candidate,
+            static_approach_contact_calibration=args.static_contact_calibration,
             calibration_artifact_hash=(
                 arm_hashes[args.replay_contact_arm] if args.replay_contact_arm else None
             ),
-            actual_prefix_controls=140,
+            actual_prefix_controls=prefix_controls,
             candidate_count=0
             if args.replay_contact_arm
             else 8
-            if args.calibrate_hip_knee_response
+            if args.calibrate_hip_knee_response or args.static_contact_calibration
             else 1,
             excluded_hg_indices=(
                 [10, 11]
@@ -210,18 +229,24 @@ def main():
                 if args.exclude_right_ankle_roll_after_rejection
                 else []
             ),
-            forecast_controls_per_arm=160,
+            forecast_controls_per_arm=horizon,
             native_step_budget=3000
             if args.replay_contact_arm
+            else 18440
+            if args.static_contact_calibration
             else 15800
             if args.calibrate_hip_knee_response
             else 4600,
-            calibration_axes_hg=[6, 7, 8, 9] if args.calibrate_hip_knee_response else [],
-            calibration_delta_rad=0.08 if args.calibrate_hip_knee_response else None,
+            calibration_axes_hg=calibration_axes
+            if args.calibrate_hip_knee_response or args.static_contact_calibration
+            else [],
+            calibration_delta_rad=0.08
+            if args.calibrate_hip_knee_response or args.static_contact_calibration
+            else None,
             damping=0.02,
             joint_bound_rad=0.18,
-            phase14_witness_cftrack_control=95,
-            proposal_start_cftrack_control=83,
+            witness_cftrack_control=origin + 12,
+            proposal_start_cftrack_control=origin,
             absolute_scoring_horizon=300,
             privileged_future_teacher=True,
             hardware_authorized=False,
@@ -292,14 +317,14 @@ def main():
         bridge["candidate_root"],
         bridge["candidate_joint"],
         expected_model_hash=MODEL_HASH,
-        ball_prediction_horizon_s=1.74,
+        ball_prediction_horizon_s=None if args.static_contact_calibration else 1.74,
     )
     if (
         receipt["conditioned_reference_hash"]
-        != source["records"][1]["bridge_reference_receipt"]["conditioned_reference_hash"]
+        != source_record["bridge_reference_receipt"]["conditioned_reference_hash"]
     ):
         raise ValueError("predictive reference mismatch")
-    for frame in range(83):
+    for frame in range(origin):
         target, _ = player.propose()
         row = world.advance({"a/": target})
         if not np.array_equal(target, prior["joint_targets"][frame]) or any(
@@ -311,7 +336,7 @@ def main():
         player.commit()
         if world.failed:
             raise ValueError("measured donor failed")
-    if world.control_steps != 140 or policy.counter_step != 83:
+    if world.control_steps != prefix_controls or policy.counter_step != origin:
         raise ValueError("exact causal donor clock required")
     if args.replay_contact_arm:
         axis, amount = (7, 0.08) if args.replay_contact_arm == "hg7-plus" else (9, -0.08)
@@ -402,11 +427,15 @@ def main():
         player,
         expected_policy_type=OmniContact,
         expected_model_hash=MODEL_HASH,
-        native_step_budget=14400 if args.calibrate_hip_knee_response else 3200,
+        native_step_budget=(
+            9 * horizon * 10
+            if args.calibrate_hip_knee_response or args.static_contact_calibration
+            else 3200
+        ),
     )
-    parent = forecaster.forecast(controls=160)
-    if parent["controls"] != 160 or any(
-        not np.array_equal(parent[k], prior[k][830:2430]) for k in raw
+    parent = forecaster.forecast(controls=horizon)
+    if parent["controls"] != horizon or any(
+        not np.array_equal(parent[k], prior[k][origin * 10 : 2430]) for k in raw
     ):
         raise ValueError("parent future differs from original real physics")
     scratch = mujoco.MjData(model)
@@ -416,7 +445,9 @@ def main():
     ball_geom = int(np.flatnonzero(model.geom_bodyid == lo.ball)[0])
     candidates = []
     for idx in range(1, 8):
-        foot = model.geom(f"a/right_foot{idx}_collision").id
+        foot = model.geom(
+            f"a/{'left' if args.static_contact_calibration else 'right'}_foot{idx}_collision"
+        ).id
         points = np.zeros(6)
         gap = mujoco.mj_geomDistance(model, scratch, ball_geom, foot, 2.0, points)
         candidates.append((gap, foot, points.copy()))
@@ -445,8 +476,8 @@ def main():
         delta[:] = 0.0
         delta[active] = learned_delta
     plan = CFtrackMotorResidualPlan(
-        origin_counter=83,
-        start_control=83,
+        origin_counter=origin,
+        start_control=origin,
         peak_control=12,
         delta_hg=tuple(float(x) for x in delta),
         donor_policy_hash=cftrack_state_hash(policy),
@@ -456,7 +487,7 @@ def main():
         arrays = {k: np.concatenate([*raw[k], future[k]]) for k in raw}
         artifact = args.output / f"{arm}.npz"
         np.savez_compressed(artifact, **arrays, targets=future["joint_targets"])
-        if future["controls"] != 160:
+        if future["controls"] != horizon:
             return dict(
                 complete=False,
                 runtime_failure=future["runtime_failure"],
@@ -483,21 +514,21 @@ def main():
             artifact_hash=digest(artifact),
         )
 
-    if args.calibrate_hip_knee_response:
+    if args.calibrate_hip_knee_response or args.static_contact_calibration:
         records = {"parent": summarize(parent, "parent")}
-        for axis in range(6, 10):
+        for axis in calibration_axes:
             for sign in (-1, 1):
                 arm = f"hg{axis}-{'minus' if sign < 0 else 'plus'}"
                 perturbation = np.zeros(29)
                 perturbation[axis] = sign * 0.08
                 calibration_plan = CFtrackMotorResidualPlan(
-                    origin_counter=83,
-                    start_control=83,
+                    origin_counter=origin,
+                    start_control=origin,
                     peak_control=12,
                     delta_hg=tuple(float(x) for x in perturbation),
                     donor_policy_hash=cftrack_state_hash(policy),
                 )
-                future = forecaster.forecast(controls=160, motor_plan=calibration_plan)
+                future = forecaster.forecast(controls=horizon, motor_plan=calibration_plan)
                 summary = summarize(future, arm)
                 if future["native_steps"] > witness:
                     scratch.qpos[:], scratch.qvel[:] = (
@@ -520,17 +551,21 @@ def main():
         write_once(
             args.output / "complete.json",
             dict(
-                status="CFTRACK_HIP_KNEE_PHYSICS_RESPONSE_CALIBRATION_NOT_PROMOTED",
+                status=(
+                    "CFTRACK_STATIC_APPROACH_CONTACT_CALIBRATION_NOT_PROMOTED"
+                    if args.static_contact_calibration
+                    else "CFTRACK_HIP_KNEE_PHYSICS_RESPONSE_CALIBRATION_NOT_PROMOTED"
+                ),
                 source=SOURCE_HASH,
                 audit=AUDIT_HASH,
                 source_head=args.expected_head,
-                witness_cftrack_control=95,
+                witness_cftrack_control=origin + 12,
                 witness_parent_gap_m=float(gap),
                 witness_parent_relative_xyz_m=(points[:3] - points[3:]).tolist(),
                 witness_geom_id=int(foot),
                 records=records,
                 counters=forecaster.counters(),
-                actual_native_steps=1400,
+                actual_native_steps=prefix_controls * 10,
                 simulation_privileged_teacher=True,
                 physical_force_is_contact_authority=True,
                 task_promoted=False,
