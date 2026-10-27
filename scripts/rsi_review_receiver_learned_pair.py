@@ -11,6 +11,19 @@ from scripts.rsi_review_relay_balance_counterfactual import measured, report
 from scripts.rsi_review_whole_receiver_identity import artifact_equal, handoff_equal
 
 
+def compare_outcomes(rows: list[dict], name: str) -> dict:
+    """Count improvement in the correct direction, including failure avoidance."""
+    baseline = [r["baseline"][name] for r in rows]
+    candidate = [r["candidate"][name] for r in rows]
+    if name == "body_failure":
+        rescued = sum(a and not b for a, b in zip(baseline, candidate, strict=True))
+        lost = sum(not a and b for a, b in zip(baseline, candidate, strict=True))
+    else:
+        rescued = sum(not a and b for a, b in zip(baseline, candidate, strict=True))
+        lost = sum(a and not b for a, b in zip(baseline, candidate, strict=True))
+    return dict(rescued=rescued, lost=lost, baseline=sum(baseline), candidate=sum(candidate))
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
@@ -93,15 +106,7 @@ def main() -> None:
     if blocks != {0, 1, 2} or len(rows) != 24 or any(digest(path) != h for path, h in frozen):
         raise ValueError("all exact unmodified paired sources required")
     metrics = ("handoff", "outgoing_foot_strike", "return_0p1m_and_healthy", "body_failure")
-    comparisons = {
-        name: dict(
-            rescued=sum(not r["baseline"][name] and r["candidate"][name] for r in rows),
-            lost=sum(r["baseline"][name] and not r["candidate"][name] for r in rows),
-            baseline=sum(r["baseline"][name] for r in rows),
-            candidate=sum(r["candidate"][name] for r in rows),
-        )
-        for name in metrics
-    }
+    comparisons = {name: compare_outcomes(rows, name) for name in metrics}
     clean(a.expected_head)
     a.output.mkdir(parents=True)
     write_once(

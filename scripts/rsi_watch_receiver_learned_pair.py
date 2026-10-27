@@ -42,7 +42,7 @@ def main() -> None:
     deadline = time.monotonic() + a.timeout_sec
     while True:
         pending = False
-        for unit in units:
+        for root, unit, _, _ in a.group:
             q = subprocess.run(
                 [
                     "systemctl",
@@ -63,11 +63,22 @@ def main() -> None:
                 check=False,
             )
             state = dict(line.split("=", 1) for line in q.stdout.splitlines() if "=" in line)
-            if (
-                q.returncode
-                or state.get("LoadState") != "loaded"
-                or not {"ActiveState", "Result", "ExecMainStatus"} <= state.keys()
-            ):
+            if q.returncode or not {"LoadState", "ActiveState"} <= state.keys():
+                raise ValueError("cannot verify exact physical worker state")
+            if state["LoadState"] == "not-found":
+                source, own = Path(root) / "source", Path(root) / "audit"
+                if (
+                    state["ActiveState"] != "inactive"
+                    or not (source / "complete.json").is_file()
+                    or not (own / "complete.json").is_file()
+                    or (source / "failed.json").exists()
+                    or (own / "failed.json").exists()
+                ):
+                    raise ValueError("missing worker requires both completed evidence receipts")
+                # The reviewer must verify both receipts, hashes, and every replay;
+                # existence here alone never constitutes a pass.
+                continue
+            if state["LoadState"] != "loaded" or not {"Result", "ExecMainStatus"} <= state.keys():
                 raise ValueError("cannot verify exact physical worker state")
             if state["ActiveState"] in ("active", "activating"):
                 pending = True

@@ -50,3 +50,50 @@ def test_review_only_after_three_successful_loaded_workers(tmp_path, monkeypatch
         with pytest.raises(ValueError, match="failed"):
             watcher.main()
         assert len(calls) == 1
+
+
+@pytest.mark.parametrize("complete", [True, False])
+def test_collected_worker_requires_complete_receipts_before_review(tmp_path, monkeypatch, complete):
+    calls = []
+    monkeypatch.setattr(watcher, "clean", lambda _: None)
+    args = [
+        "watch",
+        "--source-head",
+        "a",
+        "--old-head",
+        "b",
+        "--expected-head",
+        "c",
+        "--output",
+        str(tmp_path / "review"),
+    ]
+    for i in range(3):
+        root = tmp_path / f"root{i}"
+        if complete:
+            for name in ("source", "audit"):
+                (root / name).mkdir(parents=True)
+                (root / name / "complete.json").write_text("{}")
+        args.extend(
+            [
+                "--group",
+                str(root),
+                f"rosclaw-receiver-learned-pair-recovery-b{i}.service",
+                f"old{i}",
+                f"old_audit{i}",
+            ]
+        )
+    monkeypatch.setattr(sys, "argv", args)
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout="LoadState=not-found\nActiveState=inactive\n")
+
+    monkeypatch.setattr(watcher.subprocess, "run", run)
+    if complete:
+        watcher.main()
+        assert len(calls) == 4
+        assert calls[-1][1:3] == ["-m", "scripts.rsi_review_receiver_learned_pair"]
+    else:
+        with pytest.raises(ValueError, match="completed evidence"):
+            watcher.main()
+        assert len(calls) == 1
