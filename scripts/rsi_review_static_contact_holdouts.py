@@ -6,6 +6,7 @@ labels, common prefixes and frame-end geometry from retained private futures.
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import mujoco
@@ -24,7 +25,7 @@ from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_native_context_recovery_common import digest
 from scripts.rsi_native_fresh_common import clean
 
-ROOT = Path("/code/rosclaw/soccer_native_evidence")
+ROOT = Path(os.environ["ROSCLAW_SOCCER_EVIDENCE"]).resolve(strict=True)
 CASES = {
     "yminus-vminus": "aa52c5a955311c7d7e7cef6d91574011fa25acac99cda22b2b6bafb90887e952",
     "yminus-vplus": "2e0f2d49f5994721785c00cf283116612b342bfa727f07c8f54b41d15b5b2774",

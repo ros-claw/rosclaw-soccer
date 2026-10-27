@@ -7,6 +7,7 @@ is never authorized to execute or promoted by this script.
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -22,7 +23,7 @@ from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_native_context_recovery_common import digest
 from scripts.rsi_native_fresh_common import clean
 
-ROOT = Path("/code/rosclaw/soccer_native_evidence")
+ROOT = Path(os.environ["ROSCLAW_SOCCER_EVIDENCE"]).resolve(strict=True)
 AUDIT = ROOT / "rsi-approach-training-audit-20261027/complete.json"
 AUDIT_HASH = "sha256:d58a37ad318d3edcc50710adb83ff1e88f19e0bf8720b853b06ee364fd78d50a"
 CASES = ("yminus-vminus", "yminus-vplus", "yplus-vminus", "yplus-vplus")

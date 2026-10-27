@@ -7,6 +7,7 @@ absolute H300 deadline, with the unchanged first-touch contract.
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -43,7 +44,7 @@ from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_native_context_recovery_common import digest
 from scripts.rsi_native_fresh_common import clean
 
-ROOT = Path("/code/rosclaw/soccer_native_evidence")
+ROOT = Path(os.environ["ROSCLAW_SOCCER_EVIDENCE"]).resolve(strict=True)
 SOURCE_HASH = "sha256:75612fbae5c1e4df0741c16b4a5000473aac829f919adbb5367027dce75cb151"
 AUDIT_HASH = "sha256:db3b3f1b8d6553ba7df56878bbc292517668c79cf7a454984ea7440048be0c3f"
 MODEL_HASH = "sha256:115bfd4a136b66903a54bc2807ec728cc2fa251d3e782f1906f352b45199568d"

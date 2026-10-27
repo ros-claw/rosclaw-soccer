@@ -5,6 +5,7 @@ Does not advance physics and cannot certify independent physical execution.
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import mujoco
@@ -19,7 +20,7 @@ from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_native_context_recovery_common import digest
 from scripts.rsi_native_fresh_common import clean
 
-ROOT = Path("/code/rosclaw/soccer_native_evidence")
+ROOT = Path(os.environ["ROSCLAW_SOCCER_EVIDENCE"]).resolve(strict=True)
 CASES = {
     "yminus-vminus": "4ec6d8bafbc95869b2942d9c66ca458888d8080d44ef712ad770539a2c994314",
     "yminus-vplus": "82788a5612ab6d0fe9f00460989471b1f4354a3945298533e23cb4ea60480b39",
