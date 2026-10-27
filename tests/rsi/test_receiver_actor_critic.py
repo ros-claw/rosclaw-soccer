@@ -6,7 +6,11 @@ import torch
 from test_velocity_prior_actor import tensors
 
 from rosclaw_soccer.rsi.anchored_receiving_motor import AnchoredReceivingMotor
-from rosclaw_soccer.rsi.receiver_actor_critic import ReceiverCritic, receiver_own_history_loss
+from rosclaw_soccer.rsi.receiver_actor_critic import (
+    ReceiverCritic,
+    episode_balanced_value_loss,
+    receiver_own_history_loss,
+)
 from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
 from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
 
@@ -70,3 +74,15 @@ def test_incorrect_probability_or_unproven_execution_fails_closed():
     data["all_actor_actions_actually_executed"] = False
     with pytest.raises(ValueError, match="audited pure"):
         receiver_own_history_loss(actor, critic, data, torch.full((29,), math.log(0.02)), rho=0.9)
+
+
+def test_critic_weights_episodes_equally_not_by_length():
+    critic = ReceiverCritic()
+    episodes = [
+        {"observations": torch.zeros(1, 112), "returns": torch.full((1,), 2.0)},
+        {"observations": torch.zeros(100, 112), "returns": torch.zeros(100)},
+    ]
+    assert episode_balanced_value_loss(critic, episodes).item() == pytest.approx(1.0)
+    episodes[1]["returns"][0] = float("nan")
+    with pytest.raises(ValueError, match="finite complete"):
+        episode_balanced_value_loss(critic, episodes)

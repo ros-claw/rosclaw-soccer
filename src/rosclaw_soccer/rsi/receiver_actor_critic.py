@@ -20,6 +20,36 @@ class ReceiverCritic(nn.Module):
         return self.net(x).squeeze(-1)
 
 
+def episode_balanced_value_loss(
+    critic: ReceiverCritic, episodes: list[dict[str, Any]]
+) -> torch.Tensor:
+    """Give each complete sampled episode equal critic weight despite different lengths."""
+    if type(critic) is not ReceiverCritic or not episodes:
+        raise ValueError("explicit critic and nonempty complete episode set required")
+    losses = []
+    for episode in episodes:
+        obs, returns = episode["observations"], episode["returns"]
+        if (
+            not isinstance(obs, torch.Tensor)
+            or obs.ndim != 2
+            or obs.shape[1] != 112
+            or not 1 <= len(obs) <= 300
+            or not isinstance(returns, torch.Tensor)
+            or returns.shape != (len(obs),)
+            or obs.dtype != torch.float32
+            or returns.dtype != torch.float32
+            or returns.device != obs.device
+            or not torch.isfinite(obs).all()
+            or not torch.isfinite(returns).all()
+        ):
+            raise ValueError("finite complete own observations and returns required")
+        losses.append(0.5 * (critic(obs) - returns).square().mean())
+    result = torch.stack(losses).mean()
+    if not torch.isfinite(result):
+        raise ValueError("finite episode-balanced critic objective required")
+    return result
+
+
 def receiver_own_history_loss(
     actor: AnchoredReceivingMotor,
     critic: ReceiverCritic,

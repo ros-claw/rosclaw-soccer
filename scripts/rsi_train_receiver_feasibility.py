@@ -10,7 +10,7 @@ import torch
 
 from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
 from rosclaw_soccer.rsi.anchored_receiving_motor import AnchoredReceivingMotor
-from rosclaw_soccer.rsi.receiver_actor_critic import ReceiverCritic
+from rosclaw_soccer.rsi.receiver_actor_critic import ReceiverCritic, episode_balanced_value_loss
 from rosclaw_soccer.rsi.receiver_bounded_update import bounded_actor_update
 from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
 from scripts.rsi_atomic_artifacts import write_once
@@ -124,7 +124,7 @@ def main() -> None:
     critic_losses = []
     for _ in range(3):
         optimizer.zero_grad(set_to_none=True)
-        loss = (critic(observations) - targets).square().mean() * 0.5
+        loss = episode_balanced_value_loss(critic, episodes)
         if not torch.isfinite(loss):
             raise ValueError("nonfinite critic objective")
         loss.backward()
