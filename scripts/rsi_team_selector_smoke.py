@@ -8,7 +8,7 @@ the nine physical trace arrays persisted and hash checked after each run.
 import argparse
 import json
 import multiprocessing
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import replace
 from pathlib import Path
 
@@ -125,10 +125,32 @@ def main():
     ):
         parser.add_argument(f"--{name}", required=True, type=Path)
     parser.add_argument("--expected-head", required=True)
+    parser.add_argument("--full-retention", action="store_true")
+    parser.add_argument("--smoke-proof", type=Path)
+    parser.add_argument("--repeat-proof", type=Path)
     args = parser.parse_args()
     clean(args.expected_head)
     if args.output.exists() or args.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("unused external evidence directory required")
+    if args.full_retention:
+        smoke_hash = "sha256:c17b889563ab27fa762929bf159204b565b19e44e043c66fbfc2b60ef2bc0793"
+        if (
+            args.smoke_proof is None
+            or args.repeat_proof is None
+            or args.smoke_proof.resolve() == args.repeat_proof.resolve()
+            or digest(args.smoke_proof) != smoke_hash
+            or digest(args.repeat_proof) != smoke_hash
+        ):
+            raise ValueError(
+                "two distinct, matching original current-environment smoke reports required"
+            )
+        smoke = json.loads(args.smoke_proof.read_text())
+        if len(smoke["results"]) != 2 or any(
+            not r["parent_success"] or not all(r["retention"].values()) for r in smoke["results"]
+        ):
+            raise ValueError("all three seed smoke retention checks required")
+    elif args.smoke_proof is not None or args.repeat_proof is not None:
+        raise ValueError("smoke proof applies to full retention only")
     train_path = args.training_dir / "complete.json"
     if digest(train_path) != TRAINING_HASH:
         raise ValueError("exact complete three-seed training required")
@@ -187,17 +209,22 @@ def main():
     baseline = v261["results"][0]["rows"]
     if len(baseline) != 55:
         raise ValueError("complete original 55-course retention cohort required")
-    chosen = [baseline[0], baseline[53]]
+    chosen = baseline if args.full_retention else [baseline[0], baseline[53]]
     courses = tuple(ReceivingCourse(**row["course"]) for row in chosen)
-    if [course.seed for course in courses] != [223001, 259011]:
+    if not args.full_retention and [course.seed for course in courses] != [223001, 259011]:
         raise ValueError("exact preregistered consumed smoke courses required")
     bank_hash = preflight_receiving_courses(courses)
+    if args.full_retention and bank_hash != v261["course_bank_hash"]:
+        raise ValueError("exact original complete retention bank required")
     models = {}
     pins = {
         str(train_path): digest(train_path),
         str(args.v261_dir / "report.json"): digest(args.v261_dir / "report.json"),
         str(args.policy): digest(args.policy),
     }
+    if args.full_retention:
+        pins[str(args.smoke_proof)] = smoke_hash
+        pins[str(args.repeat_proof)] = smoke_hash
     for row in training["records"]:
         path = args.training_dir / row["model_path"]
         if path.is_symlink() or digest(path) != row["model_hash"]:
@@ -254,10 +281,10 @@ def main():
             course_bank_hash=bank_hash,
             course_seeds=[c.seed for c in courses],
             arms=["parent", "17", "43", "71"],
-            physical_runs=8,
+            physical_runs=4 * len(courses),
             source_pins=pins,
             raw_trace_keys=PHYSICAL_KEYS,
-            partition="CONSUMED_SMOKE_ONLY",
+            partition="CONSUMED_FULL_RETENTION" if args.full_retention else "CONSUMED_SMOKE_ONLY",
             fresh_exam=False,
             promotion_authorized=False,
             hardware_authorized=False,
@@ -278,10 +305,15 @@ def main():
                     args.output / f"{course.seed}-{arm}.npz",
                 )
             )
+    rows = []
     with ProcessPoolExecutor(
         max_workers=4, mp_context=multiprocessing.get_context("spawn")
     ) as pool:
-        rows = list(pool.map(run_job, jobs))
+        futures = [pool.submit(run_job, job) for job in jobs]
+        for future in as_completed(futures):
+            row = future.result()
+            write_once(args.output / f"{row['course_seed']}-{row['arm']}.json", row)
+            rows.append(row)
     check_pins(pins)
     summary = []
     for old, course in zip(chosen, courses, strict=True):
@@ -306,16 +338,28 @@ def main():
                 rows=group,
             )
         )
+    all_historical_exact = all(item["parent_matches_historical_trace"] for item in summary)
+    per_seed_retained = {
+        arm: all(item["retention"][arm] for item in summary) for arm in ("17", "43", "71")
+    }
     write_once(
         args.output / "complete.json",
         dict(
-            status="TEAM_RECEIVING_EIGHT_BODY_CONSUMED_SMOKE_NOT_PROMOTED",
+            status=(
+                "TEAM_RECEIVING_EIGHT_BODY_FULL_CONSUMED_NOT_PROMOTED"
+                if args.full_retention
+                else "TEAM_RECEIVING_EIGHT_BODY_CONSUMED_SMOKE_NOT_PROMOTED"
+            ),
             source_head=args.expected_head,
             training_hash=TRAINING_HASH,
             parent_report_hash=PARENT_HASH,
             course_bank_hash=bank_hash,
             results=summary,
-            physical_runs=8,
+            physical_runs=4 * len(courses),
+            full_retention=args.full_retention,
+            historical_parent_all_exact=all_historical_exact,
+            current_parent_success_retained_by_seed=per_seed_retained,
+            fresh_authorized=False,
             fresh_exam=False,
             promotion_authorized=False,
             hardware_authorized=False,
