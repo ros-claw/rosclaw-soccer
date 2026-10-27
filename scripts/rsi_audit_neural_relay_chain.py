@@ -31,7 +31,10 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
-    development_study = dec["protocol"] == "soccer.neural_relay_development_contexts.v4"
+    balance_study = dec["protocol"] == "soccer.neural_relay_balance_teacher.development.v5"
+    development_study = (
+        balance_study or dec["protocol"] == "soccer.neural_relay_development_contexts.v4"
+    )
     reference_study = dec["protocol"] == "soccer.neural_relay_reference_bridge.v2"
     team_entry_study = dec["protocol"] == "soccer.neural_relay_team_entry.v3"
     expected_worlds = 32
@@ -44,7 +47,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_BALANCE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+        if balance_study
+        else "NEURAL_RELAY_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
         if development_study
         else "NEURAL_RELAY_TEAM_ENTRY_COLLECTED_PENDING_OWN_REPLAY"
         if team_entry_study
@@ -62,6 +67,7 @@ def main():
             "soccer.neural_relay_reference_bridge.v2",
             "soccer.neural_relay_team_entry.v3",
             "soccer.neural_relay_development_contexts.v4",
+            "soccer.neural_relay_balance_teacher.development.v5",
         )
         or len(s["records"]) != expected_worlds
         or len(dec["courses"]) != expected_worlds
@@ -80,22 +86,47 @@ def main():
         indices = blocks[block]
         if dec.get("context_indices") != list(indices) or dec["reference_bridge_controls"] != [0]:
             raise ValueError("exact development context identity and reference required")
+        arms = (
+            [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    balance_teacher=i,
+                )
+                for i in (-1, 0, 1, 2)
+            ]
+            if balance_study
+            else [
+                dict(start=start, memory=memory, reference_bridge_controls=0)
+                for start in (0, 80)
+                for memory in ("new_skill_zero", "own_shadow_carry")
+            ]
+        )
         expected_courses = [
             dict(
                 context=i,
                 lateral_m=side,
-                arm=dict(start=start, memory=memory, reference_bridge_controls=0),
+                arm=arm,
             )
             for i in indices
             for side in (-0.55, 0.55)
-            for start in (0, 80)
-            for memory in ("new_skill_zero", "own_shadow_carry")
+            for arm in arms
         ]
         if dec["courses"] != expected_courses:
             raise ValueError("full fixed development relay factorial required")
     else:
         indices = (1, 4, 20, 21)
     pins = dict(s["input_file_hashes"])
+    balance_latents = []
+    if balance_study:
+        from rosclaw_soccer.rsi.relay_balance_evidence import admit_relay_balance_teachers
+
+        balance_latents, balance_pins = admit_relay_balance_teachers(
+            dec.get("balance_teacher_pairs")
+        )
+        if any(pins.get(path) != value for path, value in balance_pins.items()):
+            raise ValueError("audited balance teachers must match frozen producer pins")
     pins[str(rp)], pins[str(dp)] = a.source_hash, digest(dp)
     for i, claim in enumerate(s["records"]):
         if claim["index"] != i or claim["course"] != dec["courses"][i]:
@@ -148,6 +179,7 @@ def main():
             successor_alignment,
         )
         from rosclaw_soccer.rsi.relay_audit_clock import RelayAuditClock
+        from rosclaw_soccer.rsi.relay_balance_teacher import RelayBalanceTeacher
         from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
         from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
         from rosclaw_soccer.rsi.shared_relay_setup import (
@@ -249,6 +281,7 @@ def main():
             readiness = OnlineReceivingBoundary(w, "b/")
             entry = SuccessorAlignmentGate(enabled=course["arm"].get("align_successor", False))
             receiver = None
+            balance_teacher = None
             ready = launch = False
             handoff_control = None
             goal = origin = None
@@ -287,6 +320,11 @@ def main():
                         carry_memory=course["arm"]["memory"] == "own_shadow_carry",
                         reference_bridge_controls=course["arm"].get("reference_bridge_controls", 0),
                     )
+                    teacher_index = course["arm"].get("balance_teacher", -1)
+                    if teacher_index >= 0:
+                        balance_teacher = RelayBalanceTeacher(
+                            balance_latents[teacher_index], scale=ep.scale, order=ep.order
+                        )
                     handoff_control = step
                 if receiver is None and step >= 300:
                     raise ValueError("source exceeded original velocity H300")
@@ -341,7 +379,16 @@ def main():
                 else:
                     if receiver.phase == "MOTION_COMPLETE":
                         receiver.begin_standing()
-                    target_b, trace_b = receiver.propose()
+                    target_b, trace_b = receiver.propose(
+                        with_reference_evidence=balance_teacher is not None
+                    )
+                    if balance_teacher is not None:
+                        q, v = w.layouts["b/"].canonical(w.data)
+                        action_b, balance_trace = balance_teacher.apply(
+                            trace_b["NN_action"], trace_b["NN_reference_nominal"], q, v
+                        )
+                        target_b = ep.offset + action_b[ep.order] * ep.scale
+                        trace_b.update(balance_trace)
                     trace_b["control"] = np.array(step)
                     equal_trace(trace_b, nn["receiver_return_nn"], bi)
                     bi += 1
@@ -374,7 +421,9 @@ def main():
                         body_healthy=not w.failed,
                     )
                 else:
-                    receiver.commit()
+                    receiver.commit(
+                        executed_action=action_b if balance_teacher is not None else None
+                    )
                 if last_target is not None:
                     largest_jump = max(largest_jump, float(np.abs(target_b - last_target).max()))
                 last_target = target_b.copy()

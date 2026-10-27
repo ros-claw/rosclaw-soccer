@@ -21,6 +21,7 @@ def main():
     p.add_argument("--reference-bridge-controls", nargs="+", type=int, default=[0])
     p.add_argument("--successor-alignment-study", action="store_true")
     p.add_argument("--new-context-block", type=int, choices=(0, 1, 2))
+    p.add_argument("--balance-teacher-pair", nargs=4, action="append")
     for key in ("prior-relay-root", "prior-audit-root"):
         p.add_argument("--" + key, type=Path)
     for key in ("prior-relay-hash", "prior-audit-hash"):
@@ -34,6 +35,10 @@ def main():
         a.successor_alignment_study or a.reference_bridge_controls != [0]
     ):
         p.error("development contexts isolate the original neural relay arms")
+    if a.balance_teacher_pair is not None and (
+        len(a.balance_teacher_pair) != 3 or a.new_context_block is None
+    ):
+        p.error("balance study requires all three teacher/audit pairs and a development block")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import admit_frontier, clean, receipt, source_pins
@@ -53,6 +58,14 @@ def main():
         report = next(r for r in frontier["reports"] if r["seed"] == 65023)
         if not set(indices).issubset(report["achieved_contexts"]):
             raise ValueError("relay contexts must be in the acquired passer TRAIN frontier")
+    balance_latents = []
+    if a.balance_teacher_pair is not None:
+        from rosclaw_soccer.rsi.relay_balance_evidence import admit_relay_balance_teachers
+
+        balance_latents, balance_pins = admit_relay_balance_teachers(a.balance_teacher_pair)
+        if set(pins) & set(balance_pins):
+            raise ValueError("distinct explicit balance teacher inputs required")
+        pins.update(balance_pins)
     prior = None
     if len(a.reference_bridge_controls) > 1 or a.successor_alignment_study:
         if not all(
@@ -95,6 +108,13 @@ def main():
         for memory in ("new_skill_zero", "own_shadow_carry")
         for bridge in a.reference_bridge_controls
     ]
+    if a.balance_teacher_pair is not None:
+        arms = [
+            dict(
+                start=80, memory="own_shadow_carry", reference_bridge_controls=0, balance_teacher=i
+            )
+            for i in (-1, 0, 1, 2)
+        ]
     if a.successor_alignment_study:
         arms = [
             arm | dict(assigned_receiver_pass=assigned, align_successor=align)
@@ -113,7 +133,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_development_contexts.v4"
+                "soccer.neural_relay_balance_teacher.development.v5"
+                if a.balance_teacher_pair is not None
+                else "soccer.neural_relay_development_contexts.v4"
                 if a.new_context_block is not None
                 else "soccer.neural_relay_team_entry.v3"
                 if a.successor_alignment_study
@@ -124,6 +146,8 @@ def main():
             courses=courses,
             development_context_block=a.new_context_block,
             context_indices=list(indices),
+            balance_teacher_pairs=a.balance_teacher_pair,
+            balance_teacher_is_not_learned_actor=a.balance_teacher_pair is not None,
             candidate=candidates[0],
             baseline_training_hash=base_hash,
             max_world_controls=600,
@@ -170,6 +194,7 @@ def main():
             assigned_receiver_pass_goal,
             successor_alignment,
         )
+        from rosclaw_soccer.rsi.relay_balance_teacher import RelayBalanceTeacher
         from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
         from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
         from rosclaw_soccer.rsi.shared_relay_setup import (
@@ -211,6 +236,9 @@ def main():
         for course in courses:
             ep, w, forward, _, anchor = setup.prepare(course["context"], course["lateral_m"])
             motion_segment(ep.clip, course["arm"]["start"])
+            teacher_index = course["arm"].get("balance_teacher", -1)
+            if teacher_index >= 0:
+                RelayBalanceTeacher(balance_latents[teacher_index], scale=ep.scale, order=ep.order)
             SuccessorAlignmentGate(enabled=course["arm"].get("align_successor", False))
             if type(course["arm"].get("assigned_receiver_pass", False)) is not bool:
                 raise ValueError("explicit assigned-pass experiment arm required before physics")
@@ -273,6 +301,7 @@ def main():
             readiness = OnlineReceivingBoundary(w, "b/")
             entry = SuccessorAlignmentGate(enabled=course["arm"].get("align_successor", False))
             receiver = None
+            balance_teacher = None
             launch = False
             folder = a.output / f"trial{index}"
             folder.mkdir()
@@ -306,6 +335,11 @@ def main():
                         carry_memory=course["arm"]["memory"] == "own_shadow_carry",
                         reference_bridge_controls=course["arm"]["reference_bridge_controls"],
                     )
+                    teacher_index = course["arm"].get("balance_teacher", -1)
+                    if teacher_index >= 0:
+                        balance_teacher = RelayBalanceTeacher(
+                            balance_latents[teacher_index], scale=ep.scale, order=ep.order
+                        )
                     handoff = dict(
                         control=step,
                         time_s=float(w.data.time),
@@ -367,7 +401,16 @@ def main():
                 else:
                     if receiver.phase == "MOTION_COMPLETE":
                         receiver.begin_standing()
-                    target_b, trace_b = receiver.propose()
+                    target_b, trace_b = receiver.propose(
+                        with_reference_evidence=balance_teacher is not None
+                    )
+                    if balance_teacher is not None:
+                        q, v = w.layouts["b/"].canonical(w.data)
+                        action_b, balance_trace = balance_teacher.apply(
+                            trace_b["NN_action"], trace_b["NN_reference_nominal"], q, v
+                        )
+                        target_b = ep.offset + action_b[ep.order] * ep.scale
+                        trace_b.update(balance_trace)
                     trace_b["control"] = np.array(step)
                 counts["actual_actor_calls"] += 1
                 row = w.advance({"a/": target_a, "b/": target_b})
@@ -389,7 +432,9 @@ def main():
                     nn_shadow.append(trace_shadow)
                     nn_v.append(trace_v)
                 else:
-                    receiver.commit()
+                    receiver.commit(
+                        executed_action=action_b if balance_teacher is not None else None
+                    )
                     nn_b.append(trace_b)
                 nn_a.append(trace_a)
                 if previous_target_b is not None:
@@ -501,7 +546,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_BALANCE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                    if a.balance_teacher_pair is not None
+                    else "NEURAL_RELAY_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
                     if a.new_context_block is not None
                     else "NEURAL_RELAY_TEAM_ENTRY_COLLECTED_PENDING_OWN_REPLAY"
                     if a.successor_alignment_study
