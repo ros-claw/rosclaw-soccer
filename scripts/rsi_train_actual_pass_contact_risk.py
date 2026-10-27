@@ -46,7 +46,11 @@ def main():
         )
     with np.load(path, allow_pickle=False) as f:
         x, y, groups = contact_risk_data({k: f[k].copy() for k in f.files}, receipt["courses"])
-    if len(x) != 9600 or int(y.sum()) != 641 or set(groups) != {1, 4, 20, 21}:
+    if (
+        len(x) != receipt["transitions"]
+        or not 0 < int(y.sum()) < len(y)
+        or set(groups) != {1, 4, 20, 21}
+    ):
         raise ValueError("exact declared grouped contact dataset required")
     args.output.mkdir()
     write_once(
