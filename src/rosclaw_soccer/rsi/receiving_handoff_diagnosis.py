@@ -76,12 +76,22 @@ def diagnose_no_handoff(
         best = max(best, current)
     first_kick = np.flatnonzero(kick)
     first_touch = np.flatnonzero(touch)
+    touch_index = int(first_touch[0]) if len(first_touch) else None
     pre = slice(int(first_kick[0]), n) if len(first_kick) else slice(0, n)
     return dict(
         actual_passer_foot_over_10n=bool(len(first_kick)),
         first_passer_foot_control=int(first_kick[0]) if len(first_kick) else None,
         actual_receiver_contact_over_1n=bool(len(first_touch)),
         first_receiver_contact_control=int(first_touch[0]) if len(first_touch) else None,
+        relative_speed_at_first_contact_mps=(
+            float(relative_speed[touch_index]) if touch_index is not None else None
+        ),
+        root_ball_distance_at_first_contact_m=(
+            float(distance[touch_index]) if touch_index is not None else None
+        ),
+        minimum_post_contact_relative_speed_mps=(
+            float(relative_speed[touch_index:].min()) if touch_index is not None else None
+        ),
         receiver_contact_precedes_passer_kick=bool(
             len(first_touch) and (not len(first_kick) or first_touch[0] < first_kick[0])
         ),

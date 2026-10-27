@@ -38,6 +38,8 @@ def test_contact_threshold_and_original_consecutive_predicate():
     result = run(q, v, f, failed)
     assert result["first_passer_foot_control"] == 40
     assert result["first_receiver_contact_control"] == 285
+    assert result["relative_speed_at_first_contact_mps"] == 0
+    assert result["root_ball_distance_at_first_contact_m"] == 0.5
     assert result["best_consecutive_candidate_controls"] == 15
     assert not result["no_handoff_reconstruction_consistent"]
     f[285, 4, 1, 0] = 1
