@@ -15,6 +15,7 @@ import numpy as np
 from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
 
 from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
+from rosclaw_soccer.rsi.cftrack_contact_reference import CFtrackContactPlan
 from rosclaw_soccer.rsi.cftrack_live_history import CFtrackLiveHistory
 from rosclaw_soccer.rsi.cftrack_measured_bridge_reference import condition_measured_bridge_reference
 from rosclaw_soccer.rsi.cftrack_measured_history_install import install_owned_cftrack_history
@@ -87,7 +88,25 @@ def main():
         "--bandit-eval-case",
         choices=("yminus-vminus", "yminus-vplus", "yplus-vminus", "yplus-vplus"),
     )
+    parser.add_argument(
+        "--reference-contact-training-case",
+        choices=("yminus-near-vminus", "yminus-far-vminus", "yplus-near-vplus", "yplus-far-vplus"),
+    )
     args = parser.parse_args()
+    if args.reference_contact_training_case and (
+        args.bandit_eval_case
+        or args.causal_intercept_training_case
+        or args.static_training_case
+        or args.static_holdout
+        or args.replay_static_contact
+        or args.static_contact_calibration
+        or args.measured_response_candidate
+        or args.replay_contact_arm
+        or args.calibrate_hip_knee_response
+        or args.exclude_both_ankles_after_rejection
+        or args.exclude_right_ankle_roll_after_rejection
+    ):
+        raise ValueError("reference-contact candidate is a separate experiment")
     if args.bandit_eval_case and (
         args.causal_intercept_training_case
         or args.static_training_case
@@ -158,6 +177,7 @@ def main():
         or args.static_training_case
         or args.causal_intercept_training_case
         or args.bandit_eval_case
+        or args.reference_contact_training_case
     )
     origin = 0 if args.causal_intercept_training_case else 50 if static_context else 83
     horizon = 243 - origin
@@ -172,6 +192,7 @@ def main():
         or args.static_training_case
         or args.causal_intercept_training_case
         or args.bandit_eval_case
+        or args.reference_contact_training_case
     )
     calibration_axes = (
         list(range(4))
@@ -204,14 +225,17 @@ def main():
             or args.static_training_case
             or args.causal_intercept_training_case
             or args.bandit_eval_case
+            or args.reference_contact_training_case
         )
         y_amplitude = (
             0.03
             if args.bandit_eval_case
             else 0.01
-            if args.static_training_case and "-near-" in args.static_training_case
+            if (args.static_training_case or args.reference_contact_training_case)
+            and "-near-" in case_name
             else 0.05
-            if args.static_training_case and "-far-" in args.static_training_case
+            if (args.static_training_case or args.reference_contact_training_case)
+            and "-far-" in case_name
             else 0.04
             if args.static_training_case or args.causal_intercept_training_case
             else 0.02
@@ -220,8 +244,8 @@ def main():
             0.015
             if args.bandit_eval_case
             else 0.005
-            if args.static_training_case
-            and ("-near-" in args.static_training_case or "-far-" in args.static_training_case)
+            if (args.static_training_case or args.reference_contact_training_case)
+            and ("-near-" in case_name or "-far-" in case_name)
             else 0.01
             if args.static_training_case or args.causal_intercept_training_case
             else 0.02
@@ -237,6 +261,24 @@ def main():
                 != "sha256:d5f34db14f95ca4a2b10dbd079f36c0d809516b713bde7ec76129a9fd614931c"
             ):
                 raise ValueError("exact failed-bandit audit required before expanded training")
+    if args.reference_contact_training_case:
+        grid_audit_path = ROOT / "rsi-contact-grid-audit-20261027/complete.json"
+        grid_audit_hash = "sha256:fbf28437058d0978ecb83c5b9733623a12e84470d5194298a2cccc6f1fa83830"
+        if digest(grid_audit_path) != grid_audit_hash:
+            raise ValueError("exact independently audited grid evidence required")
+        grid_audit = json.loads(grid_audit_path.read_text())
+        if grid_audit["status"] != "STATIC_GRID_HASH_FORCE_GEOMETRY_READBACK_NOT_EXECUTION":
+            raise ValueError("audited grid required")
+        grid_parent_hash = grid_audit["records"][args.reference_contact_training_case]["arms"][
+            "parent"
+        ]["artifact_hash"]
+        grid_parent_path = (
+            ROOT / f"rsi-contact-grid-{args.reference_contact_training_case}-20261027/parent.npz"
+        )
+        if grid_parent_path.is_symlink() or digest(grid_parent_path) != grid_parent_hash:
+            raise ValueError("exact audited grid parent required")
+        with np.load(grid_parent_path, allow_pickle=False) as f:
+            grid_parent = {k: f[k].copy() for k in f.files}
     if args.bandit_eval_case:
         training_path = ROOT / "rsi-contact-bandit-training-20261027/complete.json"
         training_hash = "sha256:541d80cd4b8f87753a60b1f0cbff0e56097e1b74dbff199005b49a954d4e921f"
@@ -427,7 +469,9 @@ def main():
             independent_audit=AUDIT_HASH,
             source_head=args.expected_head,
             experiment=(
-                "all-seed paired actor-critic holdout"
+                "causal bounded left-foot reference candidate"
+                if args.reference_contact_training_case
+                else "all-seed paired actor-critic holdout"
                 if args.bandit_eval_case
                 else "causal intercept actual simulation on training state"
                 if args.causal_intercept_training_case
@@ -444,6 +488,13 @@ def main():
             static_holdout=args.static_holdout,
             static_training_case=args.static_training_case,
             bandit_eval_case=args.bandit_eval_case,
+            reference_contact_training_case=args.reference_contact_training_case,
+            reference_source_grid_audit=grid_audit_hash
+            if args.reference_contact_training_case
+            else None,
+            reference_candidate_displacement_cap_m=0.08
+            if args.reference_contact_training_case
+            else None,
             bandit_training_hash=training_hash if args.bandit_eval_case else None,
             causal_intercept_training_case=args.causal_intercept_training_case,
             ball_prediction_horizon_s=1.26 if args.causal_intercept_training_case else None,
@@ -478,6 +529,8 @@ def main():
             or args.causal_intercept_training_case
             else 8790
             if args.bandit_eval_case
+            else 4930
+            if args.reference_contact_training_case
             else 4930
             if args.static_holdout
             else 18440
@@ -800,11 +853,15 @@ def main():
             else 9 * horizon * 10
             if calibration
             else 2 * horizon * 10
-            if args.static_holdout
+            if args.static_holdout or args.reference_contact_training_case
             else 3200
         ),
     )
     parent = forecaster.forecast(controls=horizon)
+    if args.reference_contact_training_case and any(
+        not np.array_equal(np.concatenate([*raw[k], parent[k]]), grid_parent[k]) for k in raw
+    ):
+        raise ValueError("exact actual prefix and parent physics must match audited grid")
     if parent["controls"] != horizon or (
         not varied and any(not np.array_equal(parent[k], prior[k][origin * 10 : 2430]) for k in raw)
     ):
@@ -885,6 +942,60 @@ def main():
             outcome=outcome,
             artifact_hash=digest(artifact),
         )
+
+    if args.reference_contact_training_case:
+        offset = points[:3] - points[3:]
+        distance = float(np.linalg.norm(offset))
+        if distance > 0.08:
+            offset *= 0.08 / distance
+        reference_pos = np.asarray(policy.ref_left_ankle_future_pos[origin + 12], dtype=np.float64)
+        reference_quat = np.asarray(
+            policy.ref_left_ankle_future_quat[origin + 12], dtype=np.float64
+        )
+        reference_quat /= np.linalg.norm(reference_quat)
+        plan_ref = CFtrackContactPlan(
+            origin_counter=origin,
+            start_frame=origin,
+            peak_control=12,
+            active_foot="left",
+            position_world=tuple(float(x) for x in reference_pos + offset),
+            quaternion_world=tuple(float(x) for x in reference_quat),
+            donor_policy_hash=cftrack_state_hash(policy),
+            bounded_position_path=False,
+        )
+        records = {"parent": summarize(parent, "parent")}
+        try:
+            future = forecaster.forecast(controls=horizon, contact_plan=plan_ref)
+        except Exception as error:
+            records["candidate"] = dict(
+                complete=False,
+                forecast_exception=dict(type=type(error).__name__, message=str(error)),
+            )
+        else:
+            records["candidate"] = summarize(future, "candidate")
+            records["candidate"]["reference_conditioning"] = future["reference_conditioning"]
+        write_once(
+            args.output / "complete.json",
+            dict(
+                status="BOUNDED_FOOT_REFERENCE_TRAINING_NOT_PROMOTED",
+                case=args.reference_contact_training_case,
+                source_head=args.expected_head,
+                grid_audit_hash=grid_audit_hash,
+                grid_parent_hash=grid_parent_hash,
+                witness_gap_m=float(gap),
+                witness_points=points.tolist(),
+                capped_offset_world_m=offset.tolist(),
+                requested_ankle_reference_world_m=list(plan_ref.position_world),
+                records=records,
+                counters=forecaster.counters(),
+                actual_prefix_native_steps=prefix_controls * 10,
+                privileged_future_witness=True,
+                geometry_not_contact_proof=True,
+                task_promoted=False,
+                hardware_authorized=False,
+            ),
+        )
+        return
 
     if args.bandit_eval_case:
         state_features = contact_features(
