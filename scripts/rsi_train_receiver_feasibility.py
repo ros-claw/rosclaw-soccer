@@ -25,6 +25,7 @@ def main() -> None:
     for name in ("dataset-hash", "admission-hash", "expected-head"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--device", choices=("cpu", "cuda:0"), default="cpu")
+    p.add_argument("--actor-step", type=float, choices=(1e-7, 1e-4), default=1e-7)
     a = p.parse_args()
     clean(a.expected_head)
     dp, ap = a.dataset / "complete.json", a.admission / "complete.json"
@@ -142,7 +143,9 @@ def main() -> None:
         ep["advantages"] = advantages[start:end]
         start = end
     log_std = torch.full((29,), math.log(0.02), dtype=torch.float32, device=device)
-    result = bounded_actor_update(actor, critic, episodes, log_std, anchor_x, anchor_r)
+    result = bounded_actor_update(
+        actor, critic, episodes, log_std, anchor_x, anchor_r, step_size=a.actor_step
+    )
     if any(
         digest(x) != h
         for x, h in (
@@ -185,6 +188,7 @@ def main() -> None:
             sampled_controls=total_controls,
             critic_updates=3,
             critic_losses=critic_losses,
+            declared_initial_actor_step=a.actor_step,
             **result,
             actual_new_physics=False,
             online_rl=False,
