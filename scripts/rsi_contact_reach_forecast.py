@@ -60,7 +60,23 @@ def main():
         "--static-training-case",
         choices=("yminus-vminus", "yminus-vplus", "yplus-vminus", "yplus-vplus"),
     )
+    parser.add_argument(
+        "--causal-intercept-training-case",
+        choices=("yminus-vminus", "yminus-vplus", "yplus-vminus", "yplus-vplus"),
+    )
     args = parser.parse_args()
+    if args.causal_intercept_training_case and (
+        args.static_training_case
+        or args.static_holdout
+        or args.replay_static_contact
+        or args.static_contact_calibration
+        or args.measured_response_candidate
+        or args.replay_contact_arm
+        or args.calibrate_hip_knee_response
+        or args.exclude_both_ankles_after_rejection
+        or args.exclude_right_ankle_roll_after_rejection
+    ):
+        raise ValueError("causal intercept is a separate experiment")
     if args.static_training_case and (
         args.static_holdout
         or args.replay_static_contact
@@ -104,8 +120,9 @@ def main():
         or args.replay_static_contact
         or args.static_holdout
         or args.static_training_case
+        or args.causal_intercept_training_case
     )
-    origin = 50 if static_context else 83
+    origin = 0 if args.causal_intercept_training_case else 50 if static_context else 83
     horizon = 243 - origin
     prefix_controls = 57 + origin
     calibration = bool(
@@ -113,7 +130,9 @@ def main():
         or args.static_training_case
         or args.calibrate_hip_knee_response
     )
-    varied = bool(args.static_holdout or args.static_training_case)
+    varied = bool(
+        args.static_holdout or args.static_training_case or args.causal_intercept_training_case
+    )
     calibration_axes = (
         list(range(4))
         if args.static_contact_calibration or args.static_training_case
@@ -140,11 +159,33 @@ def main():
         replay_report = json.loads(verified_replay.read_text())
         if not replay_report["outcome"]["task_pass"] or not replay_report["private_future_exact"]:
             raise ValueError("actual fixed-case pass required")
-        case_name = args.static_holdout or args.static_training_case
-        y_amplitude = 0.04 if args.static_training_case else 0.02
-        v_amplitude = 0.01 if args.static_training_case else 0.02
+        case_name = (
+            args.static_holdout or args.static_training_case or args.causal_intercept_training_case
+        )
+        y_amplitude = (
+            0.04 if args.static_training_case or args.causal_intercept_training_case else 0.02
+        )
+        v_amplitude = (
+            0.01 if args.static_training_case or args.causal_intercept_training_case else 0.02
+        )
         y_delta = -y_amplitude if case_name.startswith("yminus") else y_amplitude
         v_delta = -v_amplitude if case_name.endswith("vminus") else v_amplitude
+    if args.causal_intercept_training_case:
+        training_audit = ROOT / "rsi-approach-training-audit-20261027/complete.json"
+        if (
+            digest(training_audit)
+            != "sha256:d58a37ad318d3edcc50710adb83ff1e88f19e0bf8720b853b06ee364fd78d50a"
+        ):
+            raise ValueError("exact complete training evidence audit required")
+        training_report = json.loads(training_audit.read_text())
+        if (
+            training_report["status"]
+            != "STATIC_TRAINING_HASH_FORCE_GEOMETRY_READBACK_NOT_EXECUTION"
+        ):
+            raise ValueError("audited training evidence required")
+        parent_outcome = training_report["records"][args.causal_intercept_training_case]["arms"][
+            "parent"
+        ]["outcome"]
     if args.replay_static_contact:
         static_dir = ROOT / "rsi-static-approach-calibration-20261027"
         static_report_path = static_dir / "complete.json"
@@ -292,7 +333,9 @@ def main():
             independent_audit=AUDIT_HASH,
             source_head=args.expected_head,
             experiment=(
-                "paired held-out ball state, fixed candidate"
+                "causal intercept actual simulation on training state"
+                if args.causal_intercept_training_case
+                else "paired held-out ball state, fixed candidate"
                 if args.static_holdout
                 else "actual deterministic replay"
                 if args.replay_contact_arm or args.replay_static_contact
@@ -304,6 +347,8 @@ def main():
             actual_static_replay=args.replay_static_contact,
             static_holdout=args.static_holdout,
             static_training_case=args.static_training_case,
+            causal_intercept_training_case=args.causal_intercept_training_case,
+            ball_prediction_horizon_s=1.26 if args.causal_intercept_training_case else None,
             initial_ball_y_offset_m=y_delta if varied else None,
             initial_ball_vy_offset_m_s=v_delta if varied else None,
             measured_response_candidate=args.measured_response_candidate,
@@ -313,7 +358,9 @@ def main():
             ),
             actual_prefix_controls=prefix_controls,
             candidate_count=0
-            if args.replay_contact_arm or args.replay_static_contact
+            if args.replay_contact_arm
+            or args.replay_static_contact
+            or args.causal_intercept_training_case
             else 8
             if calibration
             else 1,
@@ -326,7 +373,9 @@ def main():
             ),
             forecast_controls_per_arm=horizon,
             native_step_budget=3000
-            if args.replay_contact_arm or args.replay_static_contact
+            if args.replay_contact_arm
+            or args.replay_static_contact
+            or args.causal_intercept_training_case
             else 4930
             if args.static_holdout
             else 18440
@@ -418,7 +467,9 @@ def main():
         bridge["candidate_root"],
         bridge["candidate_joint"],
         expected_model_hash=MODEL_HASH,
-        ball_prediction_horizon_s=None if static_context else 1.74,
+        ball_prediction_horizon_s=(
+            1.26 if args.causal_intercept_training_case else None if static_context else 1.74
+        ),
     )
     if not varied and (
         receipt["conditioned_reference_hash"]
@@ -440,6 +491,97 @@ def main():
             raise ValueError("measured donor failed")
     if world.control_steps != prefix_controls or policy.counter_step != origin:
         raise ValueError("exact causal donor clock required")
+    if args.causal_intercept_training_case:
+        parent_path = (
+            ROOT / f"rsi-approach-train-{args.causal_intercept_training_case}-20261027/parent.npz"
+        )
+        parent_hash = training_report["records"][args.causal_intercept_training_case]["arms"][
+            "parent"
+        ]["artifact_hash"]
+        if parent_path.is_symlink() or digest(parent_path) != parent_hash:
+            raise ValueError("audited exact training parent trace required")
+        with np.load(parent_path, allow_pickle=False) as f:
+            if any(not np.array_equal(np.concatenate(raw[k]), f[k][:570]) for k in raw):
+                raise ValueError(
+                    "intercept and training parent do not share the same actual prefix"
+                )
+        phases = policy.ref_phase.copy()
+        original_session = policy.ort_session
+        obs, actions, actual_targets = [], [], []
+
+        class InterceptCapture:
+            def run(self, outputs, inputs):
+                result = original_session.run(outputs, inputs)
+                obs.append(inputs["obs"].copy())
+                actions.append(result[0].copy())
+                return result
+
+        policy.ort_session = InterceptCapture()
+        failure = None
+        try:
+            for _ in range(243):
+                target, _ = player.propose()
+                row = world.advance({"a/": target})
+                for key in raw:
+                    raw[key].append(row[key])
+                actual_targets.append(target.copy())
+                player.commit()
+                if world.failed:
+                    raise ValueError("actual intercept body failed")
+        except Exception as error:
+            failure = dict(type=type(error).__name__, message=str(error))
+        arrays = {key: np.concatenate(raw[key]) for key in raw}
+        path = args.output / "actual.npz"
+        np.savez_compressed(
+            path,
+            **arrays,
+            targets=np.asarray(actual_targets).reshape(-1, 29),
+            neural_obs=np.asarray(obs),
+            neural_actions=np.asarray(actions),
+        )
+        outcome = None
+        phase = None
+        if failure is None and len(arrays["qpos"]) == 3000 and len(actual_targets) == 243:
+            positions = arrays["qpos"].reshape(300, 10, model.nq)
+            forces = arrays["ball_forces"].reshape(300, 10, 1, 3).max(axis=1)
+            force6 = np.zeros((300, 1, 6), dtype=np.float64)
+            force6[:, :, :3] = forces
+            outcome = label_first_touch(
+                dict(
+                    force_n=force6,
+                    pelvis_z_per_substep_m=positions[:, :, lo.rq + 2][:, None, :],
+                    ball_position_after_step_m=positions[:, -1, lo.bq : lo.bq + 3][:, None, :],
+                )
+            ).to_dict()
+            first = outcome["first_foot_contact_frame"]
+            phase = (
+                int(phases[min(first - 57, len(phases) - 1)])
+                if first is not None and first >= 57
+                else None
+            )
+        write_once(
+            args.output / "complete.json",
+            dict(
+                status="CAUSAL_INTERCEPT_ACTUAL_TRAINING_NOT_PROMOTED",
+                training_case=args.causal_intercept_training_case,
+                source=SOURCE_HASH,
+                training_audit_hash="sha256:d58a37ad318d3edcc50710adb83ff1e88f19e0bf8720b853b06ee364fd78d50a",
+                parent_artifact_hash=parent_hash,
+                common_actual_prefix_exact=True,
+                reference_receipt=receipt,
+                actual_artifact_hash=digest(path),
+                actual_native_steps=len(arrays["qpos"]),
+                actual_cftrack_calls=len(actions),
+                failure=failure,
+                first_contact_reference_phase=phase,
+                outcome=outcome,
+                parent_outcome=parent_outcome,
+                privileged_sim_ball_velocity=True,
+                task_promoted=False,
+                hardware_authorized=False,
+            ),
+        )
+        return
     if args.replay_contact_arm or args.replay_static_contact:
         axis, amount = (
             (1, 0.08)
