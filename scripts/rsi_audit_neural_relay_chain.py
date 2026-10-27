@@ -32,6 +32,7 @@ def main():
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
     exploration = dec["protocol"] == "soccer.neural_relay_receiver_exploration.development.v9"
+    learned_pair = dec["protocol"] == "soccer.neural_relay_receiver_learned_pair.development.v10"
     whole_identity = dec["protocol"] == "soccer.neural_relay_whole_receiver_identity.development.v8"
     follow_study = dec["protocol"] == "soccer.neural_relay_post_touch_follow.development.v7"
     balance_expanded = dec["protocol"] == "soccer.neural_relay_balance_expanded.development.v6"
@@ -39,7 +40,8 @@ def main():
         balance_expanded or dec["protocol"] == "soccer.neural_relay_balance_teacher.development.v5"
     )
     development_study = (
-        exploration
+        learned_pair
+        or exploration
         or whole_identity
         or follow_study
         or balance_study
@@ -47,7 +49,7 @@ def main():
     )
     reference_study = dec["protocol"] == "soccer.neural_relay_reference_bridge.v2"
     team_entry_study = dec["protocol"] == "soccer.neural_relay_team_entry.v3"
-    expected_worlds = 16 if whole_identity else 64 if balance_expanded else 32
+    expected_worlds = 16 if whole_identity or learned_pair else 64 if balance_expanded else 32
     if reference_study:
         if dec["reference_bridge_controls"] not in ([0], [0, 5, 15, 30]):
             raise ValueError("entire declared reference-bridge ablation required")
@@ -57,7 +59,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_RECEIVER_EXPLORATION32_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_RECEIVER_LEARNED_PAIR16_PENDING_OWN_REPLAY"
+        if learned_pair
+        else "NEURAL_RELAY_RECEIVER_EXPLORATION32_PENDING_OWN_REPLAY"
         if exploration
         else "NEURAL_RELAY_WHOLE_RECEIVER_IDENTITY16_PENDING_OWN_REPLAY"
         if whole_identity
@@ -90,6 +94,7 @@ def main():
             "soccer.neural_relay_post_touch_follow.development.v7",
             "soccer.neural_relay_whole_receiver_identity.development.v8",
             "soccer.neural_relay_receiver_exploration.development.v9",
+            "soccer.neural_relay_receiver_learned_pair.development.v10",
         )
         or len(s["records"]) != expected_worlds
         or len(dec["courses"]) != expected_worlds
@@ -110,6 +115,17 @@ def main():
             raise ValueError("exact development context identity and reference required")
         arms = (
             [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_whole=True,
+                    receiver_learned=learned,
+                )
+                for learned in (False, True)
+            ]
+            if learned_pair
+            else [
                 dict(
                     start=80,
                     memory="own_shadow_carry",
@@ -200,6 +216,12 @@ def main():
     else:
         indices = (1, 4, 20, 21)
     pins = dict(s["input_file_hashes"])
+    if learned_pair:
+        for key in ("receiver_checkpoint", "receiver_candidate_audit", "receiver_dataset"):
+            path = Path(dec[key])
+            expected = dec[key + "_hash"]
+            if path.is_symlink() or pins.get(str(path)) != expected or digest(path) != expected:
+                raise ValueError("exact candidate evidence required for independent replay")
     if exploration:
         review = Path(dec["identity_review"])
         if (
@@ -289,7 +311,7 @@ def main():
         ),
     )
     counts = dict(native_steps=0, actual_actor_calls=0, shadow_actor_calls=0)
-    if whole_identity or exploration:
+    if whole_identity or exploration or learned_pair:
         counts.update(receiver_onnx_calls=0, receiver_plastic_calls=0, receiver_anchor_calls=0)
     if exploration:
         counts["receiver_stochastic_calls"] = 0
@@ -312,6 +334,7 @@ def main():
         from rosclaw_soccer.rsi.relay_audit_clock import RelayAuditClock
         from rosclaw_soccer.rsi.relay_balance_teacher import RelayBalanceTeacher
         from rosclaw_soccer.rsi.relay_post_touch_follow import post_touch_follow
+        from rosclaw_soccer.rsi.relay_receiver_candidate import load_research_receiver
         from rosclaw_soccer.rsi.relay_whole_receiver_identity import zero_receiver_actor
         from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
         from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
@@ -349,7 +372,22 @@ def main():
             checkpoint_kind=candidate["kind"],
         )
         setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor, context_indices=indices)
-        whole_actor = zero_receiver_actor(setup) if whole_identity or exploration else None
+        whole_actor = (
+            zero_receiver_actor(setup) if whole_identity or exploration or learned_pair else None
+        )
+        learned_actor = (
+            load_research_receiver(
+                setup,
+                Path(dec["receiver_checkpoint"]),
+                dec["receiver_checkpoint_hash"],
+                Path(dec["receiver_candidate_audit"]),
+                dec["receiver_candidate_audit_hash"],
+                Path(dec["receiver_dataset"]),
+                dec["receiver_dataset_hash"],
+            )
+            if learned_pair
+            else None
+        )
         if (a.source_root / "scene.xml").read_text() != setup.xml:
             raise ValueError("scene reconstruction mismatch")
 
@@ -421,7 +459,7 @@ def main():
                 whole_receiver = SharedNativeReceivingPlayer(
                     w,
                     "b/",
-                    whole_actor,
+                    learned_actor if course["arm"].get("receiver_learned", False) else whole_actor,
                     model=setup.velocity_path,
                     config=setup.velocity_config,
                     expected_model_hash=pins[str(setup.velocity_path)],
@@ -550,7 +588,7 @@ def main():
                             trace_v.update({"SAM_" + k: v for k, v in sample_trace.items()})
                             trace_v["SAM_executed_action"] = sampled_action.copy()
                             counts["receiver_stochastic_calls"] += 1
-                    if whole_identity or exploration:
+                    if whole_identity or exploration or learned_pair:
                         counts["receiver_onnx_calls"] += 1
                         if whole_receiver is not None:
                             counts["receiver_plastic_calls"] += 1

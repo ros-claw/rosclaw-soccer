@@ -25,6 +25,15 @@ def main():
     p.add_argument("--balance-expanded", action="store_true")
     p.add_argument("--receiver-follow-study", action="store_true")
     p.add_argument("--receiver-whole-identity", action="store_true")
+    p.add_argument("--receiver-learned-pair", action="store_true")
+    for key in ("receiver-checkpoint", "receiver-candidate-audit", "receiver-dataset"):
+        p.add_argument("--" + key, type=Path)
+    for key in (
+        "receiver-checkpoint-hash",
+        "receiver-candidate-audit-hash",
+        "receiver-dataset-hash",
+    ):
+        p.add_argument("--" + key)
     p.add_argument("--receiver-exploration", action="store_true")
     p.add_argument("--identity-review", type=Path)
     p.add_argument("--identity-review-hash")
@@ -37,6 +46,28 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    candidate_args = (
+        a.receiver_checkpoint,
+        a.receiver_checkpoint_hash,
+        a.receiver_candidate_audit,
+        a.receiver_candidate_audit_hash,
+        a.receiver_dataset,
+        a.receiver_dataset_hash,
+    )
+    if a.receiver_learned_pair and (
+        not all(candidate_args)
+        or a.new_context_block is None
+        or a.balance_teacher_pair is not None
+        or a.balance_expanded
+        or a.receiver_follow_study
+        or a.receiver_whole_identity
+        or a.receiver_exploration
+        or a.successor_alignment_study
+        or a.reference_bridge_controls != [0]
+    ):
+        p.error("learned pair requires its own block and all candidate evidence")
+    if not a.receiver_learned_pair and any(candidate_args):
+        p.error("candidate evidence requires learned-pair mode")
     if a.receiver_exploration and (
         a.new_context_block is None
         or a.balance_teacher_pair is not None
@@ -110,6 +141,15 @@ def main():
     pins, base_hash, candidates, contexts = admit_frontier(
         a.frontier_root, a.frontier_head, a.frontier_hash
     )
+    if a.receiver_learned_pair:
+        for path, expected in (
+            (a.receiver_checkpoint, a.receiver_checkpoint_hash),
+            (a.receiver_candidate_audit, a.receiver_candidate_audit_hash),
+            (a.receiver_dataset, a.receiver_dataset_hash),
+        ):
+            if path.is_symlink() or digest(path) != expected:
+                raise ValueError("exact candidate evidence required before physics")
+            pins[str(path)] = expected
     if a.receiver_exploration:
         if a.identity_review.is_symlink() or digest(a.identity_review) != a.identity_review_hash:
             raise ValueError("exact independent whole-receiver identity review required")
@@ -236,6 +276,17 @@ def main():
             )
             for whole in (False, True)
         ]
+    if a.receiver_learned_pair:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                receiver_whole=True,
+                receiver_learned=learned,
+            )
+            for learned in (False, True)
+        ]
     if a.receiver_exploration:
         arms = [
             dict(
@@ -263,7 +314,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_receiver_exploration.development.v9"
+                "soccer.neural_relay_receiver_learned_pair.development.v10"
+                if a.receiver_learned_pair
+                else "soccer.neural_relay_receiver_exploration.development.v9"
                 if a.receiver_exploration
                 else "soccer.neural_relay_whole_receiver_identity.development.v8"
                 if a.receiver_whole_identity
@@ -291,6 +344,14 @@ def main():
             identity_review=str(a.identity_review) if a.receiver_exploration else None,
             identity_review_hash=a.identity_review_hash,
             identity_review_head=a.identity_review_head,
+            receiver_checkpoint=str(a.receiver_checkpoint) if a.receiver_learned_pair else None,
+            receiver_checkpoint_hash=a.receiver_checkpoint_hash,
+            receiver_candidate_audit=str(a.receiver_candidate_audit)
+            if a.receiver_learned_pair
+            else None,
+            receiver_candidate_audit_hash=a.receiver_candidate_audit_hash,
+            receiver_dataset=str(a.receiver_dataset) if a.receiver_learned_pair else None,
+            receiver_dataset_hash=a.receiver_dataset_hash,
             receiver_lateral_offsets_m=list(sides),
             balance_teacher_is_not_learned_actor=a.balance_teacher_pair is not None,
             candidate=candidates[0],
@@ -332,7 +393,7 @@ def main():
         ),
     )
     counts = dict(native_steps=0, actual_actor_calls=0, shadow_actor_calls=0)
-    if a.receiver_whole_identity or a.receiver_exploration:
+    if a.receiver_whole_identity or a.receiver_exploration or a.receiver_learned_pair:
         counts.update(receiver_onnx_calls=0, receiver_plastic_calls=0, receiver_anchor_calls=0)
     if a.receiver_exploration:
         counts["receiver_stochastic_calls"] = 0
@@ -354,6 +415,7 @@ def main():
         )
         from rosclaw_soccer.rsi.relay_balance_teacher import RelayBalanceTeacher
         from rosclaw_soccer.rsi.relay_post_touch_follow import post_touch_follow
+        from rosclaw_soccer.rsi.relay_receiver_candidate import load_research_receiver
         from rosclaw_soccer.rsi.relay_whole_receiver_identity import zero_receiver_actor
         from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
         from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
@@ -382,7 +444,20 @@ def main():
         setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor, context_indices=indices)
         whole_actor = (
             zero_receiver_actor(setup)
-            if a.receiver_whole_identity or a.receiver_exploration
+            if a.receiver_whole_identity or a.receiver_exploration or a.receiver_learned_pair
+            else None
+        )
+        learned_actor = (
+            load_research_receiver(
+                setup,
+                a.receiver_checkpoint,
+                a.receiver_checkpoint_hash,
+                a.receiver_candidate_audit,
+                a.receiver_candidate_audit_hash,
+                a.receiver_dataset,
+                a.receiver_dataset_hash,
+            )
+            if a.receiver_learned_pair
             else None
         )
         (a.output / "scene.xml").write_text(setup.xml)
@@ -408,7 +483,7 @@ def main():
                 SharedNativeReceivingPlayer(
                     w,
                     "b/",
-                    whole_actor,
+                    learned_actor if course["arm"].get("receiver_learned", False) else whole_actor,
                     model=setup.velocity_path,
                     config=setup.velocity_config,
                     expected_model_hash=pins[str(setup.velocity_path)],
@@ -478,7 +553,7 @@ def main():
                 whole_receiver = SharedNativeReceivingPlayer(
                     w,
                     "b/",
-                    whole_actor,
+                    learned_actor if course["arm"].get("receiver_learned", False) else whole_actor,
                     model=setup.velocity_path,
                     config=setup.velocity_config,
                     expected_model_hash=pins[str(setup.velocity_path)],
@@ -627,7 +702,11 @@ def main():
                             trace_v.update({"SAM_" + k: v for k, v in sample_trace.items()})
                             trace_v["SAM_executed_action"] = sampled_action.copy()
                             counts["receiver_stochastic_calls"] += 1
-                    if a.receiver_whole_identity or a.receiver_exploration:
+                    if (
+                        a.receiver_whole_identity
+                        or a.receiver_exploration
+                        or a.receiver_learned_pair
+                    ):
                         counts["receiver_onnx_calls"] += 1
                         if whole_receiver is not None:
                             counts["receiver_plastic_calls"] += 1
@@ -786,7 +865,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_RECEIVER_EXPLORATION32_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_RECEIVER_LEARNED_PAIR16_PENDING_OWN_REPLAY"
+                    if a.receiver_learned_pair
+                    else "NEURAL_RELAY_RECEIVER_EXPLORATION32_PENDING_OWN_REPLAY"
                     if a.receiver_exploration
                     else "NEURAL_RELAY_WHOLE_RECEIVER_IDENTITY16_PENDING_OWN_REPLAY"
                     if a.receiver_whole_identity
