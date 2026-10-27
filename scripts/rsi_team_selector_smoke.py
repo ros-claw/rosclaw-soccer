@@ -38,6 +38,8 @@ PARENT_HASH = "sha256:52f70e48bb39f050350ee103c72bb3000aea47a3f594aa96f35434d9b0
 
 def run_job(job):
     arm, course, task, offset, threshold, model, trace_path = job
+    prior.THRESHOLD = -0.48
+    prior.RADIUS = 0.019
     original_simulate = prior.simulate_r0_receiving_course
     holder = []
 
@@ -62,8 +64,21 @@ def run_job(job):
                     float(x) for x in np.asarray(parent_weights.output_bias) + np.asarray(offset)
                 ),
             )
+            if arm.startswith("probe-"):
+                selected = int(arm.removeprefix("probe-"))
+                model = dict(model)
+                model.update(
+                    center=[0.0] * 10,
+                    scale=[1.0] * 10,
+                    weight1=np.zeros((32, 10)).tolist(),
+                    bias1=[0.0] * 32,
+                    weight2=np.zeros((16, 32)).tolist(),
+                    bias2=[1.0 if i == selected else 0.0 for i in range(16)],
+                )
+                threshold = 0.775
+                prior.THRESHOLD = -0.55
+                prior.RADIUS = 0.022
             selector = TeamReceivingSelector.from_dict(model)
-            prior.RADIUS = 0.019
 
             def factory(*args, **kwargs):
                 actor = TeamReceivingSelectorMotor(
@@ -130,10 +145,34 @@ def main():
     parser.add_argument("--full-retention", action="store_true")
     parser.add_argument("--smoke-proof", type=Path)
     parser.add_argument("--repeat-proof", type=Path)
+    parser.add_argument("--coverage-probe", action="store_true")
+    parser.add_argument("--retention-proof", type=Path)
+    parser.add_argument("--retention-audit", type=Path)
     args = parser.parse_args()
     clean(args.expected_head)
     if args.output.exists() or args.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("unused external evidence directory required")
+    if args.coverage_probe:
+        if args.full_retention or args.smoke_proof is not None or args.repeat_proof is not None:
+            raise ValueError("coverage probe is a separate development experiment")
+        if (
+            args.retention_proof is None
+            or args.retention_audit is None
+            or digest(args.retention_proof)
+            != "sha256:04390ab231f102c01d10b62dd433fd3b84f1b92777a77e75ebc46fb7742d6790"
+            or digest(args.retention_audit)
+            != "sha256:4e0940b666cdf09d0d10d5dccf264dcd1c66c43ebee98f32773535a706eda880"
+        ):
+            raise ValueError("exact failed paired retention and independent audit required")
+        retention = json.loads(args.retention_proof.read_text())
+        audit = json.loads(args.retention_audit.read_text())
+        if (
+            retention["status"] != "TEAM_RECEIVING_EIGHT_BODY_FULL_CONSUMED_NOT_PROMOTED"
+            or audit["status"] != "TEAM_RETENTION_TRACE_SELECTOR_READBACK_NOT_REINTEGRATED"
+        ):
+            raise ValueError("full failed retention lineage required")
+    elif args.retention_proof is not None or args.retention_audit is not None:
+        raise ValueError("retention proofs apply to coverage probe only")
     if args.full_retention:
         smoke_hash = "sha256:c17b889563ab27fa762929bf159204b565b19e44e043c66fbfc2b60ef2bc0793"
         if (
@@ -211,9 +250,20 @@ def main():
     baseline = v261["results"][0]["rows"]
     if len(baseline) != 55:
         raise ValueError("complete original 55-course retention cohort required")
-    chosen = baseline if args.full_retention else [baseline[0], baseline[53]]
+    coverage_seeds = (223003, 238004, 252008, 255004, 258005, 258007)
+    chosen = (
+        [next(row for row in baseline if row["course"]["seed"] == seed) for seed in coverage_seeds]
+        if args.coverage_probe
+        else baseline
+        if args.full_retention
+        else [baseline[0], baseline[53]]
+    )
     courses = tuple(ReceivingCourse(**row["course"]) for row in chosen)
-    if not args.full_retention and [course.seed for course in courses] != [223001, 259011]:
+    if (
+        not args.full_retention
+        and not args.coverage_probe
+        and [course.seed for course in courses] != [223001, 259011]
+    ):
         raise ValueError("exact preregistered consumed smoke courses required")
     bank_hash = preflight_receiving_courses(courses)
     if args.full_retention and bank_hash != v261["course_bank_hash"]:
@@ -227,6 +277,19 @@ def main():
     if args.full_retention:
         pins[str(args.smoke_proof)] = smoke_hash
         pins[str(args.repeat_proof)] = smoke_hash
+    if args.coverage_probe:
+        pins[str(args.retention_proof)] = digest(args.retention_proof)
+        pins[str(args.retention_audit)] = digest(args.retention_audit)
+        matched = {r["course_seed"]: r for r in retention["results"]}
+        for seed in coverage_seeds:
+            group = matched[seed]
+            parent_row = next(r for r in group["rows"] if r["arm"] == "parent")
+            if (
+                group["parent_success"]
+                or parent_row["activation_enabled"]
+                or parent_row["protected_episode"]
+            ):
+                raise ValueError("known unprotected action-gated failed training courses required")
     for row in training["records"]:
         path = args.training_dir / row["model_path"]
         if path.is_symlink() or digest(path) != row["model_hash"]:
@@ -282,8 +345,22 @@ def main():
             parent_report_hash=PARENT_HASH,
             course_bank_hash=bank_hash,
             course_seeds=[c.seed for c in courses],
-            arms=["parent", "17", "43", "71"],
-            physical_runs=4 * len(courses),
+            arms=(
+                ["parent", *(f"probe-{i}" for i in range(16))]
+                if args.coverage_probe
+                else ["parent", "17", "43", "71"]
+            ),
+            physical_runs=(17 if args.coverage_probe else 4) * len(courses),
+            expanded_candidate_activation=(
+                dict(
+                    max_lateral=0.775,
+                    min_relative_vx=-0.55,
+                    activation_radius=0.022,
+                    protected_episode_still_preserved=True,
+                )
+                if args.coverage_probe
+                else None
+            ),
             source_pins=pins,
             raw_trace_keys=PHYSICAL_KEYS,
             full_team_snapshot_fields=(
@@ -291,7 +368,13 @@ def main():
                 "pelvis, joint position/velocity/torque/margin, feet and tactical decisions"
             ),
             historical_physical_hash_covers_only_raw_trace_keys=True,
-            partition="CONSUMED_FULL_RETENTION" if args.full_retention else "CONSUMED_SMOKE_ONLY",
+            partition=(
+                "CONSUMED_COVERAGE_PROBE"
+                if args.coverage_probe
+                else "CONSUMED_FULL_RETENTION"
+                if args.full_retention
+                else "CONSUMED_SMOKE_ONLY"
+            ),
             fresh_exam=False,
             promotion_authorized=False,
             hardware_authorized=False,
@@ -300,7 +383,12 @@ def main():
     jobs = []
     for course in courses:
         task = (common[0], common[1], course, *common[2:], pre, post, candidate, states)
-        for arm in ("parent", "17", "43", "71"):
+        arms = (
+            ["parent", *(f"probe-{i}" for i in range(16))]
+            if args.coverage_probe
+            else ["parent", "17", "43", "71"]
+        )
+        for arm in arms:
             jobs.append(
                 (
                     arm,
@@ -308,7 +396,7 @@ def main():
                     task,
                     offset,
                     threshold,
-                    models.get(arm),
+                    models["17"] if arm.startswith("probe-") else models.get(arm),
                     args.output / f"{course.seed}-{arm}.npz",
                 )
             )
@@ -340,20 +428,31 @@ def main():
                 parent_matches_historical_trace=(
                     parent["physical_trace_hash"] == old["physical_trace_hash"]
                 ),
+                parent_matches_current_retention=(
+                    parent["physical_trace_hash"]
+                    == next(r for r in matched[course.seed]["rows"] if r["arm"] == "parent")[
+                        "physical_trace_hash"
+                    ]
+                    if args.coverage_probe
+                    else None
+                ),
                 parent_success=bool(is_clean(parent) and parent["controlled_reception"]),
                 retention=retained,
                 rows=group,
             )
         )
     all_historical_exact = all(item["parent_matches_historical_trace"] for item in summary)
+    compared_arms = [f"probe-{i}" for i in range(16)] if args.coverage_probe else ["17", "43", "71"]
     per_seed_retained = {
-        arm: all(item["retention"][arm] for item in summary) for arm in ("17", "43", "71")
+        arm: all(item["retention"][arm] for item in summary) for arm in compared_arms
     }
     write_once(
         args.output / "complete.json",
         dict(
             status=(
-                "TEAM_RECEIVING_EIGHT_BODY_FULL_CONSUMED_NOT_PROMOTED"
+                "TEAM_RECEIVING_COVERAGE_PROBE_NOT_PROMOTED"
+                if args.coverage_probe
+                else "TEAM_RECEIVING_EIGHT_BODY_FULL_CONSUMED_NOT_PROMOTED"
                 if args.full_retention
                 else "TEAM_RECEIVING_EIGHT_BODY_CONSUMED_SMOKE_NOT_PROMOTED"
             ),
@@ -362,10 +461,31 @@ def main():
             parent_report_hash=PARENT_HASH,
             course_bank_hash=bank_hash,
             results=summary,
-            physical_runs=4 * len(courses),
+            physical_runs=(17 if args.coverage_probe else 4) * len(courses),
+            coverage_probe=args.coverage_probe,
             full_retention=args.full_retention,
             historical_parent_all_exact=all_historical_exact,
             current_parent_success_retained_by_seed=per_seed_retained,
+            coverage_action_success_counts=(
+                {
+                    arm: sum(
+                        is_clean(r) and r["controlled_reception"] for r in rows if r["arm"] == arm
+                    )
+                    for arm in compared_arms
+                }
+                if args.coverage_probe
+                else None
+            ),
+            coverage_action_unsafe_counts=(
+                {
+                    arm: sum(
+                        not r["safe"] or bool(r["fault_agents"]) for r in rows if r["arm"] == arm
+                    )
+                    for arm in compared_arms
+                }
+                if args.coverage_probe
+                else None
+            ),
             fresh_authorized=False,
             fresh_exam=False,
             promotion_authorized=False,
