@@ -164,6 +164,8 @@ def main():
     parser.add_argument("--coverage-learned-dir", type=Path)
     parser.add_argument("--coverage-full-retention", action="store_true")
     parser.add_argument("--protected-smoke", action="store_true")
+    parser.add_argument("--protection-proof", type=Path)
+    parser.add_argument("--protection-audit", type=Path)
     parser.add_argument("--coverage-audit", type=Path)
     parser.add_argument("--learned-proof", type=Path)
     parser.add_argument("--learned-audit", type=Path)
@@ -228,6 +230,26 @@ def main():
         raise ValueError("coverage audit applies only to learned coverage")
     if args.coverage_full_retention:
         if (
+            args.protection_proof is None
+            or args.protection_audit is None
+            or args.protection_proof.is_symlink()
+            or args.protection_audit.is_symlink()
+            or digest(args.protection_proof)
+            != "sha256:58dda99ebe752368bf02eba2c3507eedcea1f7fcc74420df2a5c98907353a8f8"
+            or digest(args.protection_audit)
+            != "sha256:646f8d52e0ca4dbc0ea63018172653b8bb1fdedea818cb6f15a1f27fa4a1f4dd"
+        ):
+            raise ValueError("exact audited protection-order physical smoke required")
+        protection = json.loads(args.protection_proof.read_text())
+        protection_audit = json.loads(args.protection_audit.read_text())
+        if (
+            protection["status"] != "TEAM_RECEIVING_PROTECTION_ORDER_SMOKE_NOT_PROMOTED"
+            or protection_audit["source_hash"] != digest(args.protection_proof)
+            or protection_audit["protected_smoke"] is not True
+            or len(protection_audit["rows"]) != 8
+        ):
+            raise ValueError("complete independently rescored protection-order smoke required")
+        if (
             args.learned_proof is None
             or args.learned_audit is None
             or args.learned_proof.is_symlink()
@@ -266,6 +288,8 @@ def main():
             raise ValueError("all seed training-course physical and safety gates required")
     elif args.learned_proof is not None or args.learned_audit is not None:
         raise ValueError("learned proof applies only to full learned retention")
+    if not args.coverage_full_retention and (args.protection_proof or args.protection_audit):
+        raise ValueError("protection proof applies only to full learned retention")
     if neighbor:
         required = (
             args.neighbor_bank,
@@ -456,6 +480,8 @@ def main():
     if args.coverage_full_retention:
         pins[str(args.learned_proof)] = digest(args.learned_proof)
         pins[str(args.learned_audit)] = digest(args.learned_audit)
+        pins[str(args.protection_proof)] = digest(args.protection_proof)
+        pins[str(args.protection_audit)] = digest(args.protection_audit)
     if neighbor:
         for path in required:
             pins[str(path)] = digest(path)
