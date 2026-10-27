@@ -31,6 +31,9 @@ def main():
     ):
         raise ValueError("unused audit and exact completed receiver course source required")
     s, declaration = [json.loads(p.read_text()) for p in (rp, dp)]
+    bilateral_study = (
+        declaration["protocol"] == "dual256.actual_pass.capture_bilateral_sweep.development.v7"
+    )
     priority_study = (
         declaration["protocol"] == "dual256.actual_pass.capture_priority_sweep.development.v6"
     )
@@ -38,7 +41,8 @@ def main():
         declaration["protocol"] == "dual256.actual_pass.capture_geometry_sweep.development.v5"
     )
     development_study = (
-        priority_study
+        bilateral_study
+        or priority_study
         or sweep_study
         or (declaration["protocol"] == "dual256.actual_pass.prealigned_foot_teacher.development.v4")
     )
@@ -52,7 +56,9 @@ def main():
     )
     expected_worlds = 32 if prealigned_study else 24
     producer_status = (
-        "CAPTURE_PRIORITY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+        "CAPTURE_BILATERAL_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+        if bilateral_study
+        else "CAPTURE_PRIORITY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
         if priority_study
         else "CAPTURE_GEOMETRY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
         if sweep_study
@@ -78,6 +84,7 @@ def main():
             "dual256.actual_pass.prealigned_foot_teacher.development.v4",
             "dual256.actual_pass.capture_geometry_sweep.development.v5",
             "dual256.actual_pass.capture_priority_sweep.development.v6",
+            "dual256.actual_pass.capture_bilateral_sweep.development.v7",
         )
     ):
         raise ValueError("exact complete preregistered24 paired worlds required")
@@ -194,7 +201,9 @@ def main():
             for key, value in declaration.get("capture_teacher_configs", {}).items()
         }
         expected_configs = (
-            {"priority_default", "priority_early", "priority_early_lower"}
+            {"bilateral_default", "bilateral_early", "bilateral_early_lower"}
+            if bilateral_study
+            else {"priority_default", "priority_early", "priority_early_lower"}
             if priority_study
             else {"sweep_early", "sweep_lower", "sweep_early_lower"}
             if sweep_study
@@ -517,7 +526,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "CAPTURE_PRIORITY_SWEEP_DEVELOPMENT32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
+                    "CAPTURE_BILATERAL_SWEEP_DEVELOPMENT32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
+                    if bilateral_study
+                    else "CAPTURE_PRIORITY_SWEEP_DEVELOPMENT32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
                     if priority_study
                     else "CAPTURE_GEOMETRY_SWEEP_DEVELOPMENT32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
                     if sweep_study

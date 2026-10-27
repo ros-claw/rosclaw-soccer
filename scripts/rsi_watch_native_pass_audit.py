@@ -18,7 +18,9 @@ def main():
     for name in ("unit", "source-head", "expected-head"):
         parser.add_argument(f"--{name}", required=True)
     parser.add_argument("--timeout-sec", type=int, default=43200)
-    parser.add_argument("--priority", action="store_true")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--priority", action="store_true")
+    modes.add_argument("--bilateral", action="store_true")
     args = parser.parse_args()
     clean(args.expected_head)
     if (
@@ -51,18 +53,19 @@ def main():
             check=False,
         )
         state = dict(line.split("=", 1) for line in query.stdout.splitlines() if "=" in line)
+        if query.returncode or not {"ActiveState", "Result", "ExecMainStatus"} <= state.keys():
+            raise ValueError("cannot verify native experiment unit; replay blocked")
         if source.is_file() and not source.is_symlink() and state.get("ActiveState") != "active":
-            if (
-                state.get("Result", "success") != "success"
-                or state.get("ExecMainStatus", "0") != "0"
-            ):
+            if state["Result"] != "success" or state["ExecMainStatus"] != "0":
                 raise ValueError("native experiment failed; replay blocked")
             source_hash = digest(source)
             report = json.loads(source.read_text())
             if (
                 report.get("status")
                 != (
-                    "CAPTURE_PRIORITY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                    "CAPTURE_BILATERAL_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                    if args.bilateral
+                    else "CAPTURE_PRIORITY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
                     if args.priority
                     else "CAPTURE_GEOMETRY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
                 )

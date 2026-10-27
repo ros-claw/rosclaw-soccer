@@ -26,6 +26,7 @@ from rosclaw_soccer.rsi.paid_foot_taskspace import FootTaskSpaceIntent
         ("foot_height_below_ball_m", -0.1),
         ("shin_clearance", 1),
         ("clearance_profile", "unknown"),
+        ("bilateral_clearance", 1),
     ],
 )
 def test_capture_teacher_rejects_unbounded_or_nonfinite_declarations(field, value):
@@ -39,6 +40,9 @@ def test_predictive_clearance_requires_enabled_shin_constraint():
         CaptureTeacherConfig(
             shin_clearance=False, clearance_profile="anticipatory-priority-v1"
         ).validate()
+    CaptureTeacherConfig(bilateral_clearance=True).validate()
+    with pytest.raises(ValueError):
+        CaptureTeacherConfig(shin_clearance=False, bilateral_clearance=True).validate()
 
 
 def test_prefixed_kinematic_teacher_keeps_HG_order_and_never_writes_live_state(tmp_path):
@@ -138,5 +142,19 @@ def test_capture_teacher_identity_rate_limit_and_executed_action_history(monkeyp
     ).astype(np.float64)
     np.testing.assert_array_equal(target, expected)
     np.testing.assert_array_equal(nominal, np.linspace(-0.1, 0.1, 29, dtype=np.float32))
+    for x, y in zip(before, (d.qpos, d.xpos), strict=True):
+        np.testing.assert_array_equal(x, y)
+    bilateral = MeasuredFootCaptureTeacher(
+        world,
+        "b/",
+        params,
+        config=CaptureTeacherConfig(
+            bilateral_clearance=True, clearance_profile="anticipatory-priority-v1"
+        ),
+    )
+    _, bilateral_trace = bilateral.propose(nominal, previous_forces=np.zeros(3))
+    assert bilateral_trace["teacher_opposite_ik_iterations"] == 4
+    assert bilateral_trace["teacher_ik_iterations"] == 8
+    assert abs(bilateral_trace["teacher_delta_HG"]).max() == pytest.approx(0.03)
     for x, y in zip(before, (d.qpos, d.xpos), strict=True):
         np.testing.assert_array_equal(x, y)

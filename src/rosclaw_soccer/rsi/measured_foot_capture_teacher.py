@@ -23,6 +23,7 @@ class CaptureTeacherConfig:
     foot_height_below_ball_m: float = 0.0
     shin_clearance: bool = True
     clearance_profile: str = "standard-v1"
+    bilateral_clearance: bool = False
 
     def validate(self) -> None:
         if (
@@ -47,6 +48,9 @@ class CaptureTeacherConfig:
             or type(self.clearance_profile) is not str
             or self.clearance_profile not in ("standard-v1", "anticipatory-priority-v1")
             or self.clearance_profile != "standard-v1"
+            and not self.shin_clearance
+            or type(self.bilateral_clearance) is not bool
+            or self.bilateral_clearance
             and not self.shin_clearance
         ):
             raise ValueError("finite bounded capture-teacher declaration required")
@@ -114,6 +118,7 @@ class MeasuredFootCaptureTeacher:
         requested = np.zeros(29)
         offset = np.zeros(6)
         iterations = 0
+        opposite_iterations = 0
         if active:
             solver = self.solvers[self.selected]
             nominal_target = self.offset + nominal * self.scale
@@ -157,6 +162,23 @@ class MeasuredFootCaptureTeacher:
                 plan["joint_delta_HG"], -cfg.maximum_joint_delta_rad, cfg.maximum_joint_delta_rad
             )
             iterations = plan["ik_iterations"]
+            if cfg.bilateral_clearance:
+                opposite = self.solvers[1 - self.selected]
+                _, opposite_plan = opposite.solve_offset(
+                    ep,
+                    nominal,
+                    np.zeros(6),
+                    shin_clearance=True,
+                    observed_shin_clearance=True,
+                    clearance_profile=cfg.clearance_profile,
+                )
+                requested = np.clip(
+                    requested + opposite_plan["joint_delta_HG"],
+                    -cfg.maximum_joint_delta_rad,
+                    cfg.maximum_joint_delta_rad,
+                )
+                opposite_iterations = int(opposite_plan["ik_iterations"])
+                iterations += opposite_iterations
         delta = self.previous_delta + np.clip(
             requested - self.previous_delta,
             -cfg.delta_slew_rad_per_control,
@@ -167,7 +189,7 @@ class MeasuredFootCaptureTeacher:
         applied_target = (applied_action * self.scale + self.offset).astype(np.float64)
         self.previous_delta = delta.copy()
         self.next_control += 1
-        return applied_target, dict(
+        result = dict(
             teacher_active=active,
             teacher_foot=self.selected,
             teacher_ttc_s=ttc,
@@ -178,3 +200,6 @@ class MeasuredFootCaptureTeacher:
             teacher_applied_action=applied_action,
             teacher_is_neural_action=False,
         )
+        if cfg.bilateral_clearance:
+            result["teacher_opposite_ik_iterations"] = opposite_iterations
+        return applied_target, result

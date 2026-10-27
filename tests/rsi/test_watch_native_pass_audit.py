@@ -93,3 +93,26 @@ def test_priority_sweep_replays_only_matching_protocol(monkeypatch, tmp_path):
     watch.sys.argv.append("--priority")
     watch.main()
     assert len(calls) == 2
+
+
+def test_bilateral_sweep_replays_only_matching_protocol(monkeypatch, tmp_path):
+    calls = setup(
+        monkeypatch,
+        tmp_path,
+        state="ActiveState=inactive\nResult=success\nExecMainStatus=0\n",
+        complete=True,
+    )
+    source = tmp_path / "source" / "complete.json"
+    report = json.loads(source.read_text())
+    report["status"] = "CAPTURE_BILATERAL_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+    source.write_text(json.dumps(report))
+    watch.sys.argv.append("--bilateral")
+    watch.main()
+    assert len(calls) == 2
+
+
+def test_missing_unit_state_fails_closed(monkeypatch, tmp_path):
+    calls = setup(monkeypatch, tmp_path, state="", complete=True)
+    with pytest.raises(ValueError, match="cannot verify"):
+        watch.main()
+    assert len(calls) == 1
