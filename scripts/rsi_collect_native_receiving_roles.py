@@ -20,11 +20,14 @@ def main():
     p.add_argument("--teacher-screen", action="store_true")
     p.add_argument("--prealign", action="store_true")
     p.add_argument("--new-context-block", type=int, choices=(0, 1, 2))
+    p.add_argument("--capture-sweep", action="store_true")
     a = p.parse_args()
     if a.prealign and not a.teacher_screen:
         p.error("prealignment is a separately declared foot-teacher protocol")
     if a.new_context_block is not None and not (a.prealign and a.teacher_screen):
         p.error("new-context development requires the explicit prealigned teacher protocol")
+    if a.capture_sweep and a.new_context_block is None:
+        p.error("capture sweep requires a declared new-context block")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import admit_frontier, clean, receipt, source_pins
@@ -50,6 +53,8 @@ def main():
     )
     if a.prealign:
         arms = ("reactive_intercept",) + arms
+    if a.capture_sweep:
+        arms = ("velocity_intercept", "sweep_early", "sweep_lower", "sweep_early_lower")
     context_blocks = ((2, 3, 5, 7), (8, 9, 11, 13), (15, 16, 17, 18))
     indices = (
         list(context_blocks[a.new_context_block])
@@ -80,9 +85,27 @@ def main():
         if a.teacher_screen
         else {}
     )
+    if a.capture_sweep:
+        teacher_configs = {
+            "sweep_early": CaptureTeacherConfig(
+                anticipation_s=0.40, contact_front_m=0.35, shin_clearance=True
+            ),
+            "sweep_lower": CaptureTeacherConfig(
+                foot_height_below_ball_m=0.06, toe_up_rad=0.20, shin_clearance=True
+            ),
+            "sweep_early_lower": CaptureTeacherConfig(
+                anticipation_s=0.40,
+                contact_front_m=0.35,
+                foot_height_below_ball_m=0.06,
+                toe_up_rad=0.20,
+                shin_clearance=True,
+            ),
+        }
     declaration = dict(
         protocol=(
-            "dual256.actual_pass.prealigned_foot_teacher.development.v4"
+            "dual256.actual_pass.capture_geometry_sweep.development.v5"
+            if a.capture_sweep
+            else "dual256.actual_pass.prealigned_foot_teacher.development.v4"
             if a.new_context_block is not None
             else "dual256.actual_pass.prealigned_foot_teacher.v3"
             if a.prealign
@@ -97,6 +120,7 @@ def main():
         courses=courses,
         context_indices=indices,
         new_context_block=a.new_context_block,
+        capture_sweep=a.capture_sweep,
         horizon_controls=300,
         receiver_forward_m=4.0,
         source_motion_world_rotation_rad=3.141592653589793,
@@ -431,7 +455,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "PREALIGNED_FOOT_CAPTURE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                    "CAPTURE_GEOMETRY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                    if a.capture_sweep
+                    else "PREALIGNED_FOOT_CAPTURE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
                     if a.new_context_block is not None
                     else "PREALIGNED_FOOT_CAPTURE_TEACHER32_COLLECTED_PENDING_OWN_REPLAY"
                     if a.prealign

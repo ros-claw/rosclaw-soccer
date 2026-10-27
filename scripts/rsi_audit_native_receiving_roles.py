@@ -31,7 +31,10 @@ def main():
     ):
         raise ValueError("unused audit and exact completed receiver course source required")
     s, declaration = [json.loads(p.read_text()) for p in (rp, dp)]
-    development_study = (
+    sweep_study = (
+        declaration["protocol"] == "dual256.actual_pass.capture_geometry_sweep.development.v5"
+    )
+    development_study = sweep_study or (
         declaration["protocol"] == "dual256.actual_pass.prealigned_foot_teacher.development.v4"
     )
     prealigned_study = (
@@ -44,7 +47,9 @@ def main():
     )
     expected_worlds = 32 if prealigned_study else 24
     producer_status = (
-        "PREALIGNED_FOOT_CAPTURE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+        "CAPTURE_GEOMETRY_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+        if sweep_study
+        else "PREALIGNED_FOOT_CAPTURE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
         if development_study
         else "PREALIGNED_FOOT_CAPTURE_TEACHER32_COLLECTED_PENDING_OWN_REPLAY"
         if prealigned_study
@@ -64,6 +69,7 @@ def main():
             "dual256.actual_pass.measured_foot_teacher.v2",
             "dual256.actual_pass.prealigned_foot_teacher.v3",
             "dual256.actual_pass.prealigned_foot_teacher.development.v4",
+            "dual256.actual_pass.capture_geometry_sweep.development.v5",
         )
     ):
         raise ValueError("exact complete preregistered24 paired worlds required")
@@ -179,10 +185,12 @@ def main():
             key: CaptureTeacherConfig(**value)
             for key, value in declaration.get("capture_teacher_configs", {}).items()
         }
-        if capture_study and set(capture_configs) != {
-            "velocity_capture",
-            "velocity_capture_clearance",
-        }:
+        expected_configs = (
+            {"sweep_early", "sweep_lower", "sweep_early_lower"}
+            if sweep_study
+            else {"velocity_capture", "velocity_capture_clearance"}
+        )
+        if capture_study and set(capture_configs) != expected_configs:
             raise ValueError("exact explicit two capture-teacher variants required")
         for claim in s["records"]:
             ci, course = claim["index"], claim["course"]
@@ -499,7 +507,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "PREALIGNED_FOOT_CAPTURE_DEVELOPMENT32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
+                    "CAPTURE_GEOMETRY_SWEEP_DEVELOPMENT32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
+                    if sweep_study
+                    else "PREALIGNED_FOOT_CAPTURE_DEVELOPMENT32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
                     if development_study
                     else "PREALIGNED_FOOT_CAPTURE32_ALL_OWN_NATIVE_NEURAL_AUDIT_PASS"
                     if prealigned_study
