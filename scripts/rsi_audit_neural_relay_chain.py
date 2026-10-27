@@ -31,19 +31,21 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
+    whole_identity = dec["protocol"] == "soccer.neural_relay_whole_receiver_identity.development.v8"
     follow_study = dec["protocol"] == "soccer.neural_relay_post_touch_follow.development.v7"
     balance_expanded = dec["protocol"] == "soccer.neural_relay_balance_expanded.development.v6"
     balance_study = (
         balance_expanded or dec["protocol"] == "soccer.neural_relay_balance_teacher.development.v5"
     )
     development_study = (
-        follow_study
+        whole_identity
+        or follow_study
         or balance_study
         or dec["protocol"] == "soccer.neural_relay_development_contexts.v4"
     )
     reference_study = dec["protocol"] == "soccer.neural_relay_reference_bridge.v2"
     team_entry_study = dec["protocol"] == "soccer.neural_relay_team_entry.v3"
-    expected_worlds = 64 if balance_expanded else 32
+    expected_worlds = 16 if whole_identity else 64 if balance_expanded else 32
     if reference_study:
         if dec["reference_bridge_controls"] not in ([0], [0, 5, 15, 30]):
             raise ValueError("entire declared reference-bridge ablation required")
@@ -53,7 +55,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_POST_TOUCH_FOLLOW32_COLLECTED_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_WHOLE_RECEIVER_IDENTITY16_PENDING_OWN_REPLAY"
+        if whole_identity
+        else "NEURAL_RELAY_POST_TOUCH_FOLLOW32_COLLECTED_PENDING_OWN_REPLAY"
         if follow_study
         else "NEURAL_RELAY_BALANCE_EXPANDED64_COLLECTED_PENDING_OWN_REPLAY"
         if balance_expanded
@@ -80,6 +84,7 @@ def main():
             "soccer.neural_relay_balance_teacher.development.v5",
             "soccer.neural_relay_balance_expanded.development.v6",
             "soccer.neural_relay_post_touch_follow.development.v7",
+            "soccer.neural_relay_whole_receiver_identity.development.v8",
         )
         or len(s["records"]) != expected_worlds
         or len(dec["courses"]) != expected_worlds
@@ -100,6 +105,16 @@ def main():
             raise ValueError("exact development context identity and reference required")
         arms = (
             [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_whole=whole,
+                )
+                for whole in (False, True)
+            ]
+            if whole_identity
+            else [
                 dict(
                     start=80,
                     memory="own_shadow_carry",
@@ -126,6 +141,14 @@ def main():
             ]
         )
         sides = (-0.75, -0.35, 0.35, 0.75) if balance_expanded else (-0.55, 0.55)
+        if whole_identity and (
+            dec.get("whole_receiver_identity_not_trained") is not True
+            or dec.get("actual_actor_calls_are_body_proposals_not_auxiliary_forward_passes")
+            is not True
+            or dec.get("joint_targets_remain_actual_neural_outputs") is not True
+            or dec.get("bounded_teacher_added_after_neural") is not False
+        ):
+            raise ValueError("honest zero whole-receiver provenance required")
         if follow_study and (
             dec.get("post_touch_velocity_follow_is_unlearned_teacher") is not True
             or dec.get("joint_targets_remain_actual_neural_outputs") is not True
@@ -220,6 +243,8 @@ def main():
         ),
     )
     counts = dict(native_steps=0, actual_actor_calls=0, shadow_actor_calls=0)
+    if whole_identity:
+        counts.update(receiver_onnx_calls=0, receiver_plastic_calls=0, receiver_anchor_calls=0)
     records = []
     try:
         import mujoco
@@ -238,8 +263,10 @@ def main():
         from rosclaw_soccer.rsi.relay_audit_clock import RelayAuditClock
         from rosclaw_soccer.rsi.relay_balance_teacher import RelayBalanceTeacher
         from rosclaw_soccer.rsi.relay_post_touch_follow import post_touch_follow
+        from rosclaw_soccer.rsi.relay_whole_receiver_identity import zero_receiver_actor
         from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
         from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
+        from rosclaw_soccer.rsi.shared_native_receiving_player import SharedNativeReceivingPlayer
         from rosclaw_soccer.rsi.shared_relay_setup import (
             SharedRelaySetup,
             motion_segment,
@@ -273,6 +300,7 @@ def main():
             checkpoint_kind=candidate["kind"],
         )
         setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor, context_indices=indices)
+        whole_actor = zero_receiver_actor(setup) if whole_identity else None
         if (a.source_root / "scene.xml").read_text() != setup.xml:
             raise ValueError("scene reconstruction mismatch")
 
@@ -336,6 +364,20 @@ def main():
                 **kwargs,
             )
             velocity = setup.velocity()
+            whole_receiver = None
+            if course["arm"].get("receiver_whole", False):
+                if whole_actor is None:
+                    raise ValueError("qualified zero whole receiver required")
+                whole_receiver = SharedNativeReceivingPlayer(
+                    w,
+                    "b/",
+                    whole_actor,
+                    model=setup.velocity_path,
+                    config=setup.velocity_config,
+                    expected_model_hash=pins[str(setup.velocity_path)],
+                    expected_config_hash=pins[str(setup.velocity_config)],
+                    horizon_controls=300,
+                )
             readiness = OnlineReceivingBoundary(w, "b/")
             entry = SuccessorAlignmentGate(enabled=course["arm"].get("align_successor", False))
             receiver = None
@@ -429,20 +471,26 @@ def main():
                             ).command_body,
                             np.float32,
                         )
-                    target_b = velocity.propose(
-                        q, v, w.layouts["b/"].angular_velocity_body(w.data), command, frame=step
-                    )
-                    equal_trace(
-                        dict(
+                    if whole_receiver is None:
+                        target_b = velocity.propose(
+                            q, v, w.layouts["b/"].angular_velocity_body(w.data), command, frame=step
+                        )
+                        trace_v = dict(
                             control=np.array(step),
                             obs=velocity.last_observation.copy(),
                             action=velocity.last_action.copy(),
                             command=command,
                             phase=np.array(velocity.phase),
-                        ),
-                        nn["receiver_velocity"],
-                        vi,
-                    )
+                        )
+                    else:
+                        anchor3 = np.array([anchor[0], anchor[1], 0.11], dtype=np.float64)
+                        target_b, trace_v = whole_receiver.propose(command, anchor3, frame=step)
+                    if whole_identity:
+                        counts["receiver_onnx_calls"] += 1
+                        if whole_receiver is not None:
+                            counts["receiver_plastic_calls"] += 1
+                            counts["receiver_anchor_calls"] += 1
+                    equal_trace(trace_v, nn["receiver_velocity"], vi)
                     counts["shadow_actor_calls"] += 1
                     vi += 1
                 else:
@@ -477,6 +525,8 @@ def main():
                     raise ValueError("own control, time or health differs")
                 passer.commit()
                 if receiver is None:
+                    if whole_receiver is not None:
+                        whole_receiver.commit()
                     shadow.commit_actual()
                     receiving_ready = readiness.update()
                     current_q, current_v = w.layouts["b/"].canonical(w.data)
