@@ -22,6 +22,8 @@ from rsi_r1_protected_kinematic_fresh_v202 import _load_policy
 from rsi_r1_smooth_residual_development_v261 import _run_smooth
 from rsi_r1_velocity_gated_fresh_v238 import ANCHOR
 
+from rosclaw_soccer.rsi.team_coverage_actor import TeamCoverageActor
+from rosclaw_soccer.rsi.team_coverage_motor import TeamCoverageMotor
 from rosclaw_soccer.rsi.team_receiving_selector import TeamReceivingSelector
 from rosclaw_soccer.rsi.team_receiving_selector_motor import TeamReceivingSelectorMotor
 from rosclaw_soccer.rsi.team_trace_capture import extract_team_trace
@@ -78,13 +80,19 @@ def run_job(job):
                 threshold = 0.775
                 prior.THRESHOLD = -0.55
                 prior.RADIUS = 0.022
-            selector = TeamReceivingSelector.from_dict(model)
+            learned_coverage = arm.startswith("learned-")
+            selector = (TeamCoverageActor if learned_coverage else TeamReceivingSelector).from_dict(
+                model
+            )
 
             def factory(*args, **kwargs):
-                actor = TeamReceivingSelectorMotor(
+                actor_type = TeamCoverageMotor if learned_coverage else TeamReceivingSelectorMotor
+                actor = actor_type(
                     *args,
                     **kwargs,
-                    selector=selector,
+                    **(
+                        {"coverage_actor": selector} if learned_coverage else {"selector": selector}
+                    ),
                     maximum_relative_lateral_feature=threshold,
                     protection_radius=0.002,
                     refined_neural_weights=refined,
@@ -98,8 +106,14 @@ def run_job(job):
             row = prior._run_velocity(task)
             if len(holder) != 1:
                 raise ValueError("exactly one controlled receiving motor required")
-            row["selector_action"] = holder[0].selected_action
-            row["selector_out_of_support"] = holder[0].selector_out_of_support
+            row["selector_action"] = (
+                holder[0].coverage_action if learned_coverage else holder[0].selected_action
+            )
+            row["selector_out_of_support"] = (
+                holder[0].coverage_fallback
+                if learned_coverage
+                else holder[0].selector_out_of_support
+            )
         with np.load(trace_path, allow_pickle=False) as f:
             material = {key: f[key].tolist() for key in PHYSICAL_KEYS}
         if hash_json(material) != row["physical_trace_hash"]:
@@ -146,14 +160,24 @@ def main():
     parser.add_argument("--smoke-proof", type=Path)
     parser.add_argument("--repeat-proof", type=Path)
     parser.add_argument("--coverage-probe", action="store_true")
+    parser.add_argument("--coverage-learned-dir", type=Path)
+    parser.add_argument("--coverage-audit", type=Path)
     parser.add_argument("--retention-proof", type=Path)
     parser.add_argument("--retention-audit", type=Path)
     args = parser.parse_args()
     clean(args.expected_head)
+    learned_coverage = args.coverage_learned_dir is not None
+    coverage_mode = args.coverage_probe or learned_coverage
     if args.output.exists() or args.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("unused external evidence directory required")
-    if args.coverage_probe:
-        if args.full_retention or args.smoke_proof is not None or args.repeat_proof is not None:
+    if coverage_mode:
+        if (
+            args.coverage_probe
+            and learned_coverage
+            or args.full_retention
+            or args.smoke_proof is not None
+            or args.repeat_proof is not None
+        ):
             raise ValueError("coverage probe is a separate development experiment")
         if (
             args.retention_proof is None
@@ -173,6 +197,15 @@ def main():
             raise ValueError("full failed retention lineage required")
     elif args.retention_proof is not None or args.retention_audit is not None:
         raise ValueError("retention proofs apply to coverage probe only")
+    if learned_coverage:
+        if (
+            args.coverage_audit is None
+            or digest(args.coverage_audit)
+            != "sha256:314e90c233e14bc131c06763cd5318888eb4da4188dd1a3939efeb536a382769"
+        ):
+            raise ValueError("exact independently rescored coverage audit required")
+    elif args.coverage_audit is not None:
+        raise ValueError("coverage audit applies only to learned coverage")
     if args.full_retention:
         smoke_hash = "sha256:c17b889563ab27fa762929bf159204b565b19e44e043c66fbfc2b60ef2bc0793"
         if (
@@ -253,7 +286,7 @@ def main():
     coverage_seeds = (223003, 238004, 252008, 255004, 258005, 258007)
     chosen = (
         [next(row for row in baseline if row["course"]["seed"] == seed) for seed in coverage_seeds]
-        if args.coverage_probe
+        if coverage_mode
         else baseline
         if args.full_retention
         else [baseline[0], baseline[53]]
@@ -261,7 +294,7 @@ def main():
     courses = tuple(ReceivingCourse(**row["course"]) for row in chosen)
     if (
         not args.full_retention
-        and not args.coverage_probe
+        and not coverage_mode
         and [course.seed for course in courses] != [223001, 259011]
     ):
         raise ValueError("exact preregistered consumed smoke courses required")
@@ -277,7 +310,7 @@ def main():
     if args.full_retention:
         pins[str(args.smoke_proof)] = smoke_hash
         pins[str(args.repeat_proof)] = smoke_hash
-    if args.coverage_probe:
+    if coverage_mode:
         pins[str(args.retention_proof)] = digest(args.retention_proof)
         pins[str(args.retention_audit)] = digest(args.retention_audit)
         matched = {r["course_seed"]: r for r in retention["results"]}
@@ -297,6 +330,32 @@ def main():
         models[str(row["seed"])] = json.loads(path.read_text())
         TeamReceivingSelector.from_dict(models[str(row["seed"])])
         pins[str(path)] = row["model_hash"]
+    if learned_coverage:
+        learned_path = args.coverage_learned_dir / "complete.json"
+        if (
+            learned_path.is_symlink()
+            or digest(learned_path)
+            != "sha256:cd9e8cd98f4a6d19dc9a47ef72e80893d556338bea8256b06fd81004af3dbeaa"
+        ):
+            raise ValueError("exact three-seed coverage actor training required")
+        learned = json.loads(learned_path.read_text())
+        if learned["status"] != "TEAM_COVERAGE_SUPERVISED_ACTORS_NOT_EVALUATED" or [
+            r["seed"] for r in learned["records"]
+        ] != [17, 43, 71]:
+            raise ValueError("three unpromoted offline actors required")
+        pins[str(learned_path)] = digest(learned_path)
+        pins[str(args.coverage_audit)] = digest(args.coverage_audit)
+        for row in learned["records"]:
+            path = args.coverage_learned_dir / row["model_path"]
+            if (
+                path.is_symlink()
+                or path.parent != args.coverage_learned_dir
+                or digest(path) != row["model_hash"]
+            ):
+                raise ValueError("exact confined coverage model required")
+            models[f"learned-{row['seed']}"] = json.loads(path.read_text())
+            TeamCoverageActor.from_dict(models[f"learned-{row['seed']}"])
+            pins[str(path)] = row["model_hash"]
     for name in (
         "parent_report",
         "right_report",
@@ -342,12 +401,15 @@ def main():
         dict(
             source_head=args.expected_head,
             training_hash=TRAINING_HASH,
+            learned_coverage_training_hash=digest(learned_path) if learned_coverage else None,
             parent_report_hash=PARENT_HASH,
             course_bank_hash=bank_hash,
             course_seeds=[c.seed for c in courses],
             arms=(
                 ["parent", *(f"probe-{i}" for i in range(16))]
                 if args.coverage_probe
+                else ["parent", "learned-17", "learned-43", "learned-71"]
+                if learned_coverage
                 else ["parent", "17", "43", "71"]
             ),
             physical_runs=(17 if args.coverage_probe else 4) * len(courses),
@@ -358,7 +420,7 @@ def main():
                     activation_radius=0.022,
                     protected_episode_still_preserved=True,
                 )
-                if args.coverage_probe
+                if coverage_mode
                 else None
             ),
             source_pins=pins,
@@ -371,6 +433,8 @@ def main():
             partition=(
                 "CONSUMED_COVERAGE_PROBE"
                 if args.coverage_probe
+                else "CONSUMED_COVERAGE_LEARNED"
+                if learned_coverage
                 else "CONSUMED_FULL_RETENTION"
                 if args.full_retention
                 else "CONSUMED_SMOKE_ONLY"
@@ -386,6 +450,8 @@ def main():
         arms = (
             ["parent", *(f"probe-{i}" for i in range(16))]
             if args.coverage_probe
+            else ["parent", "learned-17", "learned-43", "learned-71"]
+            if learned_coverage
             else ["parent", "17", "43", "71"]
         )
         for arm in arms:
@@ -433,7 +499,7 @@ def main():
                     == next(r for r in matched[course.seed]["rows"] if r["arm"] == "parent")[
                         "physical_trace_hash"
                     ]
-                    if args.coverage_probe
+                    if coverage_mode
                     else None
                 ),
                 parent_success=bool(is_clean(parent) and parent["controlled_reception"]),
@@ -442,7 +508,13 @@ def main():
             )
         )
     all_historical_exact = all(item["parent_matches_historical_trace"] for item in summary)
-    compared_arms = [f"probe-{i}" for i in range(16)] if args.coverage_probe else ["17", "43", "71"]
+    compared_arms = (
+        [f"probe-{i}" for i in range(16)]
+        if args.coverage_probe
+        else ["learned-17", "learned-43", "learned-71"]
+        if learned_coverage
+        else ["17", "43", "71"]
+    )
     per_seed_retained = {
         arm: all(item["retention"][arm] for item in summary) for arm in compared_arms
     }
@@ -452,17 +524,21 @@ def main():
             status=(
                 "TEAM_RECEIVING_COVERAGE_PROBE_NOT_PROMOTED"
                 if args.coverage_probe
+                else "TEAM_RECEIVING_COVERAGE_LEARNED_NOT_PROMOTED"
+                if learned_coverage
                 else "TEAM_RECEIVING_EIGHT_BODY_FULL_CONSUMED_NOT_PROMOTED"
                 if args.full_retention
                 else "TEAM_RECEIVING_EIGHT_BODY_CONSUMED_SMOKE_NOT_PROMOTED"
             ),
             source_head=args.expected_head,
             training_hash=TRAINING_HASH,
+            learned_coverage_training_hash=digest(learned_path) if learned_coverage else None,
             parent_report_hash=PARENT_HASH,
             course_bank_hash=bank_hash,
             results=summary,
             physical_runs=(17 if args.coverage_probe else 4) * len(courses),
             coverage_probe=args.coverage_probe,
+            coverage_learned=learned_coverage,
             full_retention=args.full_retention,
             historical_parent_all_exact=all_historical_exact,
             current_parent_success_retained_by_seed=per_seed_retained,
