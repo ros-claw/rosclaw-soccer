@@ -53,7 +53,20 @@ def main():
     parser.add_argument("--measured-response-candidate", action="store_true")
     parser.add_argument("--static-contact-calibration", action="store_true")
     parser.add_argument("--replay-static-contact", action="store_true")
+    parser.add_argument(
+        "--static-holdout", choices=("yminus-vminus", "yminus-vplus", "yplus-vminus", "yplus-vplus")
+    )
     args = parser.parse_args()
+    if args.static_holdout and (
+        args.replay_static_contact
+        or args.static_contact_calibration
+        or args.measured_response_candidate
+        or args.replay_contact_arm
+        or args.calibrate_hip_knee_response
+        or args.exclude_both_ankles_after_rejection
+        or args.exclude_right_ankle_roll_after_rejection
+    ):
+        raise ValueError("holdout is a separate experiment")
     if args.replay_static_contact and (
         args.static_contact_calibration
         or args.measured_response_candidate
@@ -71,7 +84,9 @@ def main():
         or args.exclude_right_ankle_roll_after_rejection
     ):
         raise ValueError("static-contact calibration is a separate experiment")
-    static_context = args.static_contact_calibration or args.replay_static_contact
+    static_context = bool(
+        args.static_contact_calibration or args.replay_static_contact or args.static_holdout
+    )
     origin = 50 if static_context else 83
     horizon = 243 - origin
     prefix_controls = 57 + origin
@@ -87,6 +102,18 @@ def main():
     ):
         raise ValueError("unused output and exact completed source and independent review required")
     rejection = ROOT / "rsi-contact-reach-forecast-20261027/complete.json"
+    if args.static_holdout:
+        verified_replay = ROOT / "rsi-static-contact-replay-20261027/complete.json"
+        if (
+            digest(verified_replay)
+            != "sha256:7165f3ab2af1f424a3537831203a727fe6599d32a3978ca032713c64dc42d174"
+        ):
+            raise ValueError("independently replayed passing source required")
+        replay_report = json.loads(verified_replay.read_text())
+        if not replay_report["outcome"]["task_pass"] or not replay_report["private_future_exact"]:
+            raise ValueError("actual fixed-case pass required")
+        y_delta = -0.02 if args.static_holdout.startswith("yminus") else 0.02
+        v_delta = -0.02 if args.static_holdout.endswith("vminus") else 0.02
     if args.replay_static_contact:
         static_dir = ROOT / "rsi-static-approach-calibration-20261027"
         static_report_path = static_dir / "complete.json"
@@ -234,7 +261,9 @@ def main():
             independent_audit=AUDIT_HASH,
             source_head=args.expected_head,
             experiment=(
-                "actual deterministic replay"
+                "paired held-out ball state, fixed candidate"
+                if args.static_holdout
+                else "actual deterministic replay"
                 if args.replay_contact_arm or args.replay_static_contact
                 else "paired dynamics calibration"
                 if args.calibrate_hip_knee_response or args.static_contact_calibration
@@ -242,6 +271,9 @@ def main():
             ),
             actual_replay_arm=args.replay_contact_arm,
             actual_static_replay=args.replay_static_contact,
+            static_holdout=args.static_holdout,
+            initial_ball_y_offset_m=y_delta if args.static_holdout else None,
+            initial_ball_vy_offset_m_s=v_delta if args.static_holdout else None,
             measured_response_candidate=args.measured_response_candidate,
             static_approach_contact_calibration=args.static_contact_calibration,
             calibration_artifact_hash=(
@@ -263,6 +295,8 @@ def main():
             forecast_controls_per_arm=horizon,
             native_step_budget=3000
             if args.replay_contact_arm or args.replay_static_contact
+            else 4930
+            if args.static_holdout
             else 18440
             if args.static_contact_calibration
             else 15800
@@ -301,6 +335,9 @@ def main():
     )
     data = mujoco.MjData(model)
     data.qpos[:], data.qvel[:] = old["initial_qpos"], old["initial_qvel"]
+    if args.static_holdout:
+        data.qpos[lo.bq + 1] += y_delta
+        data.qvel[lo.bv + 1] += v_delta
     mujoco.mj_forward(model, data)
     effort = 0.85 * np.array(G1_HARD_TORQUE_LIMITS)
     world = SharedNativeMotorWorld(
@@ -320,14 +357,17 @@ def main():
         command = np.array([0, 0.25 if 25 <= frame < 57 else 0, 0], np.float32)
         target = stream.propose(q, v, lo.angular_velocity_body(data), command, frame=frame)
         row = world.advance({"a/": target})
-        if not np.array_equal(target, old["joint_targets"][frame]) or any(
-            not np.array_equal(row[k], old[k][frame * 10 : (frame + 1) * 10]) for k in raw
+        if not args.static_holdout and (
+            not np.array_equal(target, old["joint_targets"][frame])
+            or any(not np.array_equal(row[k], old[k][frame * 10 : (frame + 1) * 10]) for k in raw)
         ):
             raise ValueError(f"actual velocity replay mismatch {frame}")
         for k in raw:
             raw[k].append(row[k])
         if frame >= 52:
             collector.capture()
+        if world.failed:
+            raise ValueError("actual velocity prefix body failed")
     policy = OmniContact(StateAndCmd(29), PolicyOutput(29), onnx_path=str(kick))
     policy.task, policy.reference_source, policy.active_object_name = "kickball", "CFgen", "ball"
     policy.box_dims = policy.ball_dims = np.full(3, 0.11, np.float32)
@@ -341,7 +381,9 @@ def main():
         world, "a/", policy, expected_policy_type=OmniContact, goal=np.array([5.0, 0.0, 0.11])
     )
     install_owned_cftrack_history(player, collector)
-    if not np.array_equal(policy.obs_history_buffer[1:], history["entry57_observations"][:4]):
+    if not args.static_holdout and not np.array_equal(
+        policy.obs_history_buffer[1:], history["entry57_observations"][:4]
+    ):
         raise ValueError("live measured history mismatch")
     receipt = condition_measured_bridge_reference(
         player,
@@ -350,7 +392,7 @@ def main():
         expected_model_hash=MODEL_HASH,
         ball_prediction_horizon_s=None if static_context else 1.74,
     )
-    if (
+    if not args.static_holdout and (
         receipt["conditioned_reference_hash"]
         != source_record["bridge_reference_receipt"]["conditioned_reference_hash"]
     ):
@@ -358,8 +400,9 @@ def main():
     for frame in range(origin):
         target, _ = player.propose()
         row = world.advance({"a/": target})
-        if not np.array_equal(target, prior["joint_targets"][frame]) or any(
-            not np.array_equal(row[k], prior[k][frame * 10 : (frame + 1) * 10]) for k in raw
+        if not args.static_holdout and (
+            not np.array_equal(target, prior["joint_targets"][frame])
+            or any(not np.array_equal(row[k], prior[k][frame * 10 : (frame + 1) * 10]) for k in raw)
         ):
             raise ValueError(f"actual CFtrack replay mismatch {frame}")
         for k in raw:
@@ -480,12 +523,15 @@ def main():
         native_step_budget=(
             9 * horizon * 10
             if args.calibrate_hip_knee_response or args.static_contact_calibration
+            else 2 * horizon * 10
+            if args.static_holdout
             else 3200
         ),
     )
     parent = forecaster.forecast(controls=horizon)
-    if parent["controls"] != horizon or any(
-        not np.array_equal(parent[k], prior[k][origin * 10 : 2430]) for k in raw
+    if parent["controls"] != horizon or (
+        not args.static_holdout
+        and any(not np.array_equal(parent[k], prior[k][origin * 10 : 2430]) for k in raw)
     ):
         raise ValueError("parent future differs from original real physics")
     scratch = mujoco.MjData(model)
@@ -495,9 +541,7 @@ def main():
     ball_geom = int(np.flatnonzero(model.geom_bodyid == lo.ball)[0])
     candidates = []
     for idx in range(1, 8):
-        foot = model.geom(
-            f"a/{'left' if args.static_contact_calibration else 'right'}_foot{idx}_collision"
-        ).id
+        foot = model.geom(f"a/{'left' if static_context else 'right'}_foot{idx}_collision").id
         points = np.zeros(6)
         gap = mujoco.mj_geomDistance(model, scratch, ball_geom, foot, 2.0, points)
         candidates.append((gap, foot, points.copy()))
@@ -525,6 +569,9 @@ def main():
         active = np.arange(6, 10)
         delta[:] = 0.0
         delta[active] = learned_delta
+    if args.static_holdout:
+        delta[:] = 0.0
+        delta[1] = 0.08
     plan = CFtrackMotorResidualPlan(
         origin_counter=origin,
         start_control=origin,
@@ -624,7 +671,7 @@ def main():
         )
         return
 
-    candidate = forecaster.forecast(controls=160, motor_plan=plan)
+    candidate = forecaster.forecast(controls=horizon, motor_plan=plan)
     records = {
         name: summarize(future, name)
         for name, future in [("parent", parent), ("candidate", candidate)]
@@ -632,7 +679,11 @@ def main():
     write_once(
         args.output / "complete.json",
         dict(
-            status="BOUNDED_FOOT_REACH_PRIVATE_PHYSICS_NOT_PROMOTED",
+            status=(
+                "STATIC_CONTACT_PAIRED_HOLDOUT_NOT_PROMOTED"
+                if args.static_holdout
+                else "BOUNDED_FOOT_REACH_PRIVATE_PHYSICS_NOT_PROMOTED"
+            ),
             source=SOURCE_HASH,
             audit=AUDIT_HASH,
             source_head=args.expected_head,
@@ -645,9 +696,13 @@ def main():
             predicted_linear_displacement=proposal.predicted_displacement.tolist(),
             response_model_receipt=response_receipt if args.measured_response_candidate else None,
             applied_delta_hg=delta.tolist(),
+            applied_hg_indices=np.flatnonzero(delta).tolist(),
             records=records,
             counters=forecaster.counters(),
-            actual_native_steps=1400,
+            actual_native_steps=prefix_controls * 10,
+            holdout_id=args.static_holdout,
+            initial_ball_y_offset_m=y_delta if args.static_holdout else None,
+            initial_ball_vy_offset_m_s=v_delta if args.static_holdout else None,
             simulation_privileged_teacher=True,
             task_promoted=False,
             hardware_authorized=False,
