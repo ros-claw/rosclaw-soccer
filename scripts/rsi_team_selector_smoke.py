@@ -24,6 +24,7 @@ from rsi_r1_velocity_gated_fresh_v238 import ANCHOR
 
 from rosclaw_soccer.rsi.team_receiving_selector import TeamReceivingSelector
 from rosclaw_soccer.rsi.team_receiving_selector_motor import TeamReceivingSelectorMotor
+from rosclaw_soccer.rsi.team_trace_capture import extract_team_trace
 from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
 from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse
@@ -43,6 +44,7 @@ def run_job(job):
     def capture(*args, **kwargs):
         result, trace = original_simulate(*args, **kwargs)
         arrays = {key: np.asarray(trace[key]) for key in PHYSICAL_KEYS}
+        arrays.update(extract_team_trace(trace))
         if any(array.dtype.hasobject for array in arrays.values()):
             raise ValueError("non-object physical trace arrays required")
         np.savez_compressed(trace_path, **arrays)
@@ -284,6 +286,11 @@ def main():
             physical_runs=4 * len(courses),
             source_pins=pins,
             raw_trace_keys=PHYSICAL_KEYS,
+            full_team_snapshot_fields=(
+                "time, ball pose/velocity and each player's pelvis/joint "
+                "position, velocity and torque"
+            ),
+            historical_physical_hash_covers_only_raw_trace_keys=True,
             partition="CONSUMED_FULL_RETENTION" if args.full_retention else "CONSUMED_SMOKE_ONLY",
             fresh_exam=False,
             promotion_authorized=False,
