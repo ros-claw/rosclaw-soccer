@@ -13,10 +13,21 @@ from scripts.rsi_native_fresh_common import clean
 
 
 def report(
-    root: Path, audit_path: Path, expected_audit_hash: str, expected_status: str
+    root: Path,
+    audit_path: Path,
+    expected_audit_hash: str,
+    expected_status: str,
+    *,
+    worlds: int = 32,
 ) -> tuple[dict, dict, str]:
     path = root / "complete.json"
-    if path.is_symlink() or audit_path.is_symlink() or digest(audit_path) != expected_audit_hash:
+    if (
+        path.is_symlink()
+        or audit_path.is_symlink()
+        or (root / "failed.json").exists()
+        or (audit_path.parent / "failed.json").exists()
+        or digest(audit_path) != expected_audit_hash
+    ):
         raise ValueError("exact pinned source and independent replay required")
     source_hash = digest(path)
     source, audit = (json.loads(p.read_text()) for p in (path, audit_path))
@@ -24,10 +35,10 @@ def report(
         source.get("status") != expected_status
         or audit.get("status") != "ALL_NEURAL_RELAY_OWN_HISTORY_NATIVE_REPLAY_MATCH"
         or audit.get("producer_hash") != source_hash
-        or audit.get("worlds") != 32
+        or audit.get("worlds") != worlds
         or source.get("counts") != audit.get("counts")
-        or len(source.get("records", [])) != 32
-        or len(audit.get("records", [])) != 32
+        or len(source.get("records", [])) != worlds
+        or len(audit.get("records", [])) != worlds
         or any(
             v.get(k) is not False
             for v in (source, audit)
