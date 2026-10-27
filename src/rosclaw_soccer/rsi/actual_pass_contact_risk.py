@@ -5,6 +5,23 @@ from collections.abc import Mapping
 import numpy as np
 
 
+def context_shard(contexts: tuple[int, ...], *, index: int, count: int) -> tuple[int, ...]:
+    """Partition all context folds deterministically without seed selection."""
+    if (
+        type(contexts) is not tuple
+        or len(contexts) < 4
+        or any(type(v) is not int or v < 0 for v in contexts)
+        or tuple(sorted(set(contexts))) != contexts
+        or type(index) is not int
+        or type(count) is not int
+        or count not in (1, 4)
+        or not 0 <= index < count
+        or len(contexts) < count
+    ):
+        raise ValueError("sorted unique context groups and bounded shard identity required")
+    return contexts[index::count]
+
+
 def training_recall_threshold(probabilities: np.ndarray, labels: np.ndarray) -> float:
     """Select a <=0.5 threshold from training positives, never holdout labels."""
     p, y = np.asarray(probabilities), np.asarray(labels)
@@ -70,6 +87,8 @@ def contact_risk_data(
         raise ValueError("unique courses across four recorded context groups required")
     if not np.isin(values["course_index"], list(context_by_course)).all():
         raise ValueError("only declared course identities may appear in transitions")
+    if set(values["course_index"]) != set(context_by_course):
+        raise ValueError("every declared course needs actual transition samples")
     groups = np.asarray([context_by_course[int(i)] for i in values["course_index"]], dtype=np.int64)
     if set(groups) != set(context_by_course.values()):
         raise ValueError("each declared context must have actual transition samples")

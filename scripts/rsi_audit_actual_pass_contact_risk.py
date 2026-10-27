@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from rosclaw_soccer.rsi.actual_pass_contact_risk import contact_risk_data
+from rosclaw_soccer.rsi.actual_pass_contact_risk import contact_risk_data, context_shard
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_native_context_recovery_common import digest
 from scripts.rsi_native_fresh_common import clean
@@ -44,14 +44,20 @@ def main():
     with np.load(path, allow_pickle=False) as f:
         x, y, groups = contact_risk_data({k: f[k].copy() for k in f.files}, dataset["courses"])
     contexts = {int(v) for v in set(groups)}
-    if len(training["rows"]) != 3 * len(contexts):
+    all_contexts = tuple(sorted(contexts))
+    shard_count = training.get("shard_count", 1)
+    shard_index = training.get("shard_index", 0)
+    selected = context_shard(all_contexts, index=shard_index, count=shard_count)
+    if training.get("selected_contexts", list(all_contexts)) != list(selected) or len(
+        training["rows"]
+    ) != 3 * len(selected):
         raise ValueError("all held-out context/seed checkpoints required")
     torch.set_num_threads(1)
     rows = []
     seen = set()
     for original in training["rows"]:
         holdout, seed = original["heldout_context"], original["seed"]
-        if holdout not in contexts or seed not in (17, 43, 71) or (holdout, seed) in seen:
+        if holdout not in selected or seed not in (17, 43, 71) or (holdout, seed) in seen:
             raise ValueError("all unique held-out context/seed checkpoints required")
         seen.add((holdout, seed))
         checkpoint = args.source / original["checkpoint"]

@@ -1,7 +1,11 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.actual_pass_contact_risk import contact_risk_data, training_recall_threshold
+from rosclaw_soccer.rsi.actual_pass_contact_risk import (
+    contact_risk_data,
+    context_shard,
+    training_recall_threshold,
+)
 
 
 def test_risk_uses_before_state_and_groups_shared_contexts():
@@ -67,3 +71,12 @@ def test_new_context_banks_are_grouped_without_fixed_four_context_assumption():
     _, _, groups = contact_risk_data(data, courses)
     assert len(set(groups)) == 16
     assert groups[0] == groups[16]
+
+
+def test_shards_cover_all_contexts_without_overlap_or_selection():
+    contexts = tuple(range(16))
+    shards = [context_shard(contexts, index=i, count=4) for i in range(4)]
+    assert sorted(v for shard in shards for v in shard) == list(contexts)
+    assert sum(len(shard) for shard in shards) == 16
+    with pytest.raises(ValueError):
+        context_shard(contexts, index=4, count=4)

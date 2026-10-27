@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from rosclaw_soccer.rsi.actual_pass_contact_risk import contact_risk_data
+from rosclaw_soccer.rsi.actual_pass_contact_risk import contact_risk_data, context_shard
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_native_context_recovery_common import digest
 from scripts.rsi_native_fresh_common import clean
@@ -19,6 +19,8 @@ def main():
         parser.add_argument(f"--{name}", type=Path, required=True)
     for name in ("dataset-hash", "audit-hash", "expected-head"):
         parser.add_argument(f"--{name}", required=True)
+    parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument("--shard-count", type=int, choices=(1, 4), default=1)
     args = parser.parse_args()
     clean(args.expected_head)
     receipt_path, audit_path = args.dataset / "complete.json", args.audit / "complete.json"
@@ -48,7 +50,8 @@ def main():
         x, y, groups = contact_risk_data({k: f[k].copy() for k in f.files}, receipt["courses"])
     if len(x) != receipt["transitions"] or not 0 < int(y.sum()) < len(y):
         raise ValueError("exact declared grouped contact dataset required")
-    folds = sorted(int(value) for value in set(groups))
+    all_folds = tuple(sorted(int(value) for value in set(groups)))
+    folds = context_shard(all_folds, index=args.shard_index, count=args.shard_count)
     args.output.mkdir()
     write_once(
         args.output / "declaration.json",
@@ -57,6 +60,9 @@ def main():
             audit_hash=args.audit_hash,
             source_head=args.expected_head,
             folds=folds,
+            all_contexts=all_folds,
+            shard_index=args.shard_index,
+            shard_count=args.shard_count,
             seeds=[17, 43, 71],
             training="supervised binary classifier, 282-64-tanh-1, 200 full-batch Adam steps",
             label="receiver recorded non-foot contact >1N within next 10 native substeps",
@@ -144,6 +150,10 @@ def main():
             dataset_hash=args.dataset_hash,
             audit_hash=args.audit_hash,
             rows=rows,
+            selected_contexts=folds,
+            all_contexts=all_folds,
+            shard_index=args.shard_index,
+            shard_count=args.shard_count,
             offline=True,
             online_rl=False,
             physics_evaluated_as_controller=False,
