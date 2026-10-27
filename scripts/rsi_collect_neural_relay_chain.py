@@ -20,6 +20,7 @@ def main():
         p.add_argument("--" + key, required=True)
     p.add_argument("--reference-bridge-controls", nargs="+", type=int, default=[0])
     p.add_argument("--successor-alignment-study", action="store_true")
+    p.add_argument("--new-context-block", type=int, choices=(0, 1, 2))
     for key in ("prior-relay-root", "prior-audit-root"):
         p.add_argument("--" + key, type=Path)
     for key in ("prior-relay-hash", "prior-audit-hash"):
@@ -29,6 +30,10 @@ def main():
         p.error("entire preregistered reference ablation [0] or [0,5,15,30] required")
     if a.successor_alignment_study and a.reference_bridge_controls != [0]:
         p.error("team-entry ablation must isolate goal/alignment, with reference bridge0")
+    if a.new_context_block is not None and (
+        a.successor_alignment_study or a.reference_bridge_controls != [0]
+    ):
+        p.error("development contexts isolate the original neural relay arms")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import admit_frontier, clean, receipt, source_pins
@@ -41,6 +46,13 @@ def main():
     )
     if [c["seed"] for c in candidates] != [65023]:
         raise ValueError("same loss-free frozen neural motor required")
+    blocks = ((2, 3, 5, 7), (8, 9, 11, 13), (15, 16, 17, 18))
+    indices = blocks[a.new_context_block] if a.new_context_block is not None else (1, 4, 20, 21)
+    if a.new_context_block is not None:
+        frontier = json.loads((a.frontier_root / "complete.json").read_text())
+        report = next(r for r in frontier["reports"] if r["seed"] == 65023)
+        if not set(indices).issubset(report["achieved_contexts"]):
+            raise ValueError("relay contexts must be in the acquired passer TRAIN frontier")
     prior = None
     if len(a.reference_bridge_controls) > 1 or a.successor_alignment_study:
         if not all(
@@ -92,7 +104,7 @@ def main():
         ]
     courses = [
         dict(context=i, lateral_m=side, arm=arm)
-        for i in (1, 4, 20, 21)
+        for i in indices
         for side in (-0.55, 0.55)
         for arm in arms
     ]
@@ -101,13 +113,17 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_team_entry.v3"
+                "soccer.neural_relay_development_contexts.v4"
+                if a.new_context_block is not None
+                else "soccer.neural_relay_team_entry.v3"
                 if a.successor_alignment_study
                 else "soccer.neural_relay_reference_bridge.v2"
             ),
             source_head=a.expected_head,
             input_file_hashes=pins,
             courses=courses,
+            development_context_block=a.new_context_block,
+            context_indices=list(indices),
             candidate=candidates[0],
             baseline_training_hash=base_hash,
             max_world_controls=600,
@@ -167,7 +183,7 @@ def main():
         from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
         from scripts.rsi_stroke_search_common import open_motor
 
-        bench, base = open_motor(pins, base_hash, {i: contexts[i] for i in (1, 4, 20, 21)})
+        bench, base = open_motor(pins, base_hash, {i: contexts[i] for i in indices})
         candidate = candidates[0]
         _, training = receipt(pins, candidate["training_hash"])
         actor, _ = load_dual_candidate_for_sim_audit(
@@ -180,7 +196,7 @@ def main():
         setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor)
         (a.output / "scene.xml").write_text(setup.xml)
         typed = []
-        for i in (1, 4, 20, 21):
+        for i in indices:
             for side in (-0.55, 0.55):
                 _, w, _, _, _ = setup.prepare(i, side)
                 typed.append(
@@ -485,7 +501,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_TEAM_ENTRY_COLLECTED_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                    if a.new_context_block is not None
+                    else "NEURAL_RELAY_TEAM_ENTRY_COLLECTED_PENDING_OWN_REPLAY"
                     if a.successor_alignment_study
                     else "NEURAL_RELAY_REFERENCE_BRIDGE_COLLECTED_PENDING_OWN_REPLAY"
                 ),

@@ -31,6 +31,7 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
+    development_study = dec["protocol"] == "soccer.neural_relay_development_contexts.v4"
     reference_study = dec["protocol"] == "soccer.neural_relay_reference_bridge.v2"
     team_entry_study = dec["protocol"] == "soccer.neural_relay_team_entry.v3"
     expected_worlds = 32
@@ -43,7 +44,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_TEAM_ENTRY_COLLECTED_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+        if development_study
+        else "NEURAL_RELAY_TEAM_ENTRY_COLLECTED_PENDING_OWN_REPLAY"
         if team_entry_study
         else "NEURAL_RELAY_REFERENCE_BRIDGE_COLLECTED_PENDING_OWN_REPLAY"
         if reference_study
@@ -58,6 +61,7 @@ def main():
             "soccer.neural_relay_chain32.v1",
             "soccer.neural_relay_reference_bridge.v2",
             "soccer.neural_relay_team_entry.v3",
+            "soccer.neural_relay_development_contexts.v4",
         )
         or len(s["records"]) != expected_worlds
         or len(dec["courses"]) != expected_worlds
@@ -68,6 +72,29 @@ def main():
         )
     ):
         raise ValueError("all32 exact unpromoted neural relay trials required")
+    blocks = ((2, 3, 5, 7), (8, 9, 11, 13), (15, 16, 17, 18))
+    if development_study:
+        block = dec.get("development_context_block")
+        if type(block) is not int or block not in (0, 1, 2):
+            raise ValueError("exact preregistered development block required")
+        indices = blocks[block]
+        if dec.get("context_indices") != list(indices) or dec["reference_bridge_controls"] != [0]:
+            raise ValueError("exact development context identity and reference required")
+        expected_courses = [
+            dict(
+                context=i,
+                lateral_m=side,
+                arm=dict(start=start, memory=memory, reference_bridge_controls=0),
+            )
+            for i in indices
+            for side in (-0.55, 0.55)
+            for start in (0, 80)
+            for memory in ("new_skill_zero", "own_shadow_carry")
+        ]
+        if dec["courses"] != expected_courses:
+            raise ValueError("full fixed development relay factorial required")
+    else:
+        indices = (1, 4, 20, 21)
     pins = dict(s["input_file_hashes"])
     pins[str(rp)], pins[str(dp)] = a.source_hash, digest(dp)
     for i, claim in enumerate(s["records"]):
@@ -145,7 +172,7 @@ def main():
         if digest(context_path) != native["declaration_hash"]:
             raise ValueError("original context declaration mismatch")
         contexts = json.loads(context_path.read_text())["contexts"]
-        bench, baseline = open_motor(pins, base, {i: contexts[i] for i in (1, 4, 20, 21)})
+        bench, baseline = open_motor(pins, base, {i: contexts[i] for i in indices})
         candidate = dec["candidate"]
         _, training = receipt(pins, candidate["training_hash"])
         actor, _ = load_dual_candidate_for_sim_audit(

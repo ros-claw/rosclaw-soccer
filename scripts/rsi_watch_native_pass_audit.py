@@ -22,6 +22,7 @@ def main():
     modes.add_argument("--priority", action="store_true")
     modes.add_argument("--bilateral", action="store_true")
     modes.add_argument("--long-horizon", action="store_true")
+    modes.add_argument("--relay-development", action="store_true")
     args = parser.parse_args()
     clean(args.expected_head)
     if (
@@ -64,7 +65,9 @@ def main():
             if (
                 report.get("status")
                 != (
-                    "CAPTURE_LONG_HORIZON_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
+                    if args.relay_development
+                    else "CAPTURE_LONG_HORIZON_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
                     if args.long_horizon
                     else "CAPTURE_BILATERAL_SWEEP_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
                     if args.bilateral
@@ -86,7 +89,9 @@ def main():
     subprocess.run(
         [
             sys.executable,
-            "scripts/rsi_audit_native_receiving_roles.py",
+            "scripts/rsi_audit_neural_relay_chain.py"
+            if args.relay_development
+            else "scripts/rsi_audit_native_receiving_roles.py",
             "--source-root",
             str(args.source),
             "--source-head",
