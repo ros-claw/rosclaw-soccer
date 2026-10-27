@@ -56,7 +56,22 @@ def main():
     parser.add_argument(
         "--static-holdout", choices=("yminus-vminus", "yminus-vplus", "yplus-vminus", "yplus-vplus")
     )
+    parser.add_argument(
+        "--static-training-case",
+        choices=("yminus-vminus", "yminus-vplus", "yplus-vminus", "yplus-vplus"),
+    )
     args = parser.parse_args()
+    if args.static_training_case and (
+        args.static_holdout
+        or args.replay_static_contact
+        or args.static_contact_calibration
+        or args.measured_response_candidate
+        or args.replay_contact_arm
+        or args.calibrate_hip_knee_response
+        or args.exclude_both_ankles_after_rejection
+        or args.exclude_right_ankle_roll_after_rejection
+    ):
+        raise ValueError("training case is a separate experiment")
     if args.static_holdout and (
         args.replay_static_contact
         or args.static_contact_calibration
@@ -85,12 +100,25 @@ def main():
     ):
         raise ValueError("static-contact calibration is a separate experiment")
     static_context = bool(
-        args.static_contact_calibration or args.replay_static_contact or args.static_holdout
+        args.static_contact_calibration
+        or args.replay_static_contact
+        or args.static_holdout
+        or args.static_training_case
     )
     origin = 50 if static_context else 83
     horizon = 243 - origin
     prefix_controls = 57 + origin
-    calibration_axes = list(range(4)) if args.static_contact_calibration else list(range(6, 10))
+    calibration = bool(
+        args.static_contact_calibration
+        or args.static_training_case
+        or args.calibrate_hip_knee_response
+    )
+    varied = bool(args.static_holdout or args.static_training_case)
+    calibration_axes = (
+        list(range(4))
+        if args.static_contact_calibration or args.static_training_case
+        else list(range(6, 10))
+    )
     clean(args.expected_head)
     source_dir = ROOT / "rsi-cftrack-predicted-ball-h300-20261027"
     source_path = source_dir / "complete.json"
@@ -102,7 +130,7 @@ def main():
     ):
         raise ValueError("unused output and exact completed source and independent review required")
     rejection = ROOT / "rsi-contact-reach-forecast-20261027/complete.json"
-    if args.static_holdout:
+    if varied:
         verified_replay = ROOT / "rsi-static-contact-replay-20261027/complete.json"
         if (
             digest(verified_replay)
@@ -112,8 +140,11 @@ def main():
         replay_report = json.loads(verified_replay.read_text())
         if not replay_report["outcome"]["task_pass"] or not replay_report["private_future_exact"]:
             raise ValueError("actual fixed-case pass required")
-        y_delta = -0.02 if args.static_holdout.startswith("yminus") else 0.02
-        v_delta = -0.02 if args.static_holdout.endswith("vminus") else 0.02
+        case_name = args.static_holdout or args.static_training_case
+        y_amplitude = 0.04 if args.static_training_case else 0.02
+        v_amplitude = 0.01 if args.static_training_case else 0.02
+        y_delta = -y_amplitude if case_name.startswith("yminus") else y_amplitude
+        v_delta = -v_amplitude if case_name.endswith("vminus") else v_amplitude
     if args.replay_static_contact:
         static_dir = ROOT / "rsi-static-approach-calibration-20261027"
         static_report_path = static_dir / "complete.json"
@@ -266,14 +297,15 @@ def main():
                 else "actual deterministic replay"
                 if args.replay_contact_arm or args.replay_static_contact
                 else "paired dynamics calibration"
-                if args.calibrate_hip_knee_response or args.static_contact_calibration
+                if calibration
                 else "one damped Jacobian candidate against same-state parent"
             ),
             actual_replay_arm=args.replay_contact_arm,
             actual_static_replay=args.replay_static_contact,
             static_holdout=args.static_holdout,
-            initial_ball_y_offset_m=y_delta if args.static_holdout else None,
-            initial_ball_vy_offset_m_s=v_delta if args.static_holdout else None,
+            static_training_case=args.static_training_case,
+            initial_ball_y_offset_m=y_delta if varied else None,
+            initial_ball_vy_offset_m_s=v_delta if varied else None,
             measured_response_candidate=args.measured_response_candidate,
             static_approach_contact_calibration=args.static_contact_calibration,
             calibration_artifact_hash=(
@@ -283,7 +315,7 @@ def main():
             candidate_count=0
             if args.replay_contact_arm or args.replay_static_contact
             else 8
-            if args.calibrate_hip_knee_response or args.static_contact_calibration
+            if calibration
             else 1,
             excluded_hg_indices=(
                 [10, 11]
@@ -298,16 +330,12 @@ def main():
             else 4930
             if args.static_holdout
             else 18440
-            if args.static_contact_calibration
+            if args.static_contact_calibration or args.static_training_case
             else 15800
             if args.calibrate_hip_knee_response
             else 4600,
-            calibration_axes_hg=calibration_axes
-            if args.calibrate_hip_knee_response or args.static_contact_calibration
-            else [],
-            calibration_delta_rad=0.08
-            if args.calibrate_hip_knee_response or args.static_contact_calibration
-            else None,
+            calibration_axes_hg=calibration_axes if calibration else [],
+            calibration_delta_rad=0.08 if calibration else None,
             damping=0.02,
             joint_bound_rad=0.18,
             witness_cftrack_control=origin + 12,
@@ -335,7 +363,7 @@ def main():
     )
     data = mujoco.MjData(model)
     data.qpos[:], data.qvel[:] = old["initial_qpos"], old["initial_qvel"]
-    if args.static_holdout:
+    if varied:
         data.qpos[lo.bq + 1] += y_delta
         data.qvel[lo.bv + 1] += v_delta
     mujoco.mj_forward(model, data)
@@ -357,7 +385,7 @@ def main():
         command = np.array([0, 0.25 if 25 <= frame < 57 else 0, 0], np.float32)
         target = stream.propose(q, v, lo.angular_velocity_body(data), command, frame=frame)
         row = world.advance({"a/": target})
-        if not args.static_holdout and (
+        if not varied and (
             not np.array_equal(target, old["joint_targets"][frame])
             or any(not np.array_equal(row[k], old[k][frame * 10 : (frame + 1) * 10]) for k in raw)
         ):
@@ -381,7 +409,7 @@ def main():
         world, "a/", policy, expected_policy_type=OmniContact, goal=np.array([5.0, 0.0, 0.11])
     )
     install_owned_cftrack_history(player, collector)
-    if not args.static_holdout and not np.array_equal(
+    if not varied and not np.array_equal(
         policy.obs_history_buffer[1:], history["entry57_observations"][:4]
     ):
         raise ValueError("live measured history mismatch")
@@ -392,7 +420,7 @@ def main():
         expected_model_hash=MODEL_HASH,
         ball_prediction_horizon_s=None if static_context else 1.74,
     )
-    if not args.static_holdout and (
+    if not varied and (
         receipt["conditioned_reference_hash"]
         != source_record["bridge_reference_receipt"]["conditioned_reference_hash"]
     ):
@@ -400,7 +428,7 @@ def main():
     for frame in range(origin):
         target, _ = player.propose()
         row = world.advance({"a/": target})
-        if not args.static_holdout and (
+        if not varied and (
             not np.array_equal(target, prior["joint_targets"][frame])
             or any(not np.array_equal(row[k], prior[k][frame * 10 : (frame + 1) * 10]) for k in raw)
         ):
@@ -521,17 +549,12 @@ def main():
         expected_policy_type=OmniContact,
         expected_model_hash=MODEL_HASH,
         native_step_budget=(
-            9 * horizon * 10
-            if args.calibrate_hip_knee_response or args.static_contact_calibration
-            else 2 * horizon * 10
-            if args.static_holdout
-            else 3200
+            9 * horizon * 10 if calibration else 2 * horizon * 10 if args.static_holdout else 3200
         ),
     )
     parent = forecaster.forecast(controls=horizon)
     if parent["controls"] != horizon or (
-        not args.static_holdout
-        and any(not np.array_equal(parent[k], prior[k][origin * 10 : 2430]) for k in raw)
+        not varied and any(not np.array_equal(parent[k], prior[k][origin * 10 : 2430]) for k in raw)
     ):
         raise ValueError("parent future differs from original real physics")
     scratch = mujoco.MjData(model)
@@ -611,7 +634,7 @@ def main():
             artifact_hash=digest(artifact),
         )
 
-    if args.calibrate_hip_knee_response or args.static_contact_calibration:
+    if calibration:
         records = {"parent": summarize(parent, "parent")}
         for axis in calibration_axes:
             for sign in (-1, 1):
@@ -649,7 +672,9 @@ def main():
             args.output / "complete.json",
             dict(
                 status=(
-                    "CFTRACK_STATIC_APPROACH_CONTACT_CALIBRATION_NOT_PROMOTED"
+                    "CFTRACK_STATIC_APPROACH_TRAINING_DATA_NOT_PROMOTED"
+                    if args.static_training_case
+                    else "CFTRACK_STATIC_APPROACH_CONTACT_CALIBRATION_NOT_PROMOTED"
                     if args.static_contact_calibration
                     else "CFTRACK_HIP_KNEE_PHYSICS_RESPONSE_CALIBRATION_NOT_PROMOTED"
                 ),
@@ -663,6 +688,9 @@ def main():
                 records=records,
                 counters=forecaster.counters(),
                 actual_native_steps=prefix_controls * 10,
+                training_case=args.static_training_case,
+                initial_ball_y_offset_m=y_delta if varied else None,
+                initial_ball_vy_offset_m_s=v_delta if varied else None,
                 simulation_privileged_teacher=True,
                 physical_force_is_contact_authority=True,
                 task_promoted=False,
