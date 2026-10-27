@@ -23,6 +23,24 @@ def artifact_equal(left_root: Path, left: dict, right_root: Path, right: dict, n
         return set(x.files) == set(y.files) and all(np.array_equal(x[k], y[k]) for k in x.files)
 
 
+def handoff_equal(left_root: Path, left: dict, right_root: Path, right: dict) -> bool:
+    a, b = left["handoff"], right["handoff"]
+    if a is None or b is None:
+        return a is None and b is None
+    for root, row, handoff in ((left_root, left, a), (right_root, right, b)):
+        boundary = root / handoff["boundary"]["path"]
+        if (
+            boundary.is_symlink()
+            or boundary.resolve().parent != (root / f"trial{row['index']}").resolve()
+            or digest(boundary) != handoff["boundary"]["hash"]
+        ):
+            raise ValueError("exact confined physical and neural handoff snapshot required")
+    aa, bb = dict(a), dict(b)
+    aa["boundary"] = {"hash": a["boundary"]["hash"]}
+    bb["boundary"] = {"hash": b["boundary"]["hash"]}
+    return aa == bb
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
@@ -90,13 +108,12 @@ def main() -> None:
         for condition, historical in sorted(parents.items()):
             base, whole = current[(*condition, False)], current[(*condition, True)]
             outcomes = all(
-                base[k] == whole[k]
-                for k in ("termination", "controls", "native_steps", "handoff", "result")
-            )
+                base[k] == whole[k] for k in ("termination", "controls", "native_steps", "result")
+            ) and handoff_equal(root, base, root, whole)
             parent_outcomes = all(
                 base[k] == historical[k]
-                for k in ("termination", "controls", "native_steps", "handoff", "result")
-            )
+                for k in ("termination", "controls", "native_steps", "result")
+            ) and handoff_equal(root, base, old, historical)
             exact = {
                 name: artifact_equal(root, base, root, whole, name)
                 for name in (
