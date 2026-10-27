@@ -507,12 +507,13 @@ def main():
                 )
         phases = policy.ref_phase.copy()
         original_session = policy.ort_session
-        obs, actions, actual_targets = [], [], []
+        obs, actions, time_steps, actual_targets = [], [], [], []
 
         class InterceptCapture:
             def run(self, outputs, inputs):
                 result = original_session.run(outputs, inputs)
                 obs.append(inputs["obs"].copy())
+                time_steps.append(inputs["time_step"].copy())
                 actions.append(result[0].copy())
                 return result
 
@@ -538,6 +539,7 @@ def main():
             targets=np.asarray(actual_targets).reshape(-1, 29),
             neural_obs=np.asarray(obs),
             neural_actions=np.asarray(actions),
+            neural_time_steps=np.asarray(time_steps),
         )
         outcome = None
         phase = None

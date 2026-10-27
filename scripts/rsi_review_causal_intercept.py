@@ -46,6 +46,9 @@ def main():
     paths = [Path(p) for p in pins if p.endswith("/policy/omnicontact/model/kick_50k.onnx")]
     if len(paths) != 1 or paths[0].is_symlink() or digest(paths[0]) != pins[str(paths[0])]:
         raise ValueError("exact pinned inference model required")
+    policy_paths = [Path(p) for p in pins if p.endswith("/policy/omnicontact/OmniContact.py")]
+    if len(policy_paths) != 1 or digest(policy_paths[0]) != pins[str(policy_paths[0])]:
+        raise ValueError("exact pinned source for constant time_step input required")
     session = ort.InferenceSession(str(paths[0]), providers=["CPUExecutionProvider"])
     scene = ROOT / "rsi-paid-torch-native-full16-20261021/cached-standard/declared-scene.xml"
     model = mujoco.MjModel.from_xml_string(shared_native_scene(scene.read_text(), prefixes=("a/",)))
@@ -62,6 +65,9 @@ def main():
             cases=CASES,
             source_head=args.expected_head,
             neural_calls_max=972,
+            time_step_source=(
+                "pinned OmniContact.py: constant float32 [[0.0]]; not captured in original trace"
+            ),
             independent_native_steps=0,
             model_hash=digest(paths[0]),
             physical_force_is_contact_authority=True,
@@ -94,7 +100,9 @@ def main():
         ):
             raise ValueError("complete exact arrays required")
         for i in range(243):
-            predicted = session.run(None, {"obs": a["neural_obs"][i]})[0]
+            predicted = session.run(
+                None, {"obs": a["neural_obs"][i], "time_step": np.zeros((1, 1), np.float32)}
+            )[0]
             if not np.array_equal(predicted, a["neural_actions"][i]):
                 raise ValueError(f"independent inference mismatch {case}/{i}")
         q = a["qpos"].reshape(300, 10, model.nq)
