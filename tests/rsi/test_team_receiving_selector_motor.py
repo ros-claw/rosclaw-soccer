@@ -68,3 +68,22 @@ def test_parent_fallback_and_learned_action_respect_activation(monkeypatch):
     protected.propose(observation)
     assert protected.selected_action == 0
     assert protected.neural_weights == parent.neural_weights
+
+
+def test_selector_initializes_protection_before_choosing(monkeypatch):
+    monkeypatch.setattr(ReceivingFootServoPhaseMotor, "propose", lambda self, obs: (0.0,) * 29)
+    monkeypatch.setattr(
+        ReceivingKinematicTemporalExpert,
+        "features",
+        staticmethod(lambda obs: (0.1,) * 10 + (0.0,) * 38),
+    )
+    monkeypatch.setattr(
+        ReceivingTemporalMotorExpert,
+        "features",
+        staticmethod(lambda obs: (0.0, 0.766, 0.0, -0.45, *(0.0,) * 6)),
+    )
+    motor = make_motor(1)
+    assert motor.protected_episode is None
+    motor.propose(SimpleNamespace(frame=19))
+    assert motor.protected_episode is True
+    assert motor.selected_action == 0
