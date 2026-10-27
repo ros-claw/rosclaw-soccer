@@ -26,12 +26,19 @@ CASES = {
     "yplus-vminus": "14a07d357ab2ec11df573aca47450139ade75807f5509e010b7ad69db83b6b3f",
     "yplus-vplus": "295880f29e327943af7fb37a9f74a4ff8d80fa2349a62a693718dbf95afe1d1b",
 }
+TRAINING_CASES = {
+    "yminus-vminus": "20265a84fb10503bf964e6abb6eaa78ac573622a775dbe4e6a7e8a43e154b4f0",
+    "yminus-vplus": "11d5b80fce212b3525eab76dbccd8ea535bf621d713f201115c6e705e17f5f76",
+    "yplus-vminus": "065a32238ba31763f933ee865cf1028f94370271dfebd983c79082616a2a735b",
+    "yplus-vplus": "92f7e2eae3b09400c08d7e493900d339d7139cbb668ba915285b0fa0d52dc8f5",
+}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-head", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--training", action="store_true")
     args = parser.parse_args()
     clean(args.expected_head)
     if args.output.exists():
@@ -54,7 +61,8 @@ def main():
     write_once(
         args.output / "declaration.json",
         dict(
-            cases=CASES,
+            cases=TRAINING_CASES if args.training else CASES,
+            training_split=args.training,
             source_head=args.expected_head,
             raw_hashes_verified=True,
             independently_integrated_native_steps=0,
@@ -64,20 +72,29 @@ def main():
         ),
     )
     results = {}
-    for case, expected_hash in CASES.items():
-        root = ROOT / f"rsi-static-holdout-{case}-20261027"
+    for case, expected_hash in (TRAINING_CASES if args.training else CASES).items():
+        prefix = "rsi-approach-train" if args.training else "rsi-static-holdout"
+        root = ROOT / f"{prefix}-{case}-20261027"
         report_path = root / "complete.json"
         if report_path.is_symlink() or digest(report_path) != "sha256:" + expected_hash:
             raise ValueError(f"exact holdout report required: {case}")
         report = json.loads(report_path.read_text())
-        if (
-            report["status"] != "STATIC_CONTACT_PAIRED_HOLDOUT_NOT_PROMOTED"
-            or report["holdout_id"] != case
-        ):
+        expected_status = (
+            "CFTRACK_STATIC_APPROACH_TRAINING_DATA_NOT_PROMOTED"
+            if args.training
+            else "STATIC_CONTACT_PAIRED_HOLDOUT_NOT_PROMOTED"
+        )
+        case_key = "training_case" if args.training else "holdout_id"
+        if report["status"] != expected_status or report[case_key] != case:
             raise ValueError("matching unpromoted holdout identity required")
         arms = {}
         traces = {}
-        for arm in ("parent", "candidate"):
+        arm_names = (
+            ["parent", *(f"hg{i}-{side}" for i in range(4) for side in ("minus", "plus"))]
+            if args.training
+            else ["parent", "candidate"]
+        )
+        for arm in arm_names:
             path = root / f"{arm}.npz"
             record = report["records"][arm]
             if (
@@ -133,7 +150,8 @@ def main():
                 artifact_hash=record["artifact_hash"],
             )
         prefix_exact = all(
-            np.array_equal(traces["parent"][k][:1070], traces["candidate"][k][:1070])
+            np.array_equal(traces["parent"][k][:1070], traces[arm][k][:1070])
+            for arm in arm_names[1:]
             for k in ("qpos", "qvel", "torque", "ball_forces")
         )
         if not prefix_exact:
@@ -141,10 +159,15 @@ def main():
         results[case] = dict(
             source_hash="sha256:" + expected_hash, shared_prefix_exact=True, arms=arms
         )
+        write_once(args.output / f"{case}.json", results[case])
     write_once(
         args.output / "complete.json",
         dict(
-            status="STATIC_HOLDOUT_HASH_FORCE_GEOMETRY_READBACK_NOT_EXECUTION",
+            status=(
+                "STATIC_TRAINING_HASH_FORCE_GEOMETRY_READBACK_NOT_EXECUTION"
+                if args.training
+                else "STATIC_HOLDOUT_HASH_FORCE_GEOMETRY_READBACK_NOT_EXECUTION"
+            ),
             records=results,
             independent_native_steps=0,
             reference_geometry_only=True,
