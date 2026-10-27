@@ -44,8 +44,11 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--expected-head", required=True)
     parser.add_argument("--coverage", action="store_true")
+    parser.add_argument("--learned-coverage", action="store_true")
     parser.add_argument("--retention-proof", type=Path)
     parser.add_argument("--retention-proof-hash")
+    parser.add_argument("--probe-proof", type=Path)
+    parser.add_argument("--probe-proof-hash")
     args = parser.parse_args()
     clean(args.expected_head)
     report_path = args.source / "complete.json"
@@ -57,15 +60,22 @@ def main():
     ):
         raise ValueError("unused external output and exact source receipt required")
     report = json.loads(report_path.read_text())
+    if args.coverage and args.learned_coverage:
+        raise ValueError("distinct coverage probe and learned audit modes required")
+    coverage_mode = args.coverage or args.learned_coverage
     expected_status = (
         "TEAM_RECEIVING_COVERAGE_PROBE_NOT_PROMOTED"
         if args.coverage
+        else "TEAM_RECEIVING_COVERAGE_LEARNED_NOT_PROMOTED"
+        if args.learned_coverage
         else "TEAM_RECEIVING_EIGHT_BODY_CONSUMED_SMOKE_NOT_PROMOTED"
     )
-    seeds = (223003, 238004, 252008, 255004, 258005, 258007) if args.coverage else (223001, 259011)
+    seeds = (223003, 238004, 252008, 255004, 258005, 258007) if coverage_mode else (223001, 259011)
     expected_arms = (
         {"parent", *(f"probe-{i}" for i in range(16))}
         if args.coverage
+        else {"parent", "learned-17", "learned-43", "learned-71"}
+        if args.learned_coverage
         else {"parent", "17", "43", "71"}
     )
     if (
@@ -78,7 +88,7 @@ def main():
     if [row["course_seed"] for row in report["results"]] != list(seeds):
         raise ValueError("exact predeclared course identity required")
     retention = {}
-    if args.coverage:
+    if coverage_mode:
         if not args.retention_proof or not args.retention_proof_hash:
             raise ValueError("coverage audit requires pinned current-parent retention proof")
         if (
@@ -92,6 +102,21 @@ def main():
         retention = {group["course_seed"]: group for group in proof["results"]}
     elif args.retention_proof or args.retention_proof_hash:
         raise ValueError("retention proof only applies to coverage")
+    probe = {}
+    if args.learned_coverage:
+        if (
+            not args.probe_proof
+            or not args.probe_proof_hash
+            or args.probe_proof.is_symlink()
+            or digest(args.probe_proof) != args.probe_proof_hash
+        ):
+            raise ValueError("exact coverage probe proof required")
+        proof = json.loads(args.probe_proof.read_text())
+        if proof["status"] != "TEAM_RECEIVING_COVERAGE_PROBE_NOT_PROMOTED":
+            raise ValueError("unpromoted original action probe required")
+        probe = {group["course_seed"]: group for group in proof["results"]}
+    elif args.probe_proof or args.probe_proof_hash:
+        raise ValueError("probe proof only applies to learned coverage")
     args.output.mkdir()
     write_once(
         args.output / "declaration.json",
@@ -100,6 +125,7 @@ def main():
             source_head=args.expected_head,
             trace_count=len(seeds) * len(expected_arms),
             retention_proof_hash=args.retention_proof_hash,
+            probe_proof_hash=args.probe_proof_hash,
             physical_integrations=0,
             scoring_window="red.finisher frames 20..119",
             hardware_authorized=False,
@@ -120,8 +146,8 @@ def main():
                 raise ValueError("exact confined raw trace required")
             with np.load(path, allow_pickle=False) as f:
                 trace = {key: f[key].copy() for key in f.files}
-            extracted = extract_team_trace(trace, require_tactical=args.coverage)
-            if args.coverage and len(trace) != 106:
+            extracted = extract_team_trace(trace, require_tactical=coverage_mode)
+            if coverage_mode and len(trace) != 106:
                 raise ValueError("complete 106-field tactical trace required")
             if (
                 hash_json({key: trace[key].tolist() for key in PHYSICAL_KEYS})
@@ -136,7 +162,7 @@ def main():
             )
             if outcome["controlled_reception"] != row["controlled_reception"]:
                 raise ValueError("recomputed receiving outcome differs from source")
-            if args.coverage and arm == "parent":
+            if coverage_mode and arm == "parent":
                 previous = next(
                     r for r in retention[group["course_seed"]]["rows"] if r["arm"] == "parent"
                 )
@@ -152,6 +178,16 @@ def main():
                     )
                 ):
                     raise ValueError("forced action differs from recorded action")
+            if args.learned_coverage:
+                action = 16 if arm == "parent" else row["selector_action"]
+                if type(action) is not int or not 0 <= action <= 16:
+                    raise ValueError("valid learned action required")
+                reference_arm = "parent" if action == 16 else f"probe-{action}"
+                reference = next(
+                    r for r in probe[group["course_seed"]]["rows"] if r["arm"] == reference_arm
+                )
+                if row["physical_trace_hash"] != reference["physical_trace_hash"]:
+                    raise ValueError("learned action trajectory differs from paired probe")
             item = dict(
                 course_seed=group["course_seed"],
                 arm=arm,
@@ -175,7 +211,9 @@ def main():
             physical_integrations=0,
             global_safety_not_independently_recomputed=True,
             coverage=args.coverage,
+            learned_coverage=args.learned_coverage,
             retention_proof_hash=args.retention_proof_hash,
+            probe_proof_hash=args.probe_proof_hash,
             promotion_authorized=False,
             hardware_authorized=False,
         ),
