@@ -3,6 +3,7 @@ import sys
 
 import numpy as np
 
+from scripts import rsi_audit_relay_balance_selector as reviewer
 from scripts import rsi_train_relay_balance_selector as training
 from scripts.rsi_diagnose_pass_contact_timing import digest
 
@@ -68,3 +69,28 @@ def test_offline_group_split_trains_and_never_authorizes_motor(monkeypatch, tmp_
     assert all(
         row["training_decisions"] == 8 and row["heldout_decisions"] == 4 for row in report["rows"]
     )
+    model_root = tmp_path / "trained"
+    monkeypatch.setattr(reviewer, "clean", lambda _: None)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "audit",
+            "--source",
+            str(model_root),
+            "--source-hash",
+            digest(model_root / "complete.json"),
+            "--dataset",
+            str(dataset),
+            "--dataset-hash",
+            digest(receipt),
+            "--output",
+            str(tmp_path / "audit-report.json"),
+            "--expected-head",
+            "fixture",
+        ],
+    )
+    reviewer.main()
+    replay = json.loads((tmp_path / "audit-report.json").read_text())
+    assert len(replay["rows"]) == 9
+    assert replay["physics_evaluated_as_controller"] is False
