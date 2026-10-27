@@ -20,6 +20,26 @@ def confusion(prediction: np.ndarray, truth: np.ndarray) -> dict[str, int]:
     )
 
 
+def episode_detection(
+    prediction: np.ndarray, truth: np.ndarray, episodes: np.ndarray
+) -> dict[str, int]:
+    positive = detected = negative = false_alarms = 0
+    for episode in np.unique(episodes):
+        mask = episodes == episode
+        if truth[mask].any():
+            positive += 1
+            detected += bool((prediction[mask] & truth[mask]).any())
+        else:
+            negative += 1
+            false_alarms += bool(prediction[mask].any())
+    return dict(
+        positive_episodes=positive,
+        detected_positive_episodes=detected,
+        no_observed_b_failure_episodes=negative,
+        no_observed_b_failure_episodes_with_alarm=false_alarms,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, required=True)
@@ -111,6 +131,9 @@ def main() -> None:
                     positive_samples=int(actual.sum()),
                     episodes=len(set(episodes[mask].tolist())),
                     threshold_050=standard,
+                    threshold_050_episode_detection=episode_detection(
+                        probability >= 0.5, actual, episodes[mask]
+                    ),
                     threshold_020_exploratory=confusion(probability >= 0.2, actual),
                     threshold_010_exploratory=confusion(probability >= 0.1, actual),
                 )
