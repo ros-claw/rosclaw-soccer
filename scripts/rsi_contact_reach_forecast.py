@@ -32,6 +32,12 @@ from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters, Sha
 from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
 from rosclaw_soccer.rsi.shared_omnicontact_player import SharedOmniContactPlayer
 from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
+from rosclaw_soccer.rsi.sim_contact_bandit import (
+    ACTION_NAMES,
+    action_delta,
+    contact_features,
+    select_contact_action,
+)
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_native_context_recovery_common import digest
 from scripts.rsi_native_fresh_common import clean
@@ -64,7 +70,24 @@ def main():
         "--causal-intercept-training-case",
         choices=("yminus-vminus", "yminus-vplus", "yplus-vminus", "yplus-vplus"),
     )
+    parser.add_argument(
+        "--bandit-eval-case",
+        choices=("yminus-vminus", "yminus-vplus", "yplus-vminus", "yplus-vplus"),
+    )
     args = parser.parse_args()
+    if args.bandit_eval_case and (
+        args.causal_intercept_training_case
+        or args.static_training_case
+        or args.static_holdout
+        or args.replay_static_contact
+        or args.static_contact_calibration
+        or args.measured_response_candidate
+        or args.replay_contact_arm
+        or args.calibrate_hip_knee_response
+        or args.exclude_both_ankles_after_rejection
+        or args.exclude_right_ankle_roll_after_rejection
+    ):
+        raise ValueError("bandit evaluation is a separate experiment")
     if args.causal_intercept_training_case and (
         args.static_training_case
         or args.static_holdout
@@ -121,6 +144,7 @@ def main():
         or args.static_holdout
         or args.static_training_case
         or args.causal_intercept_training_case
+        or args.bandit_eval_case
     )
     origin = 0 if args.causal_intercept_training_case else 50 if static_context else 83
     horizon = 243 - origin
@@ -131,7 +155,10 @@ def main():
         or args.calibrate_hip_knee_response
     )
     varied = bool(
-        args.static_holdout or args.static_training_case or args.causal_intercept_training_case
+        args.static_holdout
+        or args.static_training_case
+        or args.causal_intercept_training_case
+        or args.bandit_eval_case
     )
     calibration_axes = (
         list(range(4))
@@ -160,16 +187,54 @@ def main():
         if not replay_report["outcome"]["task_pass"] or not replay_report["private_future_exact"]:
             raise ValueError("actual fixed-case pass required")
         case_name = (
-            args.static_holdout or args.static_training_case or args.causal_intercept_training_case
+            args.static_holdout
+            or args.static_training_case
+            or args.causal_intercept_training_case
+            or args.bandit_eval_case
         )
         y_amplitude = (
-            0.04 if args.static_training_case or args.causal_intercept_training_case else 0.02
+            0.03
+            if args.bandit_eval_case
+            else 0.04
+            if args.static_training_case or args.causal_intercept_training_case
+            else 0.02
         )
         v_amplitude = (
-            0.01 if args.static_training_case or args.causal_intercept_training_case else 0.02
+            0.015
+            if args.bandit_eval_case
+            else 0.01
+            if args.static_training_case or args.causal_intercept_training_case
+            else 0.02
         )
         y_delta = -y_amplitude if case_name.startswith("yminus") else y_amplitude
         v_delta = -v_amplitude if case_name.endswith("vminus") else v_amplitude
+    if args.bandit_eval_case:
+        training_path = ROOT / "rsi-contact-bandit-training-20261027/complete.json"
+        training_hash = "sha256:541d80cd4b8f87753a60b1f0cbff0e56097e1b74dbff199005b49a954d4e921f"
+        if digest(training_path) != training_hash:
+            raise ValueError("exact preregistered training report required")
+        training = json.loads(training_path.read_text())
+        if training["status"] != "OFFLINE_CONTEXTUAL_ACTOR_CRITIC_TRAINED_NOT_EVALUATED" or [
+            x["seed"] for x in training["records"]
+        ] != [17, 43, 71]:
+            raise ValueError("all three declared training seeds required")
+        bandit_models = []
+        for row in training["records"]:
+            path = training_path.parent / row["model_path"]
+            if (
+                path.is_symlink()
+                or path.parent != training_path.parent
+                or digest(path) != row["model_hash"]
+            ):
+                raise ValueError("exact confined trained seed required")
+            item = json.loads(path.read_text())
+            if (
+                item["seed"] != row["seed"]
+                or item["action_names"] != list(ACTION_NAMES)
+                or item["hardware_authorized"] is not False
+            ):
+                raise ValueError("compatible unpromoted model required")
+            bandit_models.append((row["seed"], row["model_hash"], item))
     if args.causal_intercept_training_case:
         training_audit = ROOT / "rsi-approach-training-audit-20261027/complete.json"
         if (
@@ -333,7 +398,9 @@ def main():
             independent_audit=AUDIT_HASH,
             source_head=args.expected_head,
             experiment=(
-                "causal intercept actual simulation on training state"
+                "all-seed paired actor-critic holdout"
+                if args.bandit_eval_case
+                else "causal intercept actual simulation on training state"
                 if args.causal_intercept_training_case
                 else "paired held-out ball state, fixed candidate"
                 if args.static_holdout
@@ -347,6 +414,8 @@ def main():
             actual_static_replay=args.replay_static_contact,
             static_holdout=args.static_holdout,
             static_training_case=args.static_training_case,
+            bandit_eval_case=args.bandit_eval_case,
+            bandit_training_hash=training_hash if args.bandit_eval_case else None,
             causal_intercept_training_case=args.causal_intercept_training_case,
             ball_prediction_horizon_s=1.26 if args.causal_intercept_training_case else None,
             initial_ball_y_offset_m=y_delta if varied else None,
@@ -361,6 +430,8 @@ def main():
             if args.replay_contact_arm
             or args.replay_static_contact
             or args.causal_intercept_training_case
+            else 3
+            if args.bandit_eval_case
             else 8
             if calibration
             else 1,
@@ -376,6 +447,8 @@ def main():
             if args.replay_contact_arm
             or args.replay_static_contact
             or args.causal_intercept_training_case
+            else 8790
+            if args.bandit_eval_case
             else 4930
             if args.static_holdout
             else 18440
@@ -693,7 +766,13 @@ def main():
         expected_policy_type=OmniContact,
         expected_model_hash=MODEL_HASH,
         native_step_budget=(
-            9 * horizon * 10 if calibration else 2 * horizon * 10 if args.static_holdout else 3200
+            4 * horizon * 10
+            if args.bandit_eval_case
+            else 9 * horizon * 10
+            if calibration
+            else 2 * horizon * 10
+            if args.static_holdout
+            else 3200
         ),
     )
     parent = forecaster.forecast(controls=horizon)
@@ -777,6 +856,65 @@ def main():
             outcome=outcome,
             artifact_hash=digest(artifact),
         )
+
+    if args.bandit_eval_case:
+        state_features = contact_features(
+            float(data.qpos[lo.bq + 1]), float(data.qpos[lo.rq + 1]), float(data.qvel[lo.bv + 1])
+        )
+        records = {"parent": summarize(parent, "parent")}
+        for seed, model_hash, model_item in bandit_models:
+            action = select_contact_action(
+                state_features,
+                np.asarray(model_item["actor_weight"]),
+                np.asarray(model_item["actor_bias"]),
+            )
+            selected_delta = action_delta(action)
+            selected_plan = (
+                None
+                if action == 0
+                else CFtrackMotorResidualPlan(
+                    origin_counter=origin,
+                    start_control=origin,
+                    peak_control=12,
+                    delta_hg=tuple(float(x) for x in selected_delta),
+                    donor_policy_hash=cftrack_state_hash(policy),
+                )
+            )
+            future = forecaster.forecast(controls=horizon, motor_plan=selected_plan)
+            summary = summarize(future, f"seed-{seed}")
+            summary.update(
+                seed=seed,
+                model_hash=model_hash,
+                selected_action=ACTION_NAMES[action],
+                selected_delta_hg=selected_delta.tolist(),
+            )
+            first = summary.get("outcome", {}).get("first_foot_contact_frame")
+            summary["first_contact_reference_phase"] = (
+                int(policy.ref_phase[min(first - 57, len(policy.ref_phase) - 1)])
+                if first is not None and first >= 57
+                else None
+            )
+            records[f"seed-{seed}"] = summary
+            write_once(args.output / f"seed-{seed}.json", summary)
+        write_once(
+            args.output / "complete.json",
+            dict(
+                status="OFFLINE_BANDIT_PAIRED_PRIVATE_HOLDOUT_NOT_PROMOTED",
+                holdout_id=args.bandit_eval_case,
+                training_hash=training_hash,
+                source_head=args.expected_head,
+                initial_ball_y_offset_m=y_delta,
+                initial_ball_vy_offset_m_s=v_delta,
+                features=state_features.tolist(),
+                records=records,
+                counters=forecaster.counters(),
+                actual_prefix_native_steps=prefix_controls * 10,
+                privileged_sim_ball_velocity=True,
+                task_promoted=False,
+                hardware_authorized=False,
+            ),
+        )
+        return
 
     if calibration:
         records = {"parent": summarize(parent, "parent")}
