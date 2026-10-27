@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.actual_pass_contact_risk import contact_risk_data
+from rosclaw_soccer.rsi.actual_pass_contact_risk import contact_risk_data, training_recall_threshold
 
 
 def test_risk_uses_before_state_and_groups_shared_contexts():
@@ -42,3 +42,12 @@ def test_aggregate_courses_preserve_shared_context_groups():
     data["course_index"][0] = 999
     with pytest.raises(ValueError, match="declared course"):
         contact_risk_data(data, courses)
+
+
+def test_training_only_threshold_preserves_95_percent_positive_recall():
+    p = np.arange(1, 101, dtype=float) / 200
+    labels = np.ones(100, dtype=bool)
+    threshold = training_recall_threshold(p, labels)
+    assert (p >= threshold).mean() >= 0.95
+    with pytest.raises(ValueError, match="positives"):
+        training_recall_threshold(p, ~labels)

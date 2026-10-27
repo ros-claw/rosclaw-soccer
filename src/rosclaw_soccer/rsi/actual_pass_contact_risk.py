@@ -5,6 +5,24 @@ from collections.abc import Mapping
 import numpy as np
 
 
+def training_recall_threshold(probabilities: np.ndarray, labels: np.ndarray) -> float:
+    """Select a <=0.5 threshold from training positives, never holdout labels."""
+    p, y = np.asarray(probabilities), np.asarray(labels)
+    if (
+        p.ndim != 1
+        or y.shape != p.shape
+        or y.dtype != np.bool_
+        or not np.isfinite(p).all()
+        or np.any((p < 0) | (p > 1))
+    ):
+        raise ValueError("finite probabilities and explicit boolean labels required")
+    positives = np.sort(p[y])
+    if not len(positives):
+        raise ValueError("training positives required")
+    index = int(np.floor(0.05 * len(positives)))
+    return float(min(0.5, positives[index]))
+
+
 def contact_risk_data(
     data: Mapping[str, np.ndarray], courses: list[dict]
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

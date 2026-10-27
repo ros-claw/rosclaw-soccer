@@ -22,7 +22,7 @@ def counts(pred: np.ndarray, truth: np.ndarray) -> dict[str, int]:
     )
 
 
-def predict(root: Path, row: dict, x: np.ndarray) -> np.ndarray:
+def probabilities(root: Path, row: dict, x: np.ndarray) -> np.ndarray:
     path = root / row["checkpoint"]
     if path.is_symlink() or path.parent != root or digest(path) != row["checkpoint_hash"]:
         raise ValueError("exact confined model checkpoint required")
@@ -49,7 +49,11 @@ def predict(root: Path, row: dict, x: np.ndarray) -> np.ndarray:
         network[0].bias.copy_(torch.from_numpy(w["bias1"]))
         network[2].weight.copy_(torch.from_numpy(w["weight2"]))
         network[2].bias.copy_(torch.from_numpy(w["bias2"]))
-        return torch.sigmoid(network(torch.from_numpy(z))).numpy().reshape(-1) >= 0.5
+        return torch.sigmoid(network(torch.from_numpy(z))).numpy().reshape(-1)
+
+
+def predict(root: Path, row: dict, x: np.ndarray) -> np.ndarray:
+    return probabilities(root, row, x) >= 0.5
 
 
 def main():
