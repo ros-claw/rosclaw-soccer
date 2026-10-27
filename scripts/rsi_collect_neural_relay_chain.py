@@ -193,7 +193,7 @@ def main():
             expected_receipt_hash=candidate["training_hash"],
             checkpoint_kind=candidate["kind"],
         )
-        setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor)
+        setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor, context_indices=indices)
         (a.output / "scene.xml").write_text(setup.xml)
         typed = []
         for i in indices:

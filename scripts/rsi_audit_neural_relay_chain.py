@@ -182,7 +182,7 @@ def main():
             expected_receipt_hash=candidate["training_hash"],
             checkpoint_kind=candidate["kind"],
         )
-        setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor)
+        setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor, context_indices=indices)
         if (a.source_root / "scene.xml").read_text() != setup.xml:
             raise ValueError("scene reconstruction mismatch")
 

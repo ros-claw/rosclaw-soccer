@@ -12,15 +12,32 @@ from typing import Any
 import numpy as np
 
 
+def validate_relay_context_indices(indices: tuple[int, ...], context_count: int) -> None:
+    if (
+        type(indices) is not tuple
+        or not indices
+        or any(type(i) is not int or i < 0 or i >= context_count for i in indices)
+        or len(set(indices)) != len(indices)
+    ):
+        raise ValueError("explicit unique in-range relay context indices required")
+
+
 class SharedRelaySetup:
     def __init__(
-        self, pins: dict[str, str], contexts: list[Any], *, bench: Any, actor: Any
+        self,
+        pins: dict[str, str],
+        contexts: list[Any],
+        *,
+        bench: Any,
+        actor: Any,
+        context_indices: tuple[int, ...] = (1, 4, 20, 21),
     ) -> None:
         import mujoco
 
         from rosclaw_soccer.physics.native_ball_dimensions import inspect_native_ball_dimensions
         from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
 
+        validate_relay_context_indices(context_indices, len(contexts))
         self.pins, self.contexts = pins, contexts
         self.bench, self.actor = bench, actor
         xmls = [Path(p) for p in pins if p.endswith("/cached-standard/declared-scene.xml")]
@@ -39,7 +56,7 @@ class SharedRelaySetup:
         self.velocity_path, self.velocity_config = paths[0], configs[0]
         self.velocity_parameters = self.velocity().params
         self.episodes = {}
-        for i in (1, 4, 20, 21):
+        for i in context_indices:
             ep = bench.make(contexts[i]["case"])
             q, _ = ep.layout.canonical(ep.env.data)
             qw, x, y, z = q[3:7]
