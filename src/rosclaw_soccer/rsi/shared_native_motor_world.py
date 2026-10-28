@@ -228,10 +228,18 @@ class SharedNativeMotorWorld:
         layers = dict(torque_layers or {})
         if layers:
             from rosclaw_soccer.rsi.shared_native_receive_teacher import SharedNativeReceiveTeacher
+            from rosclaw_soccer.rsi.shared_native_receiver_torque_actor import (
+                SharedNativeReceiverTorqueActor,
+            )
             from rosclaw_soccer.rsi.shared_native_torque_layer import SharedNativeTorqueLayer
 
             if any(
-                type(layer) not in (SharedNativeTorqueLayer, SharedNativeReceiveTeacher)
+                type(layer)
+                not in (
+                    SharedNativeTorqueLayer,
+                    SharedNativeReceiveTeacher,
+                    SharedNativeReceiverTorqueActor,
+                )
                 or layer.world is not self
                 or layer.prefix != prefix
                 or prefix not in self._torque_layer_owners
