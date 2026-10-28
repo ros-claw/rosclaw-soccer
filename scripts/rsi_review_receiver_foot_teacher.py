@@ -27,7 +27,11 @@ def main() -> None:
     root, audit = a.source / "source", a.source / "audit/complete.json"
     old, old_audit = a.lateral_source / "source", a.lateral_source / "audit/complete.json"
     declaration = json.loads((root / "declaration.json").read_text())
-    predictive = (
+    axis_local = (
+        declaration.get("protocol")
+        == "soccer.neural_relay_receiver_axis_local_fallback.development.v25"
+    )
+    predictive = axis_local or (
         declaration.get("protocol")
         == "soccer.neural_relay_receiver_predictive_foot_shin.development.v24"
     )
@@ -35,7 +39,9 @@ def main() -> None:
         root,
         audit,
         a.audit_hash,
-        "NEURAL_RELAY_RECEIVER_PREDICTIVE_FOOT_SHIN16_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_RECEIVER_AXIS_LOCAL_FALLBACK16_PENDING_OWN_REPLAY"
+        if axis_local
+        else "NEURAL_RELAY_RECEIVER_PREDICTIVE_FOOT_SHIN16_PENDING_OWN_REPLAY"
         if predictive
         else "NEURAL_RELAY_RECEIVER_FOOT_TEACHER16_PENDING_OWN_REPLAY",
         worlds=16,
@@ -54,6 +60,8 @@ def main() -> None:
         or declaration.get("development_context_block") != 0
         or predictive
         and declaration.get("receiver_predictive_foot_shin_is_unlearned") is not True
+        or axis_local
+        and declaration.get("receiver_axis_local_fallback") is not True
     ):
         raise ValueError("exact unlearned development-only foot teacher required")
     index = {
@@ -99,9 +107,8 @@ def main() -> None:
                 changes = np.flatnonzero(np.any(delta != 0, axis=1))
                 if name == "baseline" and len(changes):
                     raise ValueError("zero teacher must never alter a joint target")
-                jumps = np.max(
-                    np.abs(np.diff(np.vstack((np.zeros((1, 29)), delta)), axis=0)), axis=1
-                )
+                jump_matrix = np.abs(np.diff(np.vstack((np.zeros((1, 29)), delta)), axis=0))
+                jumps = np.max(jump_matrix, axis=1)
                 slew = 0.025 if predictive and name == "teacher" else 0.015
                 fallback = v["FOOT_fallback"]
                 if fallback.shape != (len(delta),) or fallback.dtype != np.bool_:
@@ -112,6 +119,7 @@ def main() -> None:
                     changed_controls=len(changes),
                     max_delta_rad=float(np.abs(delta).max()),
                     max_correction_jump_rad=float(jumps.max()),
+                    max_total_joint_jump_rad=float(jump_matrix.sum(axis=1).max()),
                     slew_exceeding_controls=int((jumps > slew + 1e-9).sum()),
                     fallback_jump_controls=int(((jumps > slew + 1e-9) & fallback).sum()),
                     precise_healthy_return=row["result"]["return_0p1m_and_healthy"],
@@ -134,6 +142,7 @@ def main() -> None:
             changed_worlds=sum(r[name]["changed_controls"] > 0 for r in rows),
             slew_violation_worlds=sum(r[name]["slew_exceeding_controls"] > 0 for r in rows),
             fallback_jump_controls=sum(r[name]["fallback_jump_controls"] for r in rows),
+            max_total_joint_jump_rad=max(r[name]["max_total_joint_jump_rad"] for r in rows),
         )
         for name in ("baseline", "teacher")
     }

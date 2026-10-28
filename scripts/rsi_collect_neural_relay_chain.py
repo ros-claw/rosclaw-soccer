@@ -27,6 +27,7 @@ def main():
     p.add_argument("--receiver-lateral-authority", action="store_true")
     p.add_argument("--receiver-foot-teacher-pair", action="store_true")
     p.add_argument("--receiver-predictive-foot-shin", action="store_true")
+    p.add_argument("--receiver-axis-local-fallback", action="store_true")
     p.add_argument("--receiver-whole-identity", action="store_true")
     p.add_argument("--receiver-center-curriculum", action="store_true")
     p.add_argument("--receiver-learned-pair", action="store_true")
@@ -58,6 +59,8 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.receiver_axis_local_fallback and not a.receiver_predictive_foot_shin:
+        p.error("axis-local fallback requires the predictive foot/shin study")
     if a.receiver_predictive_foot_shin and not a.receiver_foot_teacher_pair:
         p.error("predictive foot/shin mode requires the isolated foot teacher pair")
     if a.receiver_foot_teacher_pair and (
@@ -472,7 +475,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_receiver_predictive_foot_shin.development.v24"
+                "soccer.neural_relay_receiver_axis_local_fallback.development.v25"
+                if a.receiver_axis_local_fallback
+                else "soccer.neural_relay_receiver_predictive_foot_shin.development.v24"
                 if a.receiver_predictive_foot_shin
                 else "soccer.neural_relay_receiver_foot_teacher.development.v23"
                 if a.receiver_foot_teacher_pair
@@ -566,6 +571,7 @@ def main():
             cartesian_teachers_enabled=a.receiver_foot_teacher_pair,
             receiver_foot_teacher_is_unlearned=a.receiver_foot_teacher_pair,
             receiver_predictive_foot_shin_is_unlearned=a.receiver_predictive_foot_shin,
+            receiver_axis_local_fallback=a.receiver_axis_local_fallback,
             geometry_role_selector_is_teacher=True,
             post_touch_velocity_follow_is_unlearned_teacher=a.receiver_follow_study,
             lateral_intercept_is_unlearned_teacher=a.receiver_lateral_authority,
@@ -832,7 +838,9 @@ def main():
                 a.receiver_predictive_foot_shin
                 and course["arm"]["receiver_foot_teacher_strength"] == 0.5
             ):
-                foot_teacher = NativePredictiveFootShinTeacher()
+                foot_teacher = NativePredictiveFootShinTeacher(
+                    axis_local_fallback=a.receiver_axis_local_fallback
+                )
             foot_bodies = [
                 w.model.body("b/" + side + "_ankle_roll_link").id for side in ("left", "right")
             ]
@@ -1222,7 +1230,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_RECEIVER_PREDICTIVE_FOOT_SHIN16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_RECEIVER_AXIS_LOCAL_FALLBACK16_PENDING_OWN_REPLAY"
+                    if a.receiver_axis_local_fallback
+                    else "NEURAL_RELAY_RECEIVER_PREDICTIVE_FOOT_SHIN16_PENDING_OWN_REPLAY"
                     if a.receiver_predictive_foot_shin
                     else "NEURAL_RELAY_RECEIVER_FOOT_TEACHER16_PENDING_OWN_REPLAY"
                     if a.receiver_foot_teacher_pair

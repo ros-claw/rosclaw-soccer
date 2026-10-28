@@ -23,6 +23,7 @@ def predictive_foot_shin_target(
     target_gap_m: float = 0.05,
     max_delta_rad: float = 0.16,
     slew_rad: float = 0.025,
+    axis_local_fallback: bool = False,
 ) -> dict:
     """Compute one damped, bounded leg-only correction from current measurements.
 
@@ -51,6 +52,7 @@ def predictive_foot_shin_target(
         or type(foot) is not int
         or foot not in (0, 1)
         or type(enabled) is not bool
+        or type(axis_local_fallback) is not bool
         or any(
             type(v) is not float or not np.isfinite(v)
             for v in (horizon_sec, target_gap_m, max_delta_rad, slew_rad)
@@ -88,12 +90,14 @@ def predictive_foot_shin_target(
     # A parent target can already lie outside the physical range. An axis
     # that has never received our correction is frozen exactly at that parent,
     # not repaired or falsely certified. If our own previous nonzero correction
-    # cannot meet slew and physical limits simultaneously, abstain entirely.
+    # cannot meet slew and physical limits simultaneously, that axis returns to
+    # parent and records the unavoidable jump. Other feasible axes retain their
+    # own constraints; do not abruptly erase the entire leg's correction.
     fallback = bool(np.any(invalid & (previous_delta[leg] != 0)))
     frozen = invalid | (outside_parent & (previous_delta[leg] == 0))
     free = ~frozen
     requested = np.zeros(29, dtype=np.float64)
-    if enabled and not fallback and np.any(free):
+    if enabled and np.any(free) and (axis_local_fallback or not fallback):
         # Only feasible axes participate in the task solution.
         jac = np.vstack((foot_jacobian[:, leg], 2.0 * shin_gap_jacobian[:, leg]))[:, free]
         desired = np.concatenate((foot_displacement, 2.0 * desired_gap))
@@ -102,8 +106,8 @@ def predictive_foot_shin_target(
             jac.T @ jac + 0.04**2 * np.eye(int(free.sum())), jac.T @ desired
         )
     delta = np.zeros(29, dtype=np.float64)
-    if not fallback:
-        leg_delta = delta[leg]
+    leg_delta = delta[leg]
+    if axis_local_fallback or not fallback:
         leg_delta[free] = np.clip(requested[leg][free], lower[free], upper[free])
     target = nominal.copy() if not np.any(delta) else nominal + delta
     applied = target - nominal

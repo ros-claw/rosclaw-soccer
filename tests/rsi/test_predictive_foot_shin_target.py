@@ -58,13 +58,15 @@ def test_outside_parent_axis_is_frozen_without_disabling_other_axes():
     assert out["applied_delta"][3] > 0
 
 
-def test_nonzero_prior_correction_with_infeasible_bounds_falls_back():
+def test_nonzero_prior_conflict_only_falls_back_on_conflicting_axis():
     args = inputs()
     args["nominal"][0] = 3
     args["previous_delta"][0] = 0.01
+    args["axis_local_fallback"] = True
     out = predictive_foot_shin_target(**args)
     assert out["fallback"]
-    np.testing.assert_array_equal(out["target"], args["nominal"])
+    assert out["target"][0] == args["nominal"][0]
+    assert out["applied_delta"][3] > 0
 
 
 def test_fallback_reports_jump_when_slew_and_joint_limits_conflict():
@@ -74,6 +76,28 @@ def test_fallback_reports_jump_when_slew_and_joint_limits_conflict():
     out = predictive_foot_shin_target(**args)
     assert out["fallback"] and not out["slew_limit_respected"]
     assert out["delta_jump_rad"] == pytest.approx(0.08)
+
+
+def test_conflict_does_not_erase_an_unrelated_prior_leg_correction():
+    args = inputs()
+    args["nominal"][0] = 3
+    args["previous_delta"][0] = 0.01
+    args["previous_delta"][3] = 0.08
+    args["axis_local_fallback"] = True
+    out = predictive_foot_shin_target(**args)
+    assert out["fallback"]
+    assert out["applied_delta"][0] == 0
+    assert abs(out["applied_delta"][3] - 0.08) <= 0.025 + 1e-12
+
+
+def test_original_global_fallback_remains_default():
+    args = inputs()
+    args["nominal"][0] = 3
+    args["previous_delta"][0] = 0.01
+    args["previous_delta"][3] = 0.08
+    out = predictive_foot_shin_target(**args)
+    assert out["fallback"]
+    np.testing.assert_array_equal(out["target"], args["nominal"])
 
 
 @pytest.mark.parametrize("fault", ["nan", "wrong_leg", "unbounded_foot"])

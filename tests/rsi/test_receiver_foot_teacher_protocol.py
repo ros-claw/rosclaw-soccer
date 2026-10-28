@@ -70,3 +70,29 @@ def test_predictive_teacher_requires_explicit_paired_study():
     )
     assert result.returncode != 0
     assert "predictive foot/shin mode requires the isolated foot teacher pair" in result.stderr
+
+
+def test_axis_local_fallback_requires_predictive_study():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
+            "--frontier-root",
+            "/not-read",
+            "--frontier-head",
+            "unused",
+            "--frontier-hash",
+            "unused",
+            "--expected-head",
+            "unused",
+            "--output",
+            "/not-written",
+            "--receiver-axis-local-fallback",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "axis-local fallback requires the predictive foot/shin study" in result.stderr

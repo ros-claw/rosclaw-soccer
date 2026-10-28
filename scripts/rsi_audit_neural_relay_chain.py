@@ -31,7 +31,10 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
-    predictive_foot_shin = (
+    axis_local_fallback = (
+        dec["protocol"] == "soccer.neural_relay_receiver_axis_local_fallback.development.v25"
+    )
+    predictive_foot_shin = axis_local_fallback or (
         dec["protocol"] == "soccer.neural_relay_receiver_predictive_foot_shin.development.v24"
     )
     foot_teacher_pair = predictive_foot_shin or (
@@ -122,7 +125,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_RECEIVER_PREDICTIVE_FOOT_SHIN16_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_RECEIVER_AXIS_LOCAL_FALLBACK16_PENDING_OWN_REPLAY"
+        if axis_local_fallback
+        else "NEURAL_RELAY_RECEIVER_PREDICTIVE_FOOT_SHIN16_PENDING_OWN_REPLAY"
         if predictive_foot_shin
         else "NEURAL_RELAY_RECEIVER_FOOT_TEACHER16_PENDING_OWN_REPLAY"
         if foot_teacher_pair
@@ -190,6 +195,7 @@ def main():
             "soccer.neural_relay_receiver_lateral_authority.development.v22",
             "soccer.neural_relay_receiver_foot_teacher.development.v23",
             "soccer.neural_relay_receiver_predictive_foot_shin.development.v24",
+            "soccer.neural_relay_receiver_axis_local_fallback.development.v25",
             "soccer.neural_relay_passer_residual_pair.development.v11",
             "soccer.neural_relay_passer_contact_exit.development.v12",
             "soccer.neural_relay_receiver_center_identity.development.v13",
@@ -386,6 +392,8 @@ def main():
             and dec.get("receiver_predictive_foot_shin_is_unlearned") is not True
         ):
             raise ValueError("explicit unlearned predictive foot/shin teacher required")
+        if axis_local_fallback and dec.get("receiver_axis_local_fallback") is not True:
+            raise ValueError("explicit axis-local fallback research contract required")
         if balance_expanded and (
             dec.get("receiver_lateral_offsets_m") != list(sides)
             or dec.get("joint_targets_remain_actual_neural_outputs") is not False
@@ -700,7 +708,9 @@ def main():
                 else None
             )
             if predictive_foot_shin and course["arm"]["receiver_foot_teacher_strength"] == 0.5:
-                foot_teacher = NativePredictiveFootShinTeacher()
+                foot_teacher = NativePredictiveFootShinTeacher(
+                    axis_local_fallback=axis_local_fallback
+                )
             foot_bodies = [
                 w.model.body("b/" + side + "_ankle_roll_link").id for side in ("left", "right")
             ]

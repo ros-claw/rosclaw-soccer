@@ -16,7 +16,10 @@ class NativePredictiveFootShinTeacher:
     weights. Physical contact and balance must be independently verified.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, axis_local_fallback: bool = False) -> None:
+        if type(axis_local_fallback) is not bool:
+            raise ValueError("explicit axis-local fallback flag required")
+        self.axis_local_fallback = axis_local_fallback
         self.next_frame = 0
         self.foot: int | None = None
         self.previous_delta = np.zeros(29, dtype=np.float64)
@@ -63,6 +66,7 @@ class NativePredictiveFootShinTeacher:
                 shin_gap_jacobian=np.zeros((2, 29)),
                 foot=foot,
                 enabled=False,
+                axis_local_fallback=self.axis_local_fallback,
             )
             self.previous_delta = result["applied_delta"].copy()
             self.next_frame += 1
@@ -118,6 +122,7 @@ class NativePredictiveFootShinTeacher:
             shin_gap_jacobian=gradients,
             foot=foot,
             enabled=active,
+            axis_local_fallback=self.axis_local_fallback,
         )
         self.previous_delta = result["applied_delta"].copy()
         self.next_frame += 1
