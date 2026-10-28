@@ -77,6 +77,9 @@ def main():
         or dec["protocol"] == "soccer.neural_relay_whole_receiver_identity.development.v8"
     )
     follow_study = dec["protocol"] == "soccer.neural_relay_post_touch_follow.development.v7"
+    lateral_authority = (
+        dec["protocol"] == "soccer.neural_relay_receiver_lateral_authority.development.v22"
+    )
     balance_expanded = dec["protocol"] == "soccer.neural_relay_balance_expanded.development.v6"
     balance_study = (
         balance_expanded or dec["protocol"] == "soccer.neural_relay_balance_teacher.development.v5"
@@ -88,6 +91,7 @@ def main():
         or exploration
         or whole_identity
         or follow_study
+        or lateral_authority
         or balance_study
         or dec["protocol"] == "soccer.neural_relay_development_contexts.v4"
     )
@@ -121,6 +125,8 @@ def main():
         if contact_exit
         else "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY"
         if passer_pair
+        else "NEURAL_RELAY_RECEIVER_LATERAL_AUTHORITY32_PENDING_OWN_REPLAY"
+        if lateral_authority
         else "NEURAL_RELAY_RECEIVER_CONTINUATION_PAIR16_PENDING_OWN_REPLAY"
         if continuation_pair
         else "NEURAL_RELAY_RECEIVER_LEARNED_EXPLORATION32_PENDING_OWN_REPLAY"
@@ -170,6 +176,7 @@ def main():
             "soccer.neural_relay_receiver_dense_exploration.development.v19",
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
             "soccer.neural_relay_receiver_continuation_pair.development.v21",
+            "soccer.neural_relay_receiver_lateral_authority.development.v22",
             "soccer.neural_relay_passer_residual_pair.development.v11",
             "soccer.neural_relay_passer_contact_exit.development.v12",
             "soccer.neural_relay_receiver_center_identity.development.v13",
@@ -205,6 +212,16 @@ def main():
                 for enabled in (False, True)
             ]
             if precontact_fullbody
+            else [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_lateral_offset_m=offset,
+                )
+                for offset in (-0.35, -0.12, 0.12, 0.35)
+            ]
+            if lateral_authority
             else [
                 dict(
                     start=80,
@@ -289,7 +306,7 @@ def main():
             (-0.2, 0.2)
             if center_identity or center_exploration
             else (-0.35, 0.35)
-            if dense_pair
+            if dense_pair or lateral_authority
             else (-0.75, -0.35, 0.35, 0.75)
             if balance_expanded
             else (-0.55, 0.55)
@@ -328,6 +345,12 @@ def main():
             or dec.get("bounded_teacher_added_after_neural") is not False
         ):
             raise ValueError("honest post-contact command teacher provenance required")
+        if lateral_authority and (
+            dec.get("lateral_intercept_is_unlearned_teacher") is not True
+            or dec.get("joint_targets_remain_actual_neural_outputs") is not True
+            or dec.get("bounded_teacher_added_after_neural") is not False
+        ):
+            raise ValueError("explicit unlearned lateral command authority required")
         if balance_expanded and (
             dec.get("receiver_lateral_offsets_m") != list(sides)
             or dec.get("joint_targets_remain_actual_neural_outputs") is not False
@@ -714,6 +737,7 @@ def main():
                         pass_direction=forward,
                         launch_seen=launch,
                         ready_anchor_xy=anchor,
+                        lateral_offset_m=course["arm"].get("receiver_lateral_offset_m", 0.12),
                     )
                     launch = intent.launch_seen
                     command = np.array(intent.command_body, np.float32)

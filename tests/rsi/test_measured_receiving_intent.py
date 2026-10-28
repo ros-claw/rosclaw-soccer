@@ -40,6 +40,19 @@ def test_incoming_measured_velocity_changes_intercept_and_history_survives_stop(
     assert receiving_intent(**s).role_state == "INTERCEPT"
 
 
+def test_bounded_lateral_authority_changes_only_post_launch_intercept():
+    s = state()
+    s.update(ball_xy=np.array([2.0, 0.0]), ball_velocity_xy=np.array([2.0, 0.0]))
+    left = receiving_intent(**s, lateral_offset_m=-0.35)
+    right = receiving_intent(**s, lateral_offset_m=0.35)
+    assert right.target_xy[1] - left.target_xy[1] == pytest.approx(0.7)
+    assert right.target_xy[0] == left.target_xy[0]
+    with pytest.raises(ValueError):
+        receiving_intent(**s, lateral_offset_m=0.41)
+    with pytest.raises(ValueError):
+        receiving_intent(**s, lateral_offset_m=float("nan"))
+
+
 def test_backward_ball_does_not_fabricate_pass_and_nonfinite_rejected():
     s = state()
     s["ball_velocity_xy"] = np.array([-5.0, 0.0])

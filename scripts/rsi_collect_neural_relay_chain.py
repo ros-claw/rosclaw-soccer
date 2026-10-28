@@ -24,6 +24,7 @@ def main():
     p.add_argument("--balance-teacher-pair", nargs=4, action="append")
     p.add_argument("--balance-expanded", action="store_true")
     p.add_argument("--receiver-follow-study", action="store_true")
+    p.add_argument("--receiver-lateral-authority", action="store_true")
     p.add_argument("--receiver-whole-identity", action="store_true")
     p.add_argument("--receiver-center-curriculum", action="store_true")
     p.add_argument("--receiver-learned-pair", action="store_true")
@@ -55,6 +56,21 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.receiver_lateral_authority and (
+        a.new_context_block is None
+        or a.receiver_follow_study
+        or a.receiver_whole_identity
+        or a.receiver_exploration
+        or a.receiver_learned_pair
+        or a.passer_residual_pair
+        or a.precontact_fullbody_pair
+        or a.balance_teacher_pair is not None
+        or a.balance_expanded
+        or a.successor_alignment_study
+        or a.receiver_center_curriculum
+        or a.reference_bridge_controls != [0]
+    ):
+        p.error("lateral authority requires one isolated development block")
     if a.receiver_continuation_pair and (
         not a.receiver_dense_pair or a.receiver_motion_pair or a.receiver_learned_exploration
     ):
@@ -348,6 +364,16 @@ def main():
             )
             for gain in (0.0, 0.25, 0.5, 0.75)
         ]
+    if a.receiver_lateral_authority:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                receiver_lateral_offset_m=offset,
+            )
+            for offset in (-0.35, -0.12, 0.12, 0.35)
+        ]
     if a.receiver_whole_identity:
         arms = [
             dict(
@@ -403,7 +429,7 @@ def main():
         (-0.2, 0.2)
         if a.receiver_center_curriculum
         else (-0.35, 0.35)
-        if a.receiver_dense_pair
+        if a.receiver_dense_pair or a.receiver_lateral_authority
         else (-0.75, -0.35, 0.35, 0.75)
         if a.balance_expanded
         else (-0.55, 0.55)
@@ -428,6 +454,8 @@ def main():
                 if a.passer_contact_exit
                 else "soccer.neural_relay_passer_residual_pair.development.v11"
                 if a.passer_residual_pair
+                else "soccer.neural_relay_receiver_lateral_authority.development.v22"
+                if a.receiver_lateral_authority
                 else "soccer.neural_relay_receiver_continuation_pair.development.v21"
                 if a.receiver_continuation_pair
                 else "soccer.neural_relay_receiver_motion_exploration.development.v20"
@@ -502,6 +530,7 @@ def main():
             cartesian_teachers_enabled=False,
             geometry_role_selector_is_teacher=True,
             post_touch_velocity_follow_is_unlearned_teacher=a.receiver_follow_study,
+            lateral_intercept_is_unlearned_teacher=a.receiver_lateral_authority,
             whole_receiver_identity_not_trained=a.receiver_whole_identity,
             receiver_exploration_is_stochastic_not_training=(
                 a.receiver_exploration or a.receiver_learned_exploration
@@ -844,6 +873,7 @@ def main():
                         pass_direction=forward,
                         launch_seen=launch,
                         ready_anchor_xy=anchor,
+                        lateral_offset_m=course["arm"].get("receiver_lateral_offset_m", 0.12),
                     )
                     launch = intent.launch_seen
                     command = np.array(intent.command_body, np.float32)
@@ -1114,6 +1144,8 @@ def main():
                     if a.passer_contact_exit
                     else "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY"
                     if a.passer_residual_pair
+                    else "NEURAL_RELAY_RECEIVER_LATERAL_AUTHORITY32_PENDING_OWN_REPLAY"
+                    if a.receiver_lateral_authority
                     else "NEURAL_RELAY_RECEIVER_CONTINUATION_PAIR16_PENDING_OWN_REPLAY"
                     if a.receiver_continuation_pair
                     else "NEURAL_RELAY_RECEIVER_LEARNED_EXPLORATION32_PENDING_OWN_REPLAY"
