@@ -7,9 +7,11 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
+from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.paired_precontact_authority import precontact_tracking_error
 from rosclaw_soccer.rsi.passer_curriculum_outcome import strict_pass_receive
+from rosclaw_soccer.rsi.projection_memory_validation import validate_projection_memory
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_fresh_common import clean
@@ -65,6 +67,20 @@ def main() -> None:
     layout = NativeVelocityLayout(
         model, robot_prefix="b/", ball_body_name="soccer_ball", player_count=2
     )
+    configs = [
+        Path(p)
+        for p in source["input_file_hashes"]
+        if p.endswith("/velocity/v0/params/deploy.yaml")
+    ]
+    if len(configs) != 1:
+        raise ValueError("one exact pinned velocity action codec required")
+    params = VelocityPolicyParameters.load(
+        configs[0], expected_hash=source["input_file_hashes"][str(configs[0])]
+    )
+    offset, scale = (
+        np.asarray(params.action_offset, np.float64),
+        np.asarray(params.action_scale, np.float64),
+    )
     rows = {
         (
             r["course"]["context"],
@@ -107,6 +123,17 @@ def main() -> None:
                 changed = np.any(d != 0, axis=1)
                 if name == "baseline" and changed.any():
                     raise ValueError("disabled projection must exactly preserve parent")
+                memory = v["LIMIT_memory_after"] if projected_memory else v["action"]
+                memory_evidence = validate_projection_memory(
+                    observations=v["obs"],
+                    raw_actions=v["action"],
+                    targets=v["LIMIT_target"],
+                    changed_axes=v["LIMIT_changed_axes"],
+                    memory_after=memory,
+                    offset=offset,
+                    scale=scale,
+                    reflect_projection=projected_memory and name == "projected",
+                )
                 values[name] = dict(
                     outcome=strict_pass_receive(
                         raw["ball_forces"],
@@ -117,6 +144,7 @@ def main() -> None:
                         raw["target_b"], raw["qpos"], raw["ball_forces"], joint_indices=layout.qi
                     ),
                     changed_controls=int(changed.sum()),
+                    memory_evidence=memory_evidence,
                     max_projection_rad=float(np.abs(d).max()),
                     precise_healthy_return=r["result"]["return_0p1m_and_healthy"],
                 )
