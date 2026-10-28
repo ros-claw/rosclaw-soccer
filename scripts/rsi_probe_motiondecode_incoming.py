@@ -28,6 +28,9 @@ def main():
     p.add_argument("--isolate-teacher-rejections", action="store_true")
     p.add_argument("--target-rate-filter", action="store_true")
     p.add_argument("--ankle-rate-filter", action="store_true")
+    p.add_argument("--experimental-imitation-receipt", type=Path)
+    p.add_argument("--experimental-imitation-hash")
+    p.add_argument("--experimental-imitation-declaration-hash")
     a = p.parse_args()
     if a.lateral_study and a.launch_frame != "heading":
         raise ValueError("lateral study requires an explicit body-heading launch")
@@ -47,6 +50,21 @@ def main():
         raise ValueError("parent-relative study requires isolated infeasible worlds")
     if a.freeze_teacher_ankles and not a.parent_relative_teacher:
         raise ValueError("ankle-freeze study requires the parent-relative teacher")
+    if (
+        len(
+            {
+                bool(a.experimental_imitation_receipt),
+                bool(a.experimental_imitation_hash),
+                bool(a.experimental_imitation_declaration_hash),
+            }
+        )
+        != 1
+    ):
+        raise ValueError("experimental imitation requires exact completed receipt and hash")
+    if a.experimental_imitation_receipt and (
+        a.intercept_teacher or a.target_rate_filter or a.ankle_rate_filter
+    ):
+        raise ValueError("standalone own-feedback imitation evaluation required")
     if a.target_rate_filter and a.ankle_rate_filter:
         raise ValueError("choose exactly one rate filter scope")
     if (a.target_rate_filter or a.ankle_rate_filter) and (
@@ -76,6 +94,44 @@ def main():
         str(qual_path): a.qualification_hash,
         str(ref_path): a.reference_hash,
     }
+    imitation_path = None
+    if a.experimental_imitation_receipt:
+        if (
+            a.experimental_imitation_receipt.is_symlink()
+            or digest(a.experimental_imitation_receipt) != a.experimental_imitation_hash
+        ):
+            raise ValueError("exact completed imitation receipt required")
+        imitation = json.loads(a.experimental_imitation_receipt.read_text())
+        if (
+            imitation.get("status") != "INCOMING_PPO_PILOT_REQUIRES_INDEPENDENT_EXAM"
+            or not imitation.get("imitation_hash")
+            or any(
+                imitation.get(key) is not False
+                for key in ("hardware_authorized", "promotion_authorized", "independent_fresh")
+            )
+        ):
+            raise ValueError("unpromoted actual imitation training receipt required")
+        imitation_path = a.experimental_imitation_receipt.parent / "imitation.pt"
+        imitation_declaration_path = a.experimental_imitation_receipt.parent / "declaration.json"
+        if (
+            imitation_declaration_path.is_symlink()
+            or digest(imitation_declaration_path) != a.experimental_imitation_declaration_hash
+        ):
+            raise ValueError("exact imitation training declaration required")
+        imitation_declaration = json.loads(imitation_declaration_path.read_text())
+        if (
+            imitation_declaration.get("source_head") != imitation.get("source_head")
+            or imitation_declaration.get("motion_reference_hash") != a.reference_hash
+            or not isinstance(imitation_declaration.get("source_receipts"), list)
+            or len(imitation_declaration["source_receipts"]) != 2
+            or imitation_declaration["source_receipts"][0] != a.qualification_hash
+        ):
+            raise ValueError("matching body, training reference and declared source required")
+        if imitation_path.is_symlink() or digest(imitation_path) != imitation["imitation_hash"]:
+            raise ValueError("exact confined imitation actor required")
+        pins[str(a.experimental_imitation_receipt)] = a.experimental_imitation_hash
+        pins[str(imitation_path)] = imitation["imitation_hash"]
+        pins[str(imitation_declaration_path)] = a.experimental_imitation_declaration_hash
     if multi:
         if len(reference["records"]) != 8:
             raise ValueError("all eight declared motion references required")
@@ -205,6 +261,13 @@ def main():
         {k: ckpt["algorithm"]["actor_state_dict"]["mlp." + k] for k in actor.state_dict()},
         strict=True,
     )
+    if imitation_path is not None:
+        learned = torch.load(imitation_path, map_location="cpu", weights_only=True)
+        if set(learned) != {"actor_state_dict"}:
+            raise ValueError("exact tensor-only imitation checkpoint required")
+        actor.load_state_dict(learned["actor_state_dict"], strict=True)
+        if any(not torch.isfinite(value).all() for value in actor.state_dict().values()):
+            raise ValueError("finite experimental imitation actor required")
     a.output.mkdir()
     np.savez_compressed(a.output / "incoming-bank.npz", **bank)
     write_once(
@@ -227,6 +290,9 @@ def main():
             controls=a.receive_window,
             no_mid_episode_resets=True,
             training=False,
+            experimental_imitation_hash=a.experimental_imitation_hash,
+            experimental_imitation_declaration_hash=a.experimental_imitation_declaration_hash,
+            experimental_actor=imitation_path is not None,
             intercept_teacher=a.intercept_teacher,
             teacher_unlearned=a.intercept_teacher,
             isolate_teacher_rejections=a.isolate_teacher_rejections,
@@ -413,6 +479,9 @@ def main():
                 capture=int(raw["credit_sustained_capture"].sum()),
                 failed=int(raw["terminated"].sum()),
                 training=False,
+                experimental_imitation_hash=a.experimental_imitation_hash,
+                experimental_imitation_declaration_hash=a.experimental_imitation_declaration_hash,
+                experimental_actor=imitation_path is not None,
                 intercept_teacher=a.intercept_teacher,
                 robust_teacher=a.robust_teacher,
                 reserve_teacher=a.reserve_teacher,
