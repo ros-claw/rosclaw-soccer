@@ -12,6 +12,7 @@ def main():
     p.add_argument("--source-audit-hash", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--balanced-loss", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -102,6 +103,10 @@ def main():
     if tr.sum() != 384 or va.sum() != 128 or (tr & va).any():
         raise ValueError("complete 24/8 state-level split required")
     x, y = torch.from_numpy(features), torch.from_numpy(targets)
+    positive_counts = y[tr].sum(dim=0)
+    if torch.any(positive_counts == 0) or torch.any(positive_counts == tr.sum()):
+        raise ValueError("both classes required in each training target")
+    pos_weight = (int(tr.sum()) - positive_counts) / positive_counts if a.balanced_loss else None
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
@@ -115,6 +120,8 @@ def main():
             seeds=[981, 982, 983],
             steps_per_model=400,
             method="full-batch Adam binary logits on task pass and strict safety",
+            balanced_loss=a.balanced_loss,
+            positive_weight=pos_weight.tolist() if pos_weight is not None else None,
             public_development_only=True,
             independent_fresh=False,
             hardware_authorized=False,
@@ -135,12 +142,16 @@ def main():
         model = FirstTouchOutcomeModel()
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
         for _ in range(400):
-            loss = nn.functional.binary_cross_entropy_with_logits(model(x[tr]), y[tr])
+            loss = nn.functional.binary_cross_entropy_with_logits(
+                model(x[tr]), y[tr], pos_weight=pos_weight
+            )
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
         with torch.no_grad():
             pred_train, pred_val = model(x[tr]).sigmoid(), model(x[va]).sigmoid()
+            truth = y[va].bool()
+            positive = pred_val >= 0.5
             metrics = dict(
                 train_brier=((pred_train - y[tr]) ** 2).mean(dim=0).tolist(),
                 validation_brier=((pred_val - y[va]) ** 2).mean(dim=0).tolist(),
@@ -149,6 +160,10 @@ def main():
                 .mean(dim=0)
                 .tolist(),
                 validation_positive_rates=y[va].mean(dim=0).tolist(),
+                validation_true_positive=(positive & truth).sum(dim=0).tolist(),
+                validation_false_positive=(positive & ~truth).sum(dim=0).tolist(),
+                validation_false_negative=(~positive & truth).sum(dim=0).tolist(),
+                validation_true_negative=(~positive & ~truth).sum(dim=0).tolist(),
             )
         path = a.output / f"model-{seed}.pt"
         torch.save(dict(state_dict=model.state_dict(), seed=seed), path)
@@ -156,7 +171,7 @@ def main():
             dict(
                 seed=seed,
                 checkpoint_hash=digest(path),
-                final_train_loss=float(loss),
+                final_train_loss=float(loss.detach()),
                 metrics=metrics,
             )
         )
