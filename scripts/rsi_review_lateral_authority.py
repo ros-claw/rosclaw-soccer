@@ -10,6 +10,7 @@ import mujoco
 import numpy as np
 
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+from rosclaw_soccer.rsi.paired_health_exposure import paired_health_at_common_horizon
 from rosclaw_soccer.rsi.paired_precontact_authority import paired_precontact_authority
 from rosclaw_soccer.rsi.passer_curriculum_outcome import strict_pass_receive
 from scripts.rsi_atomic_artifacts import write_once
@@ -219,6 +220,7 @@ def main() -> None:
                     joint_indices=layout.qi,
                     root_index=layout.rq,
                 )
+                health = paired_health_at_common_horizon(base_p["body_failed"], raw["body_failed"])
             rows.append(
                 dict(
                     context=context,
@@ -228,6 +230,7 @@ def main() -> None:
                     original=measured(root, row),
                     physical_effect_vs_baseline=effect,
                     precontact_authority=precontact,
+                    health_common_horizon=health,
                 )
             )
     if len(rows) != 32 or digest(root / "complete.json") != sh or digest(audit) != ah:
@@ -241,6 +244,18 @@ def main() -> None:
     summaries = {}
     for offset in offsets:
         subset = [r for r in rows if r["offset_m"] == offset]
+        baseline_outcomes = {
+            (r["context"], r["side"]): r for r in rows if r["offset_m"] == baseline_offset
+        }
+        strict_pairs = [
+            (
+                baseline_outcomes[(r["context"], r["side"])]["outcome"][
+                    "strict_both_clean_handoff"
+                ],
+                r["outcome"]["strict_both_clean_handoff"],
+            )
+            for r in subset
+        ]
         summaries[str(offset)] = dict(
             conditions=len(subset),
             strict_clean=sum(r["outcome"]["strict_both_clean_handoff"] for r in subset),
@@ -249,6 +264,17 @@ def main() -> None:
                 r["outcome"]["receiver_nonfoot_substep"] is not None for r in subset
             ),
             healthy_both=sum(r["outcome"]["both_bodies_healthy"] for r in subset),
+            baseline_healthy_common=sum(
+                r["health_common_horizon"]["raw_healthy_common"] for r in subset
+            ),
+            candidate_healthy_common=sum(
+                r["health_common_horizon"]["executed_healthy_common"] for r in subset
+            ),
+            unequal_exposure_pairs=sum(
+                not r["health_common_horizon"]["equal_exposure"] for r in subset
+            ),
+            strict_rescues=sum(not before and after for before, after in strict_pairs),
+            strict_regressions=sum(before and not after for before, after in strict_pairs),
             precise_healthy_return=sum(r["original"]["return_0p1m_and_healthy"] for r in subset),
             median_max_target_delta_rad=float(
                 np.median(
