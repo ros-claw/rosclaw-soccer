@@ -25,6 +25,7 @@ def main():
     p.add_argument("--balance-expanded", action="store_true")
     p.add_argument("--receiver-follow-study", action="store_true")
     p.add_argument("--receiver-lateral-authority", action="store_true")
+    p.add_argument("--receiver-foot-teacher-pair", action="store_true")
     p.add_argument("--receiver-whole-identity", action="store_true")
     p.add_argument("--receiver-center-curriculum", action="store_true")
     p.add_argument("--receiver-learned-pair", action="store_true")
@@ -56,6 +57,22 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.receiver_foot_teacher_pair and (
+        a.new_context_block is None
+        or a.receiver_lateral_authority
+        or a.receiver_follow_study
+        or a.receiver_whole_identity
+        or a.receiver_exploration
+        or a.receiver_learned_pair
+        or a.passer_residual_pair
+        or a.precontact_fullbody_pair
+        or a.balance_teacher_pair is not None
+        or a.balance_expanded
+        or a.successor_alignment_study
+        or a.receiver_center_curriculum
+        or a.reference_bridge_controls != [0]
+    ):
+        p.error("foot teacher pair requires one isolated development block")
     if a.receiver_lateral_authority and (
         a.new_context_block is None
         or a.receiver_follow_study
@@ -374,6 +391,16 @@ def main():
             )
             for offset in (-0.35, -0.12, 0.12, 0.35)
         ]
+    if a.receiver_foot_teacher_pair:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                receiver_foot_teacher_strength=strength,
+            )
+            for strength in (0.0, 0.5)
+        ]
     if a.receiver_whole_identity:
         arms = [
             dict(
@@ -429,7 +456,7 @@ def main():
         (-0.2, 0.2)
         if a.receiver_center_curriculum
         else (-0.35, 0.35)
-        if a.receiver_dense_pair or a.receiver_lateral_authority
+        if a.receiver_dense_pair or a.receiver_lateral_authority or a.receiver_foot_teacher_pair
         else (-0.75, -0.35, 0.35, 0.75)
         if a.balance_expanded
         else (-0.55, 0.55)
@@ -442,7 +469,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_precontact_smooth.development.v16"
+                "soccer.neural_relay_receiver_foot_teacher.development.v23"
+                if a.receiver_foot_teacher_pair
+                else "soccer.neural_relay_precontact_smooth.development.v16"
                 if a.precontact_smooth
                 else "soccer.neural_relay_precontact_fullbody.development.v15"
                 if a.precontact_fullbody_pair
@@ -522,12 +551,15 @@ def main():
             and not a.receiver_exploration
             and not a.receiver_learned_exploration
             and not a.passer_residual_pair
-            and not a.precontact_smooth,
-            bounded_teacher_added_after_neural=a.balance_teacher_pair is not None,
+            and not a.precontact_smooth
+            and not a.receiver_foot_teacher_pair,
+            bounded_teacher_added_after_neural=a.balance_teacher_pair is not None
+            or a.receiver_foot_teacher_pair,
             all_bodies_initialized_once=True,
             no_ball_reposition=True,
             no_future_readiness=True,
-            cartesian_teachers_enabled=False,
+            cartesian_teachers_enabled=a.receiver_foot_teacher_pair,
+            receiver_foot_teacher_is_unlearned=a.receiver_foot_teacher_pair,
             geometry_role_selector_is_teacher=True,
             post_touch_velocity_follow_is_unlearned_teacher=a.receiver_follow_study,
             lateral_intercept_is_unlearned_teacher=a.receiver_lateral_authority,
@@ -569,6 +601,10 @@ def main():
 
         from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
         from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
+        from rosclaw_soccer.rsi.native_foot_contact_teacher import (
+            FootContactTeacherConfig,
+            NativeFootContactTeacher,
+        )
         from rosclaw_soccer.rsi.neural_relay_incoming import incoming_delivery
         from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
         from rosclaw_soccer.rsi.passer_residual_blend import (
@@ -774,6 +810,21 @@ def main():
                 order=ep.order,
             )
             readiness = OnlineReceivingBoundary(w, "b/")
+            foot_teacher = (
+                NativeFootContactTeacher(
+                    FootContactTeacherConfig(
+                        strength=course["arm"]["receiver_foot_teacher_strength"]
+                    )
+                )
+                if a.receiver_foot_teacher_pair
+                else None
+            )
+            foot_bodies = [
+                w.model.body("b/" + side + "_ankle_roll_link").id for side in ("left", "right")
+            ]
+            ball_geoms = np.flatnonzero(w.model.geom_bodyid == w.layouts["b/"].ball)
+            if foot_teacher is not None and len(ball_geoms) != 1:
+                raise ValueError("one qualified soccer ball geometry required")
             entry = SuccessorAlignmentGate(enabled=course["arm"].get("align_successor", False))
             receiver = None
             balance_teacher = None
@@ -919,6 +970,19 @@ def main():
                             trace_v.update({"SAM_" + k: v for k, v in sample_trace.items()})
                             trace_v["SAM_executed_action"] = sampled_action.copy()
                             counts["receiver_stochastic_calls"] += 1
+                    if foot_teacher is not None:
+                        foot_trace = foot_teacher.propose(
+                            model=w.model,
+                            snapshot=w.data,
+                            layout=w.layouts["b/"],
+                            nominal=np.asarray(target_b, np.float64),
+                            ball_geom=int(ball_geoms[0]),
+                            foot_bodies=foot_bodies,
+                            enabled=passer_foot_seen,
+                            frame=step,
+                        )
+                        target_b = foot_trace["target"]
+                        trace_v.update({"FOOT_" + k: np.asarray(v) for k, v in foot_trace.items()})
                     if (
                         a.receiver_whole_identity
                         or a.receiver_exploration
@@ -1134,7 +1198,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_PRECONTACT_FULLBODY16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_RECEIVER_FOOT_TEACHER16_PENDING_OWN_REPLAY"
+                    if a.receiver_foot_teacher_pair
+                    else "NEURAL_RELAY_PRECONTACT_FULLBODY16_PENDING_OWN_REPLAY"
                     if a.precontact_fullbody_pair
                     else "NEURAL_RELAY_RECEIVER_CENTER_EXPLORATION32_PENDING_OWN_REPLAY"
                     if a.receiver_center_curriculum and a.receiver_exploration
