@@ -143,6 +143,13 @@ def main() -> None:
                     raise ValueError("complete early-activation history required")
                 outcomes[name] = dict(
                     outcome=outcome,
+                    observed_controls=len(raw["body_failed"]),
+                    first_body_failure_controls=[
+                        int(np.flatnonzero(raw["body_failed"][:, i])[0])
+                        if raw["body_failed"][:, i].any()
+                        else None
+                        for i in range(2)
+                    ],
                     first_foot_ball_velocity=receiver_first_foot_velocity_change(
                         raw["ball_forces"], raw["qvel"][:, :, layout.bv : layout.bv + 3]
                     ),

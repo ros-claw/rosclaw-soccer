@@ -4,6 +4,8 @@ import math
 
 import numpy as np
 
+from rosclaw_soccer.rsi.paired_health_exposure import paired_health_from_first_failures
+
 
 def compare_foot_teacher_reviews(old: dict, new: dict) -> dict:
     if any(
@@ -77,6 +79,26 @@ def compare_foot_teacher_reviews(old: dict, new: dict) -> dict:
     for name, metric in metrics.items():
         pairs = [(metric(r["old"]), metric(r["new"])) for r in rows]
         summary[name] = dict(
+            old=sum(x for x, _ in pairs),
+            new=sum(y for _, y in pairs),
+            gained=sum(not x and y for x, y in pairs),
+            lost=sum(x and not y for x, y in pairs),
+        )
+    timeline_fields = [
+        (r[arm].get("observed_controls"), r[arm].get("first_body_failure_controls"))
+        for r in rows
+        for arm in ("old", "new")
+    ]
+    if all(n is None and first is None for n, first in timeline_fields):
+        summary["common_exposure_available"] = False
+    else:
+        exposure = [paired_health_from_first_failures(r["old"], r["new"]) for r in rows]
+        for row, item in zip(rows, exposure, strict=True):
+            row["common_health"] = item
+        pairs = [(x["first_healthy_common"], x["second_healthy_common"]) for x in exposure]
+        summary["common_exposure_available"] = True
+        summary["unequal_exposure_pairs"] = sum(not x["equal_exposure"] for x in exposure)
+        summary["healthy_common"] = dict(
             old=sum(x for x, _ in pairs),
             new=sum(y for _, y in pairs),
             gained=sum(not x and y for x, y in pairs),

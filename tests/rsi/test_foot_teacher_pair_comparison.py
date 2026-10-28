@@ -45,9 +45,35 @@ def test_comparison_retains_gains_losses_and_matched_count():
     new["records"][1]["teacher"]["max_total_joint_jump_rad"] = 0.02
     result = compare_foot_teacher_reviews(old, new)
     assert result["conditions"] == 8
+    assert not result["summary"]["common_exposure_available"]
     assert result["summary"]["healthy"]["lost"] == 1
     assert result["summary"]["max_total_joint_jump_change_rad"]["decreased"] == 1
     assert not result["independent_fresh"] and not result["promotion_authorized"]
+
+
+def test_common_horizon_does_not_penalize_later_unshared_followup():
+    old = review()
+    new = deepcopy(old)
+    for report in (old, new):
+        for row in report["records"]:
+            row["teacher"]["observed_controls"] = 300
+            row["teacher"]["first_body_failure_controls"] = [None, None]
+    candidate = new["records"][0]["teacher"]
+    candidate["observed_controls"] = 520
+    candidate["first_body_failure_controls"] = [519, None]
+    candidate["outcome"]["both_bodies_healthy"] = False
+    summary = compare_foot_teacher_reviews(old, new)["summary"]
+    assert summary["healthy"]["lost"] == 1
+    assert summary["unequal_exposure_pairs"] == 1
+    assert summary["healthy_common"]["lost"] == 0
+
+
+def test_partial_failure_timeline_is_not_silently_used():
+    old = review()
+    new = deepcopy(old)
+    old["records"][0]["teacher"]["observed_controls"] = 300
+    with pytest.raises(ValueError):
+        compare_foot_teacher_reviews(old, new)
 
 
 def test_foot_first_and_nonfoot_contact_are_not_conflated():

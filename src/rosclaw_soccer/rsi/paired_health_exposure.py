@@ -26,3 +26,30 @@ def paired_health_at_common_horizon(raw_failed: np.ndarray, executed_failed: np.
         raw_failure_by_body_common=raw_failed[:horizon].any(axis=0).tolist(),
         executed_failure_by_body_common=executed_failed[:horizon].any(axis=0).tolist(),
     )
+
+
+def paired_health_from_first_failures(first: dict, second: dict) -> dict:
+    """Use reviewed first-failure timestamps without inventing unseen states."""
+    for arm in (first, second):
+        n, failures = arm.get("observed_controls"), arm.get("first_body_failure_controls")
+        if (
+            type(n) is not int
+            or n < 1
+            or not isinstance(failures, list)
+            or len(failures) != 2
+            or any(x is not None and (type(x) is not int or not 0 <= x < n) for x in failures)
+            or type(arm.get("outcome", {}).get("both_bodies_healthy")) is not bool
+            or arm["outcome"]["both_bodies_healthy"] != all(x is None for x in failures)
+        ):
+            raise ValueError("complete consistent native first-failure timeline required")
+    horizon = min(first["observed_controls"], second["observed_controls"])
+
+    def healthy(arm):
+        return all(x is None or x >= horizon for x in arm["first_body_failure_controls"])
+
+    return dict(
+        common_controls=horizon,
+        equal_exposure=first["observed_controls"] == second["observed_controls"],
+        first_healthy_common=healthy(first),
+        second_healthy_common=healthy(second),
+    )
