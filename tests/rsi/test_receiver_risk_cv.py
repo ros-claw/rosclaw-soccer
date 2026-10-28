@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.receiver_risk_cv import grouped_risk_selection
+from rosclaw_soccer.rsi.receiver_risk_cv import grouped_risk_selection, risk_probability
 
 
 def test_censored_cases_are_not_scored_and_missing_classes_abstain():
@@ -45,3 +45,26 @@ def test_unobserved_predictions_never_train_or_enter_scored_outcomes():
     assert first["probabilities"] == second["probabilities"]
     assert first["selected_counterfactual_failures"] == second["selected_counterfactual_failures"]
     assert first["unobserved_predictions"] == 2
+
+
+def test_exported_fold_models_replay_same_current_feature_probabilities():
+    features = np.arange(6 * 98, dtype=np.float32).reshape(6, 98) / 1000
+    groups = np.array([0, 0, 1, 1, 2, 2], np.int64)
+    base = np.array([True, False, True, False, False, False])
+    candidate = np.zeros(6, bool)
+    observed = np.array([True, True, True, True, False, False])
+    result = grouped_risk_selection(
+        features,
+        groups,
+        base,
+        candidate,
+        observed,
+        steps=5,
+        predict_unobserved=True,
+        export_models=True,
+    )
+    models = {m["group"]: m for m in result["fold_models"]}
+    for i, obs in enumerate(features):
+        assert risk_probability(obs, models[int(groups[i])]) == pytest.approx(
+            result["probabilities"][i], abs=1e-6
+        )

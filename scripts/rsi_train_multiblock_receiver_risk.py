@@ -111,6 +111,7 @@ def main() -> None:
     )
     parser.add_argument("--expected-head", required=True)
     parser.add_argument("--predict-unobserved", action="store_true")
+    parser.add_argument("--export-fold-models", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     clean(args.expected_head)
@@ -118,6 +119,7 @@ def main() -> None:
         len(args.block) != 3
         or args.output.exists()
         or args.output.resolve().is_relative_to(Path.cwd())
+        or (args.export_fold_models and not args.predict_unobserved)
     ):
         raise ValueError("three complete development blocks and unique external result required")
     pins = [
@@ -138,7 +140,13 @@ def main() -> None:
         raise ValueError("only declared non-Fresh context blocks permitted")
     torch.set_num_threads(1)
     own = grouped_risk_selection(
-        x, groups, base, cand, observed, predict_unobserved=args.predict_unobserved
+        x,
+        groups,
+        base,
+        cand,
+        observed,
+        predict_unobserved=args.predict_unobserved,
+        export_models=args.export_fold_models,
     )
     augmented = grouped_risk_selection(
         np.concatenate((x, ball), axis=1),
@@ -147,6 +155,7 @@ def main() -> None:
         cand,
         observed,
         predict_unobserved=args.predict_unobserved,
+        export_models=args.export_fold_models,
     )
     if any(digest(p) != h for p, h in pins):
         raise ValueError("input changed during training")
@@ -167,6 +176,7 @@ def main() -> None:
             threshold=0.8,
             negative_loss_weight=3.0,
             predicted_unobserved=args.predict_unobserved,
+            exported_fold_models=args.export_fold_models,
             independent_fresh=False,
             promotion_authorized=False,
             hardware_authorized=False,

@@ -8,6 +8,34 @@ import numpy as np
 import torch
 
 
+def risk_probability(observation: np.ndarray, model: dict) -> float:
+    """Replay one exported fold model from current features only, not a safety gate."""
+    if type(model) is not dict or model.get("kind") not in ("linear", "abstain"):
+        raise ValueError("explicit research fold model required")
+    if (
+        type(observation) is not np.ndarray
+        or observation.dtype != np.float32
+        or observation.ndim != 1
+        or observation.size not in (98, 104)
+        or not np.isfinite(observation).all()
+    ):
+        raise ValueError("finite own current feature vector required")
+    if model["kind"] == "abstain":
+        return 0.0
+    mean, std, weight = (
+        np.asarray(model[k], dtype=np.float32) for k in ("mean", "scale", "weight")
+    )
+    bias = np.float32(model["bias"])
+    if (
+        any(x.shape != observation.shape or not np.isfinite(x).all() for x in (mean, std, weight))
+        or (std < np.float32(0.05)).any()
+        or not np.isfinite(bias)
+    ):
+        raise ValueError("finite exact fold parameter dimensions required")
+    logit = float(weight @ ((observation - mean) / std) + bias)
+    return float(1.0 / (1.0 + np.exp(-np.clip(logit, -80.0, 80.0))))
+
+
 def grouped_risk_selection(
     features: np.ndarray,
     groups: np.ndarray,
@@ -18,6 +46,7 @@ def grouped_risk_selection(
     steps: int = 200,
     threshold: float = 0.8,
     predict_unobserved: bool = False,
+    export_models: bool = False,
 ) -> dict:
     """Refit normalization and binary model on each training fold only.
 
@@ -45,12 +74,14 @@ def grouped_risk_selection(
         or not 1 <= steps <= 500
         or not 0.5 < threshold < 1.0
         or type(predict_unobserved) is not bool
+        or type(export_models) is not bool
     ):
         raise ValueError("aligned causal features, groups and observed paired outcomes required")
     target = base_failed & ~candidate_failed
     predictions = np.full(n, -1, dtype=np.int64)
     probabilities = np.full(n, np.nan, dtype=np.float64)
     folds = []
+    models = []
     for group in np.unique(groups):
         train = (groups != group) & observed
         test = (groups == group) & (observed | predict_unobserved)
@@ -64,6 +95,8 @@ def grouped_risk_selection(
             folds.append(
                 dict(group=int(group), train=int(train.sum()), test=int(test.sum()), updates=0)
             )
+            if export_models:
+                models.append(dict(group=int(group), kind="abstain"))
             continue
         mean = features[train].mean(axis=0)
         scale = np.maximum(features[train].std(axis=0), np.float32(0.05))
@@ -91,6 +124,17 @@ def grouped_risk_selection(
                 p = torch.sigmoid(
                     model(torch.from_numpy(((features[test] - mean) / scale).copy())).squeeze(-1)
                 ).numpy()
+                if export_models:
+                    models.append(
+                        dict(
+                            group=int(group),
+                            kind="linear",
+                            mean=mean.tolist(),
+                            scale=scale.tolist(),
+                            weight=model.weight.detach().numpy()[0].tolist(),
+                            bias=float(model.bias.detach().numpy()[0]),
+                        )
+                    )
         probabilities[test] = p
         predictions[test] = (p >= threshold).astype(np.int64)
         folds.append(
@@ -117,6 +161,7 @@ def grouped_risk_selection(
             ((predictions == 1) & ~observed & candidate_failed).sum()
         ),
         optimizer_updates=sum(f["updates"] for f in folds),
+        fold_models=models if export_models else None,
         independent_fresh=False,
         physical_rollout=False,
         promotion_authorized=False,
