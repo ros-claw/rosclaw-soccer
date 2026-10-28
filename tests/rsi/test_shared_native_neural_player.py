@@ -222,6 +222,44 @@ def test_receiver_transition_executes_and_commits_exact_blended_action():
     np.testing.assert_array_equal(a.state[0].numpy(), trace["NN_h_after"])
 
 
+def test_transition_reference_trace_remains_stackable_after_blend_window():
+    from rosclaw_soccer.rsi.receiver_transition_blend import receiver_transition_action
+
+    w, ps = players()
+    a, b = ps["a/"], ps["b/"]
+    previous = np.zeros(29, np.float32)
+    traces = []
+    for index in range(11):
+        if index == 1:
+            a.begin_standing()
+            b.begin_standing()
+        target, trace = a.propose(with_reference_evidence=True)
+        if index < 10:
+            action = receiver_transition_action(
+                previous,
+                trace["NN_action"],
+                trace["NN_reference_nominal"],
+                a.scale,
+                a.order,
+                control_index=index,
+                duration=10,
+            )
+            target = a.offset + action[a.order] * a.scale
+            trace.update(SMOOTH_action=action.copy(), SMOOTH_index=np.array(index))
+        else:
+            action = None
+            trace.update(SMOOTH_action=trace["NN_action"].copy(), SMOOTH_index=np.array(-1))
+        btarget, _ = b.propose()
+        w.advance({"a/": target, "b/": btarget})
+        a.commit(executed_action=action)
+        b.commit()
+        traces.append(trace)
+    assert all(row.keys() == traces[0].keys() for row in traces)
+    for key in traces[0]:
+        assert len(np.stack([row[key] for row in traces])) == 11
+    assert [int(row["SMOOTH_index"]) for row in traces] == [*range(10), -1]
+
+
 def test_teacher_authority_and_feedback_shape_are_fail_closed():
     w, ps = players()
     a = ps["a/"]
