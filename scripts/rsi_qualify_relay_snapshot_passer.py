@@ -12,6 +12,7 @@ import torch
 from rosclaw_soccer.providers.g1.velocity_policy import observation98, target29
 from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+from rosclaw_soccer.rsi.receiver_counterfactual_residual import receiver_counterfactual_residual
 from rosclaw_soccer.rsi.relay_restored_receiving_role import restored_receiving_role
 from rosclaw_soccer.rsi.restored_scratch_world import restored_scratch_world
 from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
@@ -39,7 +40,11 @@ def main() -> None:
         "expected-head",
     ):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--probe-leg-rad", type=float, nargs=12)
     a = p.parse_args()
+    probe = None if a.probe_leg_rad is None else np.asarray(a.probe_leg_rad, dtype=np.float64)
+    if probe is not None and (not np.isfinite(probe).all() or np.abs(probe).max() > 0.15):
+        raise ValueError("finite bounded 12-leg SIM probe required")
     clean(a.expected_head)
     root, audit, snapshot_receipt = (
         a.source / "source",
@@ -105,6 +110,7 @@ def main() -> None:
     )
     by_index = {r["index"]: r for r in source["records"]}
     rows = []
+    probe_trajectories = []
     for item in snaps["rows"]:
         row = by_index[item["index"]]
         if (
@@ -258,6 +264,8 @@ def main() -> None:
                 raise ValueError("first restored boundary must precede receiver contact")
             first_contact = None
             first_groups: list[str] = []
+            physical_samples = [resumed]
+            executed_actions = [receiver_action.copy()]
             # Continue from each actor's *own newly generated* state. Recorded
             # future traces are audit targets only, never policy inputs.
             previous_action = out[0, 0].numpy().copy()
@@ -306,7 +314,7 @@ def main() -> None:
                 receiver_action = velocity_policy.session.run(
                     ["actions"], {"obs": receiver_obs[None]}
                 )[0][0]
-                if (
+                if probe is None and (
                     not np.array_equal(obs, t["NN_obs"][frame])
                     or not np.array_equal(current_action, t["NN_action"][frame])
                     or not np.array_equal(h.numpy(), t["NN_h_after"][frame])
@@ -316,14 +324,23 @@ def main() -> None:
                     or receiver_phase != velocity_data["phase"][frame]
                 ):
                     raise ValueError(f"restored own live policy history differs at {frame}")
+                if probe is not None:
+                    amplitude = float(np.sin(np.pi * (frame - 140) / 36.0) ** 2)
+                    receiver_action, receiver_target = receiver_counterfactual_residual(
+                        receiver_action, probe, velocity_policy.params, amplitude=amplitude
+                    )
+                else:
+                    receiver_target = target29(receiver_action, velocity_policy.params)
                 resumed = scratch.advance(
                     {
                         "a/": ep.offset + current_action[ep.order] * ep.scale,
-                        "b/": target29(receiver_action, velocity_policy.params),
+                        "b/": receiver_target,
                     }
                 )
+                physical_samples.append(resumed)
+                executed_actions.append(receiver_action.copy())
                 for key in ("qpos", "qvel", "torque", "ball_forces"):
-                    if not np.array_equal(resumed[key], physics[key][frame]):
+                    if probe is None and not np.array_equal(resumed[key], physics[key][frame]):
                         raise ValueError(f"restored coupled native {key} differs at {frame}")
                 witnesses = resumed["ball_forces"][:, 1, :]
                 hit = np.flatnonzero((witnesses > 1.0).any(axis=1))
@@ -343,6 +360,10 @@ def main() -> None:
                 previous_receiver_action = receiver_action.copy()
                 previous_receiver_phase = receiver_phase
                 past_ball_vel = np.concatenate((past_ball_vel, receiver_v[None, 35:37]), axis=0)
+                if scratch.failed:
+                    if probe is None:
+                        raise ValueError("baseline body failure before fixed comparison horizon")
+                    break
         if (
             digest(snap) != item["snapshot_hash"]
             or digest(trace) != row["artifacts"]["passer_nn"]["hash"]
@@ -356,17 +377,28 @@ def main() -> None:
                 index=item["index"],
                 context=item["context"],
                 side=item["side"],
-                observation_exact=True,
-                action_exact=True,
-                recurrent_after_exact=True,
+                observation_exact=probe is None,
+                action_exact=probe is None,
+                recurrent_after_exact=probe is None,
                 receiver_role_command_exact=True,
-                receiver_neural_inference_exact=True,
-                coupled_native_substeps_exact=True,
-                consecutive_controls=36,
+                receiver_neural_inference_exact=probe is None,
+                coupled_native_substeps_exact=probe is None,
+                consecutive_controls=len(physical_samples),
                 first_contact_frame_and_substep=first_contact,
                 first_contact_groups=first_groups,
+                body_failure=bool(scratch.failed),
             )
         )
+        if probe is not None:
+            probe_trajectories.append(
+                {
+                    **{
+                        key: np.stack([sample[key] for sample in physical_samples])
+                        for key in ("qpos", "qvel", "torque", "ball_forces")
+                    },
+                    "executed_receiver_action": np.stack(executed_actions),
+                }
+            )
     if (
         len(rows) != 8
         or len({(r["context"], r["side"]) for r in rows}) != 8
@@ -380,10 +412,20 @@ def main() -> None:
     clean(a.expected_head)
     check_pins(pins)
     a.output.mkdir(parents=True)
+    if probe is not None:
+        for row, trajectory in zip(rows, probe_trajectories, strict=True):
+            path = a.output / f"trial-{row['index']}.npz"
+            np.savez_compressed(path, **trajectory)
+            row["physical_trajectory"] = path.name
+            row["physical_trajectory_hash"] = digest(path)
     write_once(
         a.output / "complete.json",
         dict(
-            status="RELAY_RESTORED_OWN_NEURAL_THROUGH_CONTACT_MATCH_NOT_FOOTBALL_SUCCESS",
+            status=(
+                "RELAY_LEG_RESIDUAL_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
+                if probe is not None
+                else "RELAY_RESTORED_OWN_NEURAL_THROUGH_CONTACT_MATCH_NOT_FOOTBALL_SUCCESS"
+            ),
             source_head=a.expected_head,
             source_hash=sh,
             audit_hash=a.audit_hash,
@@ -394,8 +436,10 @@ def main() -> None:
             prior_own_action_and_recurrent_state_used=True,
             future_controls_used=False,
             receiver_role_selector_verified_at_boundary=True,
-            coupled_physics_continuation_verified=True,
-            native_steps=2880,
+            coupled_physics_continuation_verified=probe is None,
+            native_steps=sum(row["consecutive_controls"] for row in rows) * 10,
+            probe_leg_rad=None if probe is None else probe.tolist(),
+            probe_action_is_actual_history=probe is not None,
             optimizer_updates=0,
             independent_fresh=False,
             promotion_authorized=False,
