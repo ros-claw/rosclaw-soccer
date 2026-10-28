@@ -85,6 +85,7 @@ def main() -> None:
     p.add_argument("--nondefault", action="store_true")
     p.add_argument("--long-probe", action="store_true")
     p.add_argument("--contact-teacher", action="store_true")
+    p.add_argument("--contact-teacher-capture", action="store_true")
     p.add_argument("--dynamic-boundary", action="store_true")
     p.add_argument("--with-shadow", action="store_true")
     p.add_argument("--return-handoff", action="store_true")
@@ -125,6 +126,8 @@ def main() -> None:
         or a.selector_receipt is not None
     ):
         raise ValueError("teacher requires isolated zero-residual long shared SIM experiment")
+    if a.contact_teacher_capture and not a.contact_teacher:
+        raise ValueError("postcontact capture requires the explicit assisted teacher")
     if (
         len(
             {
@@ -537,7 +540,12 @@ def main() -> None:
                 if not np.array_equal(resumed[key], physics[key][140]):
                     raise ValueError("restored coupled native substeps differ: " + key)
             teacher = (
-                SharedNativeReceiveTeacher(scratch, "b/", horizon_controls=459)
+                SharedNativeReceiveTeacher(
+                    scratch,
+                    "b/",
+                    horizon_controls=459,
+                    capture_after_contact=a.contact_teacher_capture,
+                )
                 if a.contact_teacher
                 else None
             )
@@ -1058,6 +1066,7 @@ def main() -> None:
             smooth_transition=a.smooth_transition,
             long_probe=a.long_probe,
             contact_teacher_assisted=a.contact_teacher,
+            contact_teacher_capture=a.contact_teacher_capture,
             smooth_transition_duration=a.smooth_transition_duration
             if a.smooth_transition
             else None,

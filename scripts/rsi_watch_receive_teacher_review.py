@@ -24,9 +24,17 @@ def main() -> None:
     for key in ("baseline-hash", "snapshot-hash", "physical-head", "expected-head"):
         p.add_argument("--" + key, required=True)
     p.add_argument("--timeout-sec", type=int, default=7200)
+    p.add_argument(
+        "--unit",
+        choices=(
+            "rosclaw-receiver-contact-teacher-b0-20261029.service",
+            "rosclaw-receiver-contact-capture-b0-20261029.service",
+        ),
+        default="rosclaw-receiver-contact-teacher-b0-20261029.service",
+    )
     a = p.parse_args()
     clean(a.expected_head)
-    unit = "rosclaw-receiver-contact-teacher-b0-20261029.service"
+    unit = a.unit
     pins = ((a.baseline, a.baseline_hash), (a.snapshots, a.snapshot_hash))
     if (
         not 1 <= a.timeout_sec <= 7200
@@ -58,6 +66,8 @@ def main() -> None:
     if (
         data.get("status") != "RELAY_CONTACT_TEACHER_ASSISTED_PHYSICAL_NOT_SUCCESS"
         or data.get("contact_teacher_assisted") is not True
+        or data.get("contact_teacher_capture", False)
+        != (unit == "rosclaw-receiver-contact-capture-b0-20261029.service")
         or data.get("source_head") != a.physical_head
         or data.get("snapshot_hash") != a.snapshot_hash
         or any(

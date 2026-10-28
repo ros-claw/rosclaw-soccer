@@ -57,3 +57,29 @@ def test_teacher_residual_reaches_actual_motor_and_never_exceeds_effort(monkeypa
     assert teacher.active_commands == 10
     np.testing.assert_array_equal(output["torque"][:, w.layouts["b/"].ai], 25.0)
     assert np.any(output["applied_torque_change"][:, w.layouts["b/"].ai])
+
+
+def test_capture_uses_observed_contact_foot_then_releases_after_300ms(monkeypatch):
+    import rosclaw_soccer.rsi.shared_native_receive_teacher as module
+
+    received = []
+
+    def effect(**kwargs):
+        received.append(kwargs)
+        return SimpleNamespace(torque_nm=np.full(29, 1.0), active=True)
+
+    monkeypatch.setattr(module, "locomotion_contact_teacher_effect", effect)
+    w = world()
+    teacher = SharedNativeReceiveTeacher(w, "b/", horizon_controls=2, capture_after_contact=True)
+    teacher._capture_start_step = -50
+    teacher._last_foot_contact_step = -50
+    teacher._capture_foot = teacher.feet[1]
+    targets = {p: np.zeros(29) for p in w.layouts}
+    w.advance(targets, torque_layers={"b/": teacher})
+    assert received[0]["ankle_body_id"] == teacher.feet[1]
+    assert received[0]["receive_capture_progress"] == pytest.approx(1 / 3)
+    teacher._capture_start_step = teacher.next_native_step - 151
+    calls = len(received)
+    out = w.advance(targets, torque_layers={"b/": teacher})
+    assert len(received) == calls
+    assert not out["applied_torque_change"].any()

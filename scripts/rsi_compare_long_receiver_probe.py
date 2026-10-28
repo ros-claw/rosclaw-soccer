@@ -56,7 +56,19 @@ def main() -> None:
             raise ValueError("exact candidate-bound OOF receipt required")
         risk = json.loads(args.risk_receipt.read_text())
     if (
-        baseline.get("status") != "RELAY_NONDEFAULT_SMOOTH_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS"
+        baseline.get("status")
+        not in (
+            "RELAY_NONDEFAULT_SMOOTH_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS",
+            "RELAY_CONTACT_TEACHER_ASSISTED_PHYSICAL_NOT_SUCCESS",
+        )
+        or (
+            baseline.get("status") == "RELAY_CONTACT_TEACHER_ASSISTED_PHYSICAL_NOT_SUCCESS"
+            and (
+                baseline.get("contact_teacher_assisted") is not True
+                or baseline.get("contact_teacher_capture", False) is not False
+                or candidate.get("contact_teacher_capture") is not True
+            )
+        )
         or candidate.get("status")
         not in (
             "RELAY_LONG_PROBE_CAUSAL_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS",

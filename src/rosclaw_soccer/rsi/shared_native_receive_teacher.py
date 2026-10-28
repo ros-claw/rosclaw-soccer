@@ -20,7 +20,14 @@ class SharedNativeReceiveTeacher:
     teacher, not a learned policy, a hardware command, or a success gate.
     """
 
-    def __init__(self, world: SharedNativeMotorWorld, prefix: str, *, horizon_controls: int):
+    def __init__(
+        self,
+        world: SharedNativeMotorWorld,
+        prefix: str,
+        *,
+        horizon_controls: int,
+        capture_after_contact: bool = False,
+    ):
         world._require_current_boundary()
         if (
             type(world) is not SharedNativeMotorWorld
@@ -29,6 +36,7 @@ class SharedNativeReceiveTeacher:
             or type(horizon_controls) is not int
             or not 1 <= horizon_controls <= 600
             or len(world.layouts) != 2
+            or type(capture_after_contact) is not bool
         ):
             raise ValueError("own unmodified two-player SIM boundary required")
         self.world, self.prefix = world, prefix
@@ -56,6 +64,9 @@ class SharedNativeReceiveTeacher:
         self.pending = self.failed = False
         self.commands = self.applied = self.active_commands = 0
         self._last_foot_contact_step: int | None = None
+        self._capture_start_step: int | None = None
+        self._capture_foot: int | None = None
+        self.capture_after_contact = capture_after_contact
         world._torque_layer_owners[prefix] = self
 
     def command(self, parent_torque: np.ndarray) -> np.ndarray:
@@ -84,7 +95,11 @@ class SharedNativeReceiveTeacher:
                 d.qpos[w.layouts[self.teammate].rq : w.layouts[self.teammate].rq + 2] - ball[:2]
             )
             lengths = [np.linalg.norm(d.xpos[foot] - ball) for foot in self.feet]
-            use_left = bool(lengths[0] < lengths[1])
+            use_left = (
+                self._capture_foot == self.feet[0]
+                if self.capture_after_contact and self._capture_foot is not None
+                else bool(lengths[0] < lengths[1])
+            )
             foot = self.feet[0 if use_left else 1]
             quat = d.qpos[layout.rq + 3 : layout.rq + 7]
             yaw = np.arctan2(
@@ -95,6 +110,20 @@ class SharedNativeReceiveTeacher:
             left_sign = 1.0 if np.dot(anatomical_left, lateral) >= 0 else -1.0
             recent = self._last_foot_contact_step is not None and (
                 self.next_native_step - self._last_foot_contact_step <= 150
+            )
+            capture_age = (
+                None
+                if self._capture_start_step is None
+                else self.next_native_step - self._capture_start_step
+            )
+            if self.capture_after_contact and capture_age is not None and capture_age > 150:
+                self.pending = True
+                self.commands += 1
+                return parent.copy()
+            capture_progress = (
+                float(capture_age / 150)
+                if self.capture_after_contact and capture_age is not None
+                else None
             )
             effect = locomotion_contact_teacher_effect(
                 model=m,
@@ -108,6 +137,7 @@ class SharedNativeReceiveTeacher:
                 local_lateral_sign=left_sign if use_left else -left_sign,
                 contact_recent=recent,
                 config=self.config,
+                receive_capture_progress=capture_progress,
             )
             proposal = np.clip(
                 parent + effect.torque_nm,
@@ -144,6 +174,9 @@ class SharedNativeReceiveTeacher:
                 mujoco.mj_contactForce(w.model, w.data, i, force)
                 if np.linalg.norm(force[:3]) > 1.0:
                     self._last_foot_contact_step = self.next_native_step
+                    if self._capture_start_step is None:
+                        self._capture_start_step = self.next_native_step
+                        self._capture_foot = next(foot for foot in self.feet if foot in bodies)
         self.pending = False
         self.next_native_step += 1
         self.applied += 1
