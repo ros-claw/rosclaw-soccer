@@ -23,7 +23,8 @@ def main() -> None:
     a = p.parse_args()
     clean(a.expected_head)
     if (
-        re.fullmatch(r"rosclaw-passer-velocity-recovery-b0-[0-9]{8}\.service", a.unit) is None
+        re.fullmatch(r"rosclaw-passer-velocity-(?:recovery|blend)-b0-[0-9]{8}\.service", a.unit)
+        is None
         or not 1 <= a.timeout_sec <= 7200
         or a.output.exists()
         or a.output.resolve().is_relative_to(Path.cwd())
