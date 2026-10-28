@@ -29,6 +29,7 @@ def main() -> None:
         choices=(
             "rosclaw-receiver-contact-teacher-b0-20261029.service",
             "rosclaw-receiver-contact-capture-b0-20261029.service",
+            "rosclaw-receiver-neural-torque-b0-20261029.service",
         ),
         default="rosclaw-receiver-contact-teacher-b0-20261029.service",
     )
@@ -63,11 +64,21 @@ def main() -> None:
     candidate_hash = digest(a.candidate)
     data = json.loads(a.candidate.read_text())
     snapshot_data = json.loads(a.snapshots.read_text())
+    neural = unit == "rosclaw-receiver-neural-torque-b0-20261029.service"
     if (
-        data.get("status") != "RELAY_CONTACT_TEACHER_ASSISTED_PHYSICAL_NOT_SUCCESS"
-        or data.get("contact_teacher_assisted") is not True
-        or data.get("contact_teacher_capture", False)
-        != (unit == "rosclaw-receiver-contact-capture-b0-20261029.service")
+        data.get("status")
+        != (
+            "RELAY_NEURAL_TORQUE_RESEARCH_PHYSICAL_NOT_SUCCESS"
+            if neural
+            else "RELAY_CONTACT_TEACHER_ASSISTED_PHYSICAL_NOT_SUCCESS"
+        )
+        or data.get("contact_teacher_assisted") is not (not neural)
+        or (neural and data.get("neural_torque_actor") is not True)
+        or (
+            not neural
+            and data.get("contact_teacher_capture", False)
+            != (unit == "rosclaw-receiver-contact-capture-b0-20261029.service")
+        )
         or data.get("source_head") != a.physical_head
         or data.get("snapshot_hash") != a.snapshot_hash
         or any(
@@ -106,8 +117,12 @@ def main() -> None:
                 z["teacher_parent_torque"],
                 z["teacher_actual_torque_delta"],
                 receiver_actuators=np.asarray(layout.ai),
-                commands=row["teacher_native_commands"],
-                active_commands=row["teacher_active_native_commands"],
+                commands=row["neural_torque_native_commands"]
+                if neural
+                else row["teacher_native_commands"],
+                active_commands=row["neural_torque_changed_commands"]
+                if neural
+                else row["teacher_active_native_commands"],
             )
             if len(z["torque"]) != row["consecutive_controls"]:
                 raise ValueError("physics duration differs from receipt")

@@ -75,10 +75,18 @@ def main() -> None:
             "RELAY_OOF_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS",
             "RELAY_SINGLE_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS",
             "RELAY_CONTACT_TEACHER_ASSISTED_PHYSICAL_NOT_SUCCESS",
+            "RELAY_NEURAL_TORQUE_RESEARCH_PHYSICAL_NOT_SUCCESS",
         )
         or (
             candidate.get("status") == "RELAY_CONTACT_TEACHER_ASSISTED_PHYSICAL_NOT_SUCCESS"
             and candidate.get("contact_teacher_assisted") is not True
+        )
+        or (
+            candidate.get("status") == "RELAY_NEURAL_TORQUE_RESEARCH_PHYSICAL_NOT_SUCCESS"
+            and (
+                candidate.get("neural_torque_actor") is not True
+                or candidate.get("contact_teacher_assisted") is not False
+            )
         )
         or baseline.get("smooth_transition_duration") != 10
         or candidate.get("smooth_transition_duration") != 10

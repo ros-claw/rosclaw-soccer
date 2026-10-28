@@ -28,6 +28,7 @@ from rosclaw_soccer.rsi.restored_shadow_motor import restored_shadow_motor
 from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
 from rosclaw_soccer.rsi.shared_native_neural_player import PlayerObservationView
 from rosclaw_soccer.rsi.shared_native_receive_teacher import SharedNativeReceiveTeacher
+from rosclaw_soccer.rsi.shared_native_receiver_torque_actor import SharedNativeReceiverTorqueActor
 from rosclaw_soccer.rsi.shared_relay_setup import (
     SharedRelaySetup,
     motion_segment,
@@ -86,6 +87,10 @@ def main() -> None:
     p.add_argument("--long-probe", action="store_true")
     p.add_argument("--contact-teacher", action="store_true")
     p.add_argument("--contact-teacher-capture", action="store_true")
+    for key in ("torque-checkpoint", "torque-training", "torque-observation-proof"):
+        p.add_argument("--" + key, type=Path)
+    for key in ("torque-checkpoint-hash", "torque-training-hash", "torque-observation-proof-hash"):
+        p.add_argument("--" + key)
     p.add_argument("--dynamic-boundary", action="store_true")
     p.add_argument("--with-shadow", action="store_true")
     p.add_argument("--return-handoff", action="store_true")
@@ -110,7 +115,7 @@ def main() -> None:
     if a.long_probe and not (
         a.nondefault
         and probe is not None
-        and (np.any(probe) or a.contact_teacher)
+        and (np.any(probe) or a.contact_teacher or a.torque_checkpoint is not None)
         and a.dynamic_boundary
         and a.with_shadow
         and a.return_handoff
@@ -128,6 +133,57 @@ def main() -> None:
         raise ValueError("teacher requires isolated zero-residual long shared SIM experiment")
     if a.contact_teacher_capture and not a.contact_teacher:
         raise ValueError("postcontact capture requires the explicit assisted teacher")
+    torque_args = (
+        a.torque_checkpoint,
+        a.torque_checkpoint_hash,
+        a.torque_training,
+        a.torque_training_hash,
+        a.torque_observation_proof,
+        a.torque_observation_proof_hash,
+    )
+    if any(torque_args) and not all(torque_args):
+        raise ValueError("exact research actor, training and observation proof required")
+    torque_model = a.torque_checkpoint is not None
+    if torque_model:
+        if (
+            not a.long_probe
+            or probe is None
+            or np.any(probe)
+            or a.contact_teacher
+            or a.risk_receipt is not None
+            or a.selector_receipt is not None
+            or any(
+                path.is_symlink() or digest(path) != expected
+                for path, expected in (
+                    (a.torque_checkpoint, a.torque_checkpoint_hash),
+                    (a.torque_training, a.torque_training_hash),
+                    (a.torque_observation_proof, a.torque_observation_proof_hash),
+                )
+            )
+        ):
+            raise ValueError("isolated exact unpromoted learned-torque research path required")
+        train = json.loads(a.torque_training.read_text())
+        obs_proof = json.loads(a.torque_observation_proof.read_text())
+        if (
+            train.get("status") != "ASSISTED_RECEIVER_TORQUE_BC_NOT_PHYSICALLY_VALIDATED"
+            or train.get("checkpoint_hash") != a.torque_checkpoint_hash
+            or obs_proof.get("status") != "RECEIVER_CAUSAL_OBSERVATION_IDENTITY_NOT_CLOSED_LOOP"
+            or obs_proof.get("dataset_hash") != train.get("dataset_hash")
+            or obs_proof.get("snapshot_hash") != a.snapshot_hash
+            or obs_proof.get("cases") != 24
+            or obs_proof.get("native_observations") != 45930
+            or any(
+                d.get(k) is not False
+                for d in (train, obs_proof)
+                for k in (
+                    "hardware_authorized",
+                    "promotion_authorized",
+                    "independent_fresh",
+                    "goal_complete",
+                )
+            )
+        ):
+            raise ValueError("complete exact causal proof and unpromoted model required")
     if (
         len(
             {
@@ -479,8 +535,10 @@ def main() -> None:
                 )
                 case_probe = probe if selection else None
             validate_original = (
-                case_probe is None or not np.any(case_probe)
-            ) and not a.contact_teacher
+                (case_probe is None or not np.any(case_probe))
+                and not a.contact_teacher
+                and not torque_model
+            )
             vp = velocity_policy.params
             scratch = restored_scratch_world(
                 setup.model,
@@ -549,7 +607,20 @@ def main() -> None:
                 if a.contact_teacher
                 else None
             )
-            layers = {"b/": teacher} if teacher is not None else None
+            neural_torque = (
+                SharedNativeReceiverTorqueActor(
+                    scratch,
+                    "b/",
+                    checkpoint=a.torque_checkpoint,
+                    checkpoint_hash=a.torque_checkpoint_hash,
+                    dataset_hash=train["dataset_hash"],
+                    horizon_controls=459,
+                )
+                if torque_model
+                else None
+            )
+            motor_layer = teacher if teacher is not None else neural_torque
+            layers = {"b/": motor_layer} if motor_layer is not None else None
             if (resumed["ball_forces"][:, 1, :] > 1.0).any():
                 raise ValueError("first restored boundary must precede receiver contact")
             first_contact = None
@@ -929,6 +1000,12 @@ def main() -> None:
                 teacher_active_native_commands=teacher.active_commands
                 if teacher is not None
                 else 0,
+                neural_torque_native_commands=neural_torque.commands
+                if neural_torque is not None
+                else 0,
+                neural_torque_changed_commands=neural_torque.active_commands
+                if neural_torque is not None
+                else 0,
             )
         )
         if probe is not None or selector_weights is not None or a.dynamic_boundary:
@@ -955,7 +1032,7 @@ def main() -> None:
                                 ]
                             ),
                         }
-                        if a.contact_teacher
+                        if a.contact_teacher or torque_model
                         else {}
                     ),
                     "executed_receiver_action": np.stack(executed_actions),
@@ -997,6 +1074,17 @@ def main() -> None:
         or digest(scene) != snaps["scene_hash"]
         or digest(a.role_proof) != a.role_proof_hash
         or (risk is not None and digest(a.risk_receipt) != a.risk_receipt_hash)
+        or (
+            torque_model
+            and any(
+                digest(path) != expected
+                for path, expected in (
+                    (a.torque_checkpoint, a.torque_checkpoint_hash),
+                    (a.torque_training, a.torque_training_hash),
+                    (a.torque_observation_proof, a.torque_observation_proof_hash),
+                )
+            )
+        )
         or (a.nondefault and digest(a.expanded_velocity_proof) != a.expanded_velocity_proof_hash)
         or (
             a.selector_receipt is not None
@@ -1020,7 +1108,9 @@ def main() -> None:
         a.output / "complete.json",
         dict(
             status=(
-                "RELAY_CONTACT_TEACHER_ASSISTED_PHYSICAL_NOT_SUCCESS"
+                "RELAY_NEURAL_TORQUE_RESEARCH_PHYSICAL_NOT_SUCCESS"
+                if torque_model
+                else "RELAY_CONTACT_TEACHER_ASSISTED_PHYSICAL_NOT_SUCCESS"
                 if a.contact_teacher
                 else "RELAY_SINGLE_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS"
                 if risk is not None and a.risk_variant == "single"
@@ -1067,6 +1157,10 @@ def main() -> None:
             long_probe=a.long_probe,
             contact_teacher_assisted=a.contact_teacher,
             contact_teacher_capture=a.contact_teacher_capture,
+            neural_torque_actor=torque_model,
+            torque_checkpoint_hash=a.torque_checkpoint_hash,
+            torque_training_hash=a.torque_training_hash,
+            torque_observation_proof_hash=a.torque_observation_proof_hash,
             smooth_transition_duration=a.smooth_transition_duration
             if a.smooth_transition
             else None,

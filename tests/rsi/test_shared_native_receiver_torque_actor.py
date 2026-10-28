@@ -60,3 +60,25 @@ def test_reject_wrong_checkpoint_and_unobserved_feedback(tmp_path):
     with pytest.raises(ValueError, match="actual applied"):
         actor.note_applied(np.zeros(29))
     assert actor.failed
+
+
+def test_nonzero_actor_actually_controls_only_its_own_torques(tmp_path):
+    w = world()
+    path = tmp_path / "actor.pt"
+    checkpoint(path)
+    state = torch.load(path, map_location="cpu", weights_only=True)
+    state["actor"]["net.4.bias"][:] = 0.2
+    torch.save(state, path)
+    actor = SharedNativeReceiverTorqueActor(
+        w,
+        "b/",
+        checkpoint=path,
+        checkpoint_hash=digest(path),
+        dataset_hash="test-data",
+        horizon_controls=1,
+    )
+    result = w.advance({p: np.zeros(29) for p in w.layouts}, torque_layers={"b/": actor})
+    assert actor.commands == actor.applied == actor.active_commands == 10
+    assert np.all(np.abs(result["torque"][:, w.layouts["b/"].ai]) <= w.parameters["b/"].effort)
+    assert np.any(result["applied_torque_change"][:, w.layouts["b/"].ai])
+    assert not np.any(result["applied_torque_change"][:, w.layouts["a/"].ai])
