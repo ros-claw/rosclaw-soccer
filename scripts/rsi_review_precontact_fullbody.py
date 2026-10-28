@@ -9,6 +9,7 @@ import numpy as np
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.passer_curriculum_outcome import strict_pass_receive
 from rosclaw_soccer.rsi.receiving_original_readback import original_reception_readback
+from rosclaw_soccer.rsi.strict_one_touch_return import strict_one_touch_return
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_fresh_common import clean
@@ -109,6 +110,22 @@ def main() -> None:
                             for name in row["result"]["excluded_contact_bodies"]
                         ),
                     )
+                    if row["handoff"] is not None:
+                        q = f["qpos"].reshape(-1, model.nq)
+                        v = f["qvel"].reshape(-1, model.nv)
+                        one_touch = strict_one_touch_return(
+                            q[:, layout.bq : layout.bq + 3],
+                            v[:, layout.bv : layout.bv + 2],
+                            f["ball_forces"].reshape(-1, 2, 3),
+                            f["body_failed"],
+                            target_xyz=np.asarray(row["handoff"]["return_goal"], dtype=np.float64),
+                            kick_origin_xy=np.asarray(
+                                row["handoff"]["kick_origin"][:2], dtype=np.float64
+                            ),
+                            earliest_return_substep=row["handoff"]["control"] * 10,
+                        )
+                    else:
+                        one_touch = None
                 if (
                     readback["reconstruction_exact"]
                     and readback["first_ready_control"] != row["original_receiving_ready_control"]
@@ -117,6 +134,7 @@ def main() -> None:
                         "independent physical original reception reconstruction differs"
                     )
                 value["original_readback"] = readback
+                value["one_touch_return"] = one_touch
                 value["original"] = measured(root, row)
                 value["motor_transition_executed"] = row["motor_transition_executed"]
                 value["original_receiving_ready_control"] = row["original_receiving_ready_control"]
@@ -169,6 +187,20 @@ def main() -> None:
             losses=sum(a and not b for a, b in pairs),
         )
     summary["early_transitions"] = sum(r["candidate_early_transition"] for r in rows)
+    summary["strict_one_touch_baseline"] = sum(
+        bool(
+            r["baseline"]["one_touch_return"]
+            and r["baseline"]["one_touch_return"]["strict_one_touch_return"]
+        )
+        for r in rows
+    )
+    summary["strict_one_touch_candidate"] = sum(
+        bool(
+            r["candidate"]["one_touch_return"]
+            and r["candidate"]["one_touch_return"]["strict_one_touch_return"]
+        )
+        for r in rows
+    )
     summary["precise_old_success_losses"] = sum(
         r["baseline"]["original"]["return_0p1m_and_healthy"]
         and not r["candidate"]["original"]["return_0p1m_and_healthy"]
@@ -188,6 +220,7 @@ def main() -> None:
             summary=summary,
             records=rows,
             early_transition_is_not_reception=True,
+            one_touch_metric_added_after_source_runs_started=True,
             teacher_not_learned=True,
             independent_fresh=False,
             promotion_authorized=False,
