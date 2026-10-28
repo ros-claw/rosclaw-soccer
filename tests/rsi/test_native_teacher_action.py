@@ -31,3 +31,19 @@ def test_teacher_conversion_rejects_unbound_and_overlimit_target():
         teacher_target_to_action(action, np.ones(29), np.ones(29), params)
     with pytest.raises(ValueError, match="bind"):
         teacher_target_to_action(action, np.ones(29), np.zeros(29), params)
+
+
+def test_quantized_target_bound_holds_across_parent_magnitudes():
+    rng = np.random.default_rng(719)
+    for _ in range(300):
+        params = SimpleNamespace(
+            action_scale=tuple(rng.uniform(0.1, 1.0, 29)),
+            action_offset=tuple(rng.uniform(-2.0, 2.0, 29)),
+        )
+        action = rng.uniform(-2, 2, 29).astype(np.float32)
+        nominal = target29(action, params)
+        delta = np.zeros(29)
+        delta[2] = rng.choice([-0.16, 0.16])
+        changed, actual = teacher_target_to_action(action, nominal + delta, delta, params)
+        assert abs(actual[2]) <= 0.16 + 1e-12
+        np.testing.assert_array_equal(changed[np.arange(29) != 2], action[np.arange(29) != 2])

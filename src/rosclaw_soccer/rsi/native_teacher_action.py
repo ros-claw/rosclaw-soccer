@@ -13,8 +13,8 @@ def teacher_target_to_action(
     """Invert the native float32 PD target map only on teacher-modified axes.
 
     Return the actual target difference, not the ideal float64 proposal.
-    Float32 rounding may require one or more ULPs toward the parent to keep
-    the teacher's hard 0.16 rad bound; no other axis may change.
+    Float32 rounding may require a search toward the parent to keep the
+    teacher's hard 0.16 rad bound; no other axis may change.
     """
     if (
         not isinstance(action, np.ndarray)
@@ -39,12 +39,25 @@ def teacher_target_to_action(
     new_action[mask] = (
         (proposed_target[mask].astype(np.float32) - offset[mask]) / scale[mask]
     ).astype(np.float32)
-    for _ in range(8):
-        actual = target29(new_action, params) - nominal
-        over = np.abs(actual) > 0.16 + 1e-12
-        if not over.any():
-            break
-        new_action[over] = np.nextafter(new_action[over], action[over])
+    actual = target29(new_action, params) - nominal
+    for index in np.flatnonzero(np.abs(actual) > 0.16 + 1e-12):
+        # An action ULP can be much smaller than one target ULP. Bisect in
+        # action space instead of assuming a fixed number of nextafter calls
+        # will move the float32 target calculation across its rounding bin.
+        safe = np.float32(action[index])
+        unsafe = np.float32(new_action[index])
+        for _ in range(40):
+            middle = np.float32((float(safe) + float(unsafe)) / 2)
+            if middle in (safe, unsafe):
+                break
+            trial = new_action.copy()
+            trial[index] = middle
+            difference = target29(trial, params)[index] - nominal[index]
+            if abs(difference) <= 0.16 + 1e-12:
+                safe = middle
+            else:
+                unsafe = middle
+        new_action[index] = safe
     actual = target29(new_action, params) - nominal
     if np.any(new_action[~mask] != action[~mask]) or np.max(np.abs(actual)) > 0.16 + 1e-12:
         raise ValueError("actual teacher action exceeded bound or changed parent-only axes")
