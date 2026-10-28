@@ -89,5 +89,6 @@ def compare_return_pair(
         "contact_force_threshold_n": 1.0,
         "baseline_first_foot_followthrough": first_foot_followthrough(baseline),
         "candidate_first_foot_followthrough": first_foot_followthrough(candidate),
+        "followthrough_includes_subsequent_contacts": True,
         "goal_proximity_is_not_pass_success": True,
     }

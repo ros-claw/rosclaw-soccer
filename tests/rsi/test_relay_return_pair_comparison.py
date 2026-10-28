@@ -72,6 +72,7 @@ def test_complete_followthrough_uses_actual_substeps():
         "status": "OBSERVED",
         "forward_60_controls_m": 1.0,
     }
+    assert result["followthrough_includes_subsequent_contacts"] is True
 
 
 def test_rejects_nonfinite_or_incomplete_trajectory():
