@@ -31,6 +31,24 @@ def imitation_reference_bound(declaration, reference_path, reference_hash):
     )
 
 
+def experimental_actor_state(checkpoint, kind):
+    """Extract only the requested actor; never silently fall back to a baseline."""
+    if kind == "imitation":
+        if set(checkpoint) != {"actor_state_dict"}:
+            raise ValueError("exact tensor-only imitation checkpoint required")
+        return checkpoint["actor_state_dict"]
+    if kind != "candidate" or not isinstance(checkpoint.get("policy_state_dict"), dict):
+        raise ValueError("complete PPO candidate policy required")
+    actor = {
+        key.removeprefix("actor."): value
+        for key, value in checkpoint["policy_state_dict"].items()
+        if key.startswith("actor.")
+    }
+    if not actor:
+        raise ValueError("candidate checkpoint must contain actor weights")
+    return actor
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for key in ("qualification-root", "reference-root", "output"):
@@ -53,6 +71,9 @@ def main():
     p.add_argument("--experimental-imitation-receipt", type=Path)
     p.add_argument("--experimental-imitation-hash")
     p.add_argument("--experimental-imitation-declaration-hash")
+    p.add_argument(
+        "--experimental-actor-kind", choices=("imitation", "candidate"), default="imitation"
+    )
     a = p.parse_args()
     if a.lateral_study and a.launch_frame != "heading":
         raise ValueError("lateral study requires an explicit body-heading launch")
@@ -89,6 +110,8 @@ def main():
         a.intercept_teacher or a.target_rate_filter or a.ankle_rate_filter
     ):
         raise ValueError("standalone own-feedback imitation evaluation required")
+    if a.experimental_actor_kind != "imitation" and not a.experimental_imitation_receipt:
+        raise ValueError("candidate evaluation requires an exact completed training receipt")
     if a.target_rate_filter and a.ankle_rate_filter:
         raise ValueError("choose exactly one rate filter scope")
     if (a.target_rate_filter or a.ankle_rate_filter) and (
@@ -127,7 +150,11 @@ def main():
             raise ValueError("exact completed imitation receipt required")
         imitation = json.loads(a.experimental_imitation_receipt.read_text())
         require_unpromoted_imitation(imitation)
-        imitation_path = a.experimental_imitation_receipt.parent / "imitation.pt"
+        actor_file = "candidate.pt" if a.experimental_actor_kind == "candidate" else "imitation.pt"
+        actor_hash_key = (
+            "checkpoint_hash" if a.experimental_actor_kind == "candidate" else "imitation_hash"
+        )
+        imitation_path = a.experimental_imitation_receipt.parent / actor_file
         imitation_declaration_path = a.experimental_imitation_receipt.parent / "declaration.json"
         if (
             imitation_declaration_path.is_symlink()
@@ -143,10 +170,10 @@ def main():
             or imitation_declaration["source_receipts"][0] != a.qualification_hash
         ):
             raise ValueError("matching body, training reference and declared source required")
-        if imitation_path.is_symlink() or digest(imitation_path) != imitation["imitation_hash"]:
+        if imitation_path.is_symlink() or digest(imitation_path) != imitation[actor_hash_key]:
             raise ValueError("exact confined imitation actor required")
         pins[str(a.experimental_imitation_receipt)] = a.experimental_imitation_hash
-        pins[str(imitation_path)] = imitation["imitation_hash"]
+        pins[str(imitation_path)] = imitation[actor_hash_key]
         pins[str(imitation_declaration_path)] = a.experimental_imitation_declaration_hash
     if multi:
         if len(reference["records"]) != 8:
@@ -279,9 +306,9 @@ def main():
     )
     if imitation_path is not None:
         learned = torch.load(imitation_path, map_location="cpu", weights_only=True)
-        if set(learned) != {"actor_state_dict"}:
-            raise ValueError("exact tensor-only imitation checkpoint required")
-        actor.load_state_dict(learned["actor_state_dict"], strict=True)
+        actor.load_state_dict(
+            experimental_actor_state(learned, a.experimental_actor_kind), strict=True
+        )
         if any(not torch.isfinite(value).all() for value in actor.state_dict().values()):
             raise ValueError("finite experimental imitation actor required")
     a.output.mkdir()
@@ -308,6 +335,7 @@ def main():
             training=False,
             experimental_imitation_hash=a.experimental_imitation_hash,
             experimental_imitation_declaration_hash=a.experimental_imitation_declaration_hash,
+            experimental_actor_kind=a.experimental_actor_kind if imitation_path else None,
             experimental_actor=imitation_path is not None,
             intercept_teacher=a.intercept_teacher,
             teacher_unlearned=a.intercept_teacher,
@@ -499,6 +527,7 @@ def main():
                 training=False,
                 experimental_imitation_hash=a.experimental_imitation_hash,
                 experimental_imitation_declaration_hash=a.experimental_imitation_declaration_hash,
+                experimental_actor_kind=a.experimental_actor_kind if imitation_path else None,
                 experimental_actor=imitation_path is not None,
                 intercept_teacher=a.intercept_teacher,
                 robust_teacher=a.robust_teacher,
