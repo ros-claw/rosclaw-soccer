@@ -28,6 +28,7 @@ def main():
     p.add_argument("--receiver-foot-teacher-pair", action="store_true")
     p.add_argument("--receiver-predictive-foot-shin", action="store_true")
     p.add_argument("--receiver-axis-local-fallback", action="store_true")
+    p.add_argument("--receiver-leg-limit-pair", action="store_true")
     p.add_argument("--receiver-whole-identity", action="store_true")
     p.add_argument("--receiver-center-curriculum", action="store_true")
     p.add_argument("--receiver-learned-pair", action="store_true")
@@ -59,6 +60,23 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.receiver_leg_limit_pair and (
+        a.new_context_block is None
+        or a.receiver_foot_teacher_pair
+        or a.receiver_lateral_authority
+        or a.receiver_follow_study
+        or a.receiver_whole_identity
+        or a.receiver_exploration
+        or a.receiver_learned_pair
+        or a.passer_residual_pair
+        or a.precontact_fullbody_pair
+        or a.balance_teacher_pair is not None
+        or a.balance_expanded
+        or a.successor_alignment_study
+        or a.receiver_center_curriculum
+        or a.reference_bridge_controls != [0]
+    ):
+        p.error("leg-limit projection requires an isolated development block")
     if a.receiver_axis_local_fallback and not a.receiver_predictive_foot_shin:
         p.error("axis-local fallback requires the predictive foot/shin study")
     if a.receiver_predictive_foot_shin and not a.receiver_foot_teacher_pair:
@@ -407,6 +425,16 @@ def main():
             )
             for strength in (0.0, 0.5)
         ]
+    if a.receiver_leg_limit_pair:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                receiver_leg_projection=enabled,
+            )
+            for enabled in (False, True)
+        ]
     if a.receiver_whole_identity:
         arms = [
             dict(
@@ -462,7 +490,10 @@ def main():
         (-0.2, 0.2)
         if a.receiver_center_curriculum
         else (-0.35, 0.35)
-        if a.receiver_dense_pair or a.receiver_lateral_authority or a.receiver_foot_teacher_pair
+        if a.receiver_dense_pair
+        or a.receiver_lateral_authority
+        or a.receiver_foot_teacher_pair
+        or a.receiver_leg_limit_pair
         else (-0.75, -0.35, 0.35, 0.75)
         if a.balance_expanded
         else (-0.55, 0.55)
@@ -475,7 +506,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_receiver_axis_local_fallback.development.v25"
+                "soccer.neural_relay_receiver_leg_target_projection.development.v26"
+                if a.receiver_leg_limit_pair
+                else "soccer.neural_relay_receiver_axis_local_fallback.development.v25"
                 if a.receiver_axis_local_fallback
                 else "soccer.neural_relay_receiver_predictive_foot_shin.development.v24"
                 if a.receiver_predictive_foot_shin
@@ -562,9 +595,13 @@ def main():
             and not a.receiver_learned_exploration
             and not a.passer_residual_pair
             and not a.precontact_smooth
-            and not a.receiver_foot_teacher_pair,
+            and not a.receiver_foot_teacher_pair
+            and not a.receiver_leg_limit_pair,
+            # Projected targets deliberately differ from raw actor outputs;
+            # the velocity actor's observation retains its original raw action.
             bounded_teacher_added_after_neural=a.balance_teacher_pair is not None
-            or a.receiver_foot_teacher_pair,
+            or a.receiver_foot_teacher_pair
+            or a.receiver_leg_limit_pair,
             all_bodies_initialized_once=True,
             no_ball_reposition=True,
             no_future_readiness=True,
@@ -572,6 +609,8 @@ def main():
             receiver_foot_teacher_is_unlearned=a.receiver_foot_teacher_pair,
             receiver_predictive_foot_shin_is_unlearned=a.receiver_predictive_foot_shin,
             receiver_axis_local_fallback=a.receiver_axis_local_fallback,
+            receiver_leg_projection_is_unlearned=a.receiver_leg_limit_pair,
+            receiver_actor_previous_action_remains_raw=a.receiver_leg_limit_pair,
             geometry_role_selector_is_teacher=True,
             post_touch_velocity_follow_is_unlearned_teacher=a.receiver_follow_study,
             lateral_intercept_is_unlearned_teacher=a.receiver_lateral_authority,
@@ -628,6 +667,9 @@ def main():
         )
         from rosclaw_soccer.rsi.precontact_fullbody_gate import precontact_fullbody_gate
         from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
+        from rosclaw_soccer.rsi.receiver_target_limit_projection import (
+            receiver_target_limit_projection,
+        )
         from rosclaw_soccer.rsi.receiving_handoff_opportunity import body_contact_kind
         from rosclaw_soccer.rsi.receiving_successor_alignment import (
             SuccessorAlignmentGate,
@@ -1015,6 +1057,16 @@ def main():
                             )
                         target_b = foot_trace["target"]
                         trace_v.update({"FOOT_" + k: np.asarray(v) for k, v in foot_trace.items()})
+                    if a.receiver_leg_limit_pair:
+                        layout = w.layouts["b/"]
+                        projection = receiver_target_limit_projection(
+                            np.asarray(target_b, np.float64),
+                            w.model.jnt_range[layout.joints].copy(),
+                            w.model.jnt_limited[layout.joints].astype(np.bool_),
+                            enabled=course["arm"]["receiver_leg_projection"],
+                        )
+                        target_b = projection["target"]
+                        trace_v.update({"LIMIT_" + k: np.asarray(v) for k, v in projection.items()})
                     if (
                         a.receiver_whole_identity
                         or a.receiver_exploration
@@ -1230,7 +1282,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_RECEIVER_AXIS_LOCAL_FALLBACK16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY"
+                    if a.receiver_leg_limit_pair
+                    else "NEURAL_RELAY_RECEIVER_AXIS_LOCAL_FALLBACK16_PENDING_OWN_REPLAY"
                     if a.receiver_axis_local_fallback
                     else "NEURAL_RELAY_RECEIVER_PREDICTIVE_FOOT_SHIN16_PENDING_OWN_REPLAY"
                     if a.receiver_predictive_foot_shin

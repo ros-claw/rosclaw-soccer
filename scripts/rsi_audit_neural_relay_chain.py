@@ -31,6 +31,9 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
+    leg_limit_pair = (
+        dec["protocol"] == "soccer.neural_relay_receiver_leg_target_projection.development.v26"
+    )
     axis_local_fallback = (
         dec["protocol"] == "soccer.neural_relay_receiver_axis_local_fallback.development.v25"
     )
@@ -102,6 +105,7 @@ def main():
         or follow_study
         or lateral_authority
         or foot_teacher_pair
+        or leg_limit_pair
         or balance_study
         or dec["protocol"] == "soccer.neural_relay_development_contexts.v4"
     )
@@ -111,7 +115,12 @@ def main():
         32
         if learned_exploration
         else 16
-        if whole_identity or learned_pair or passer_pair or precontact_fullbody or foot_teacher_pair
+        if whole_identity
+        or learned_pair
+        or passer_pair
+        or precontact_fullbody
+        or foot_teacher_pair
+        or leg_limit_pair
         else 64
         if balance_expanded
         else 32
@@ -125,7 +134,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_RECEIVER_AXIS_LOCAL_FALLBACK16_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY"
+        if leg_limit_pair
+        else "NEURAL_RELAY_RECEIVER_AXIS_LOCAL_FALLBACK16_PENDING_OWN_REPLAY"
         if axis_local_fallback
         else "NEURAL_RELAY_RECEIVER_PREDICTIVE_FOOT_SHIN16_PENDING_OWN_REPLAY"
         if predictive_foot_shin
@@ -196,6 +207,7 @@ def main():
             "soccer.neural_relay_receiver_foot_teacher.development.v23",
             "soccer.neural_relay_receiver_predictive_foot_shin.development.v24",
             "soccer.neural_relay_receiver_axis_local_fallback.development.v25",
+            "soccer.neural_relay_receiver_leg_target_projection.development.v26",
             "soccer.neural_relay_passer_residual_pair.development.v11",
             "soccer.neural_relay_passer_contact_exit.development.v12",
             "soccer.neural_relay_receiver_center_identity.development.v13",
@@ -222,6 +234,16 @@ def main():
             raise ValueError("exact development context identity and reference required")
         arms = (
             [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_leg_projection=enabled,
+                )
+                for enabled in (False, True)
+            ]
+            if leg_limit_pair
+            else [
                 dict(
                     start=80,
                     memory="own_shadow_carry",
@@ -335,7 +357,7 @@ def main():
             (-0.2, 0.2)
             if center_identity or center_exploration
             else (-0.35, 0.35)
-            if dense_pair or lateral_authority or foot_teacher_pair
+            if dense_pair or lateral_authority or foot_teacher_pair or leg_limit_pair
             else (-0.75, -0.35, 0.35, 0.75)
             if balance_expanded
             else (-0.55, 0.55)
@@ -394,6 +416,13 @@ def main():
             raise ValueError("explicit unlearned predictive foot/shin teacher required")
         if axis_local_fallback and dec.get("receiver_axis_local_fallback") is not True:
             raise ValueError("explicit axis-local fallback research contract required")
+        if leg_limit_pair and (
+            dec.get("receiver_leg_projection_is_unlearned") is not True
+            or dec.get("receiver_actor_previous_action_remains_raw") is not True
+            or dec.get("joint_targets_remain_actual_neural_outputs") is not False
+            or dec.get("bounded_teacher_added_after_neural") is not True
+        ):
+            raise ValueError("explicit unlearned target projection and raw action memory required")
         if balance_expanded and (
             dec.get("receiver_lateral_offsets_m") != list(sides)
             or dec.get("joint_targets_remain_actual_neural_outputs") is not False
@@ -548,6 +577,9 @@ def main():
         )
         from rosclaw_soccer.rsi.precontact_fullbody_gate import precontact_fullbody_gate
         from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
+        from rosclaw_soccer.rsi.receiver_target_limit_projection import (
+            receiver_target_limit_projection,
+        )
         from rosclaw_soccer.rsi.receiving_handoff_opportunity import body_contact_kind
         from rosclaw_soccer.rsi.receiving_successor_alignment import (
             SuccessorAlignmentGate,
@@ -875,6 +907,16 @@ def main():
                             )
                         target_b = foot_trace["target"]
                         trace_v.update({"FOOT_" + k: np.asarray(v) for k, v in foot_trace.items()})
+                    if leg_limit_pair:
+                        layout = w.layouts["b/"]
+                        projection = receiver_target_limit_projection(
+                            np.asarray(target_b, np.float64),
+                            w.model.jnt_range[layout.joints].copy(),
+                            w.model.jnt_limited[layout.joints].astype(np.bool_),
+                            enabled=course["arm"]["receiver_leg_projection"],
+                        )
+                        target_b = projection["target"]
+                        trace_v.update({"LIMIT_" + k: np.asarray(v) for k, v in projection.items()})
                     if whole_identity or exploration or learned_pair:
                         counts["receiver_onnx_calls"] += 1
                         if whole_receiver is not None:
