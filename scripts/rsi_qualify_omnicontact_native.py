@@ -25,12 +25,17 @@ def main():
     p.add_argument("--motion-reference-receipt", type=Path)
     p.add_argument("--motion-reference-receipt-hash")
     p.add_argument("--reference-ball-initial-velocity", action="store_true")
+    p.add_argument("--reference-all-initial-velocities", action="store_true")
     p.add_argument("--ankle-roll-reference", action="store_true")
     p.add_argument("--motor-pilot", type=Path)
     p.add_argument("--motor-pilot-hash")
     a = p.parse_args()
-    if a.reference_ball_initial_velocity and a.motion_reference_receipt is None:
+    if (
+        a.reference_ball_initial_velocity or a.reference_all_initial_velocities
+    ) and a.motion_reference_receipt is None:
         p.error("moving-ball research initialisation requires a derived reference receipt")
+    if a.reference_ball_initial_velocity and a.reference_all_initial_velocities:
+        p.error("choose one explicit initial velocity protocol")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
@@ -113,6 +118,7 @@ def main():
 
     motion = None
     motion_source = None
+    reference_initial = None
     if a.motion_reference is not None:
         from rosclaw_soccer.rsi.cftrack_motion_reference import load_cftrack_motion
 
@@ -124,6 +130,11 @@ def main():
         ):
             raise ValueError("motion must be in the pinned external source")
         motion = load_cftrack_motion(motion_source)
+        if a.reference_all_initial_velocities:
+            from rosclaw_soccer.rsi.omnicontact_initial_velocity import reference_initial_velocities
+            from rosclaw_soccer.training.omnicontact_reference import LAB_TO_MUJOCO
+
+            reference_initial = reference_initial_velocities(motion, np.array(LAB_TO_MUJOCO))
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
@@ -176,14 +187,20 @@ def main():
             ),
             reference_contact_is_not_actual_contact=True,
             reference_joint_positions_are_not_executed_targets=True,
-            initial_velocity="reference_ball_linear_body_and_ball_angular_zero"
+            initial_velocity="reference_full_body_and_ball_with_local_angular_conversion"
+            if a.reference_all_initial_velocities
+            else "reference_ball_linear_body_and_ball_angular_zero"
             if a.reference_ball_initial_velocity
             else "zero_author_reset_convention",
             initial_ball_linear_velocity_mps=(
                 motion["object_lin_vel_w"][0].tolist()
-                if a.reference_ball_initial_velocity and motion is not None
+                if (a.reference_ball_initial_velocity or a.reference_all_initial_velocities)
+                and motion is not None
                 else [0.0, 0.0, 0.0]
             ),
+            initial_reference_velocity_components=None
+            if reference_initial is None
+            else {k: v.tolist() for k, v in reference_initial.items()},
             direct_approach_reference=a.direct_approach_reference,
             ankle_roll_reference=a.ankle_roll_reference,
             motor_plan=asdict(motor_plan) if motor_plan else None,
@@ -235,6 +252,8 @@ def main():
     )
     if tuple(policy.kinematics.joint_names) != tuple(G1_DDS_JOINT_NAMES):
         raise ValueError("external FK/actual HG joint order mismatch")
+    if reference_initial is not None and not np.array_equal(policy.lab2mj, LAB_TO_MUJOCO):
+        raise ValueError("reference and policy joint order differ")
     policy.task, policy.reference_source = "kickball", "CFgen"
     if motion is not None:
         policy.reference_source = "NPZmotion"
@@ -260,6 +279,12 @@ def main():
             if not np.isfinite(initial_velocity).all() or np.linalg.norm(initial_velocity) > 5:
                 raise ValueError("bounded finite reference ball linear velocity required")
             data.qvel[lo.bv : lo.bv + 3] = initial_velocity
+        if reference_initial is not None:
+            data.qvel[lo.rv : lo.rv + 3] = reference_initial["root_linear"]
+            data.qvel[lo.rv + 3 : lo.rv + 6] = reference_initial["root_angular_local"]
+            data.qvel[lo.vi] = reference_initial["joints"]
+            data.qvel[lo.bv : lo.bv + 3] = reference_initial["ball_linear"]
+            data.qvel[lo.bv + 3 : lo.bv + 6] = reference_initial["ball_angular_local"]
     mujoco.mj_forward(model, data)
     order = policy.lab2mj
     params = NativePDParameters(
@@ -404,6 +429,7 @@ def main():
             reference_source="CFgen" if motion is None else "NPZmotion",
             motion_source=str(motion_source) if motion_source else None,
             reference_ball_initial_velocity=a.reference_ball_initial_velocity,
+            reference_all_initial_velocities=a.reference_all_initial_velocities,
             controls=world.control_steps,
             native_steps=world.native_steps,
             new_neural_calls=len(captured_obs),
