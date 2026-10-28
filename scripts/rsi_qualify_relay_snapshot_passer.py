@@ -27,6 +27,7 @@ from rosclaw_soccer.rsi.restored_scratch_world import restored_scratch_world
 from rosclaw_soccer.rsi.restored_shadow_motor import restored_shadow_motor
 from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
 from rosclaw_soccer.rsi.shared_native_neural_player import PlayerObservationView
+from rosclaw_soccer.rsi.shared_native_receive_teacher import SharedNativeReceiveTeacher
 from rosclaw_soccer.rsi.shared_relay_setup import (
     SharedRelaySetup,
     motion_segment,
@@ -83,6 +84,7 @@ def main() -> None:
     p.add_argument("--risk-variant", choices=("proprioception_only", "ball_augmented", "single"))
     p.add_argument("--nondefault", action="store_true")
     p.add_argument("--long-probe", action="store_true")
+    p.add_argument("--contact-teacher", action="store_true")
     p.add_argument("--dynamic-boundary", action="store_true")
     p.add_argument("--with-shadow", action="store_true")
     p.add_argument("--return-handoff", action="store_true")
@@ -107,7 +109,7 @@ def main() -> None:
     if a.long_probe and not (
         a.nondefault
         and probe is not None
-        and np.any(probe)
+        and (np.any(probe) or a.contact_teacher)
         and a.dynamic_boundary
         and a.with_shadow
         and a.return_handoff
@@ -115,6 +117,14 @@ def main() -> None:
         and not a.passer_follow_return
     ):
         raise ValueError("long probe requires bounded intervention and complete causal handoff")
+    if a.contact_teacher and (
+        not a.long_probe
+        or probe is None
+        or np.any(probe)
+        or a.risk_receipt is not None
+        or a.selector_receipt is not None
+    ):
+        raise ValueError("teacher requires isolated zero-residual long shared SIM experiment")
     if (
         len(
             {
@@ -465,7 +475,9 @@ def main() -> None:
                     else select_oof_probe(risk, **args, variant=a.risk_variant)
                 )
                 case_probe = probe if selection else None
-            validate_original = case_probe is None or not np.any(case_probe)
+            validate_original = (
+                case_probe is None or not np.any(case_probe)
+            ) and not a.contact_teacher
             vp = velocity_policy.params
             scratch = restored_scratch_world(
                 setup.model,
@@ -524,6 +536,12 @@ def main() -> None:
             for key in ("qpos", "qvel", "torque", "ball_forces"):
                 if not np.array_equal(resumed[key], physics[key][140]):
                     raise ValueError("restored coupled native substeps differ: " + key)
+            teacher = (
+                SharedNativeReceiveTeacher(scratch, "b/", horizon_controls=459)
+                if a.contact_teacher
+                else None
+            )
+            layers = {"b/": teacher} if teacher is not None else None
             if (resumed["ball_forces"][:, 1, :] > 1.0).any():
                 raise ValueError("first restored boundary must precede receiver contact")
             first_contact = None
@@ -621,7 +639,8 @@ def main() -> None:
                     {
                         "a/": ep.offset + current_action[ep.order] * ep.scale,
                         "b/": receiver_target,
-                    }
+                    },
+                    torque_layers=layers,
                 )
                 if shadow is not None:
                     shadow.commit_actual()
@@ -822,7 +841,9 @@ def main() -> None:
                             )
                         ):
                             raise ValueError(f"receiver own return policy differs at {frame}")
-                        resumed = scratch.advance({"a/": target_a, "b/": target_b})
+                        resumed = scratch.advance(
+                            {"a/": target_a, "b/": target_b}, torque_layers=layers
+                        )
                         if (
                             a.passer_follow_return
                             and not a.passer_follow_ball_delta
@@ -896,6 +917,10 @@ def main() -> None:
                 own_shadow_verified=a.with_shadow and validate_original,
                 own_shadow_initialized_at_snapshot=a.with_shadow,
                 passer_follow_controls=len(follow_controls),
+                teacher_native_commands=teacher.commands if teacher is not None else 0,
+                teacher_active_native_commands=teacher.active_commands
+                if teacher is not None
+                else 0,
             )
         )
         if probe is not None or selector_weights is not None or a.dynamic_boundary:
@@ -905,6 +930,26 @@ def main() -> None:
                         key: np.stack([sample[key] for sample in physical_samples])
                         for key in ("qpos", "qvel", "torque", "ball_forces")
                     },
+                    **(
+                        {
+                            "teacher_parent_torque": np.stack(
+                                [
+                                    sample.get("parent_torque", sample["torque"])
+                                    for sample in physical_samples
+                                ]
+                            ),
+                            "teacher_actual_torque_delta": np.stack(
+                                [
+                                    sample.get(
+                                        "applied_torque_change", np.zeros_like(sample["torque"])
+                                    )
+                                    for sample in physical_samples
+                                ]
+                            ),
+                        }
+                        if a.contact_teacher
+                        else {}
+                    ),
                     "executed_receiver_action": np.stack(executed_actions),
                     "passer_action": np.stack(passer_actions),
                     "receiver_observation": np.stack(receiver_observations),
@@ -967,7 +1012,9 @@ def main() -> None:
         a.output / "complete.json",
         dict(
             status=(
-                "RELAY_SINGLE_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS"
+                "RELAY_CONTACT_TEACHER_ASSISTED_PHYSICAL_NOT_SUCCESS"
+                if a.contact_teacher
+                else "RELAY_SINGLE_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS"
                 if risk is not None and a.risk_variant == "single"
                 else "RELAY_OOF_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS"
                 if risk is not None
@@ -1010,6 +1057,7 @@ def main() -> None:
             own_return_handoff_reconstructed=a.return_handoff and not a.smooth_transition,
             smooth_transition=a.smooth_transition,
             long_probe=a.long_probe,
+            contact_teacher_assisted=a.contact_teacher,
             smooth_transition_duration=a.smooth_transition_duration
             if a.smooth_transition
             else None,

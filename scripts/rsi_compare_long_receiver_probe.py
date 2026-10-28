@@ -62,6 +62,11 @@ def main() -> None:
             "RELAY_LONG_PROBE_CAUSAL_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS",
             "RELAY_OOF_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS",
             "RELAY_SINGLE_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS",
+            "RELAY_CONTACT_TEACHER_ASSISTED_PHYSICAL_NOT_SUCCESS",
+        )
+        or (
+            candidate.get("status") == "RELAY_CONTACT_TEACHER_ASSISTED_PHYSICAL_NOT_SUCCESS"
+            and candidate.get("contact_teacher_assisted") is not True
         )
         or baseline.get("smooth_transition_duration") != 10
         or candidate.get("smooth_transition_duration") != 10
