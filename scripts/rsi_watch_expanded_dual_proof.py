@@ -28,6 +28,7 @@ def main() -> None:
     ):
         p.add_argument("--" + key, required=True)
     p.add_argument("--timeout-sec", type=int, default=7200)
+    p.add_argument("--with-shadow", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if (
@@ -142,7 +143,8 @@ def main() -> None:
             a.expected_head,
             "--output",
             str(a.output),
-        ],
+        ]
+        + (["--with-shadow"] if a.with_shadow else []),
         check=True,
     )
 

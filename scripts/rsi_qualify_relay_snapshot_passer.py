@@ -2,6 +2,7 @@
 
 import argparse
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,9 +19,14 @@ from rosclaw_soccer.rsi.receiver_counterfactual_residual import receiver_counter
 from rosclaw_soccer.rsi.relay_restored_receiving_role import restored_receiving_role
 from rosclaw_soccer.rsi.restored_motion_reference import restored_motion_reference
 from rosclaw_soccer.rsi.restored_scratch_world import restored_scratch_world
+from rosclaw_soccer.rsi.restored_shadow_motor import restored_shadow_motor
 from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
 from rosclaw_soccer.rsi.shared_native_neural_player import PlayerObservationView
-from rosclaw_soccer.rsi.shared_relay_setup import SharedRelaySetup
+from rosclaw_soccer.rsi.shared_relay_setup import (
+    SharedRelaySetup,
+    motion_segment,
+    receiving_target_for_player,
+)
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_context_recovery_common import check_pins
@@ -48,6 +54,7 @@ def main() -> None:
     p.add_argument("--selector-receipt-hash")
     p.add_argument("--nondefault", action="store_true")
     p.add_argument("--dynamic-boundary", action="store_true")
+    p.add_argument("--with-shadow", action="store_true")
     p.add_argument("--expanded-velocity-proof", type=Path)
     p.add_argument("--expanded-velocity-proof-hash")
     a = p.parse_args()
@@ -63,6 +70,8 @@ def main() -> None:
         raise ValueError("expanded zero-only proof requires exact expanded receiver inference")
     if a.dynamic_boundary and not a.nondefault:
         raise ValueError("dynamic boundary qualification requires expanded source bank")
+    if a.with_shadow and not a.nondefault:
+        raise ValueError("shadow qualification requires expanded source bank")
     if a.nondefault:
         if (
             a.expanded_velocity_proof.is_symlink()
@@ -210,6 +219,7 @@ def main() -> None:
         snap = a.snapshots / item["snapshot"]
         trace, physical = bind(root, row, "passer_nn"), bind(root, row, "physics")
         initial, velocity = bind(root, row, "initial"), bind(root, row, "receiver_velocity")
+        shadow_path = bind(root, row, "receiver_shadow") if a.with_shadow else None
         if (
             snap.is_symlink()
             or snap.resolve().parent != a.snapshots.resolve()
@@ -218,6 +228,7 @@ def main() -> None:
             or physical is None
             or initial is None
             or velocity is None
+            or (a.with_shadow and shadow_path is None)
         ):
             raise ValueError("confined snapshot and exact private source histories required")
         data = mujoco.MjData(setup.model)
@@ -239,6 +250,9 @@ def main() -> None:
             np.load(physical, allow_pickle=False) as physics,
             np.load(initial, allow_pickle=False) as initial_data,
             np.load(velocity, allow_pickle=False) as velocity_data,
+            np.load(shadow_path, allow_pickle=False)
+            if a.with_shadow
+            else nullcontext(None) as shadow_data,
         ):
             if (
                 len(t["NN_obs"]) <= 140
@@ -355,8 +369,44 @@ def main() -> None:
                     "b/": physics["target_b"][139].copy(),
                 },
             )
+            shadow = None
+            if a.with_shadow:
+                if (
+                    len(shadow_data["control"]) <= 140
+                    or not np.array_equal(shadow_data["control"][:141], np.arange(141))
+                    or not np.array_equal(shadow_data["h_before"][140], shadow_data["h_after"][139])
+                    or not np.array_equal(shadow_data["c_before"][140], shadow_data["c_after"][139])
+                ):
+                    raise ValueError("complete own prior shadow recurrent history required")
+                initial_world = SimpleNamespace(
+                    data=SimpleNamespace(qpos=initial_data["qpos"], qvel=initial_data["qvel"]),
+                    layouts={"a/": layout},
+                )
+                shadow = restored_shadow_motor(
+                    scratch,
+                    "b/",
+                    actor,
+                    clip=motion_segment(ep.clip, row["course"]["arm"]["start"]),
+                    torso_index=ep.torso_index,
+                    build_observation=ep.build_observation,
+                    goal=receiving_target_for_player(initial_world, "a/"),
+                    offset=ep.offset,
+                    scale=ep.scale,
+                    order=ep.order,
+                    previous_action=shadow_data["obs"][140, 125:154].copy(),
+                    hidden=shadow_data["h_before"][140].copy(),
+                    cell=shadow_data["c_before"][140].copy(),
+                    observed_controls=140,
+                )
+                shadow_trace = shadow.observe()
+                if any(
+                    not np.array_equal(shadow_trace[k], shadow_data[k][140]) for k in shadow_trace
+                ):
+                    raise ValueError("restored own shadow observation or inference differs at 140")
             readiness = OnlineReceivingBoundary(scratch, "b/") if a.dynamic_boundary else None
             resumed = scratch.advance({"a/": passer_target, "b/": receiver_target})
+            if shadow is not None:
+                shadow.commit_actual()
             for key in ("qpos", "qvel", "torque", "ball_forces"):
                 if not np.array_equal(resumed[key], physics[key][140]):
                     raise ValueError("restored coupled native substeps differ: " + key)
@@ -381,6 +431,13 @@ def main() -> None:
                     break
                 mujoco.mj_forward(setup.model, scratch.data)
                 view = PlayerObservationView(scratch, "a/")
+                if shadow is not None:
+                    shadow_trace = shadow.observe()
+                    if any(
+                        not np.array_equal(shadow_trace[k], shadow_data[k][frame])
+                        for k in shadow_trace
+                    ):
+                        raise ValueError(f"own actual shadow recurrence differs at {frame}")
                 if a.dynamic_boundary:
                     ref_pos, ref_vel, ref_ang = restored_motion_reference(
                         ep.clip, ep.torso_index, frame
@@ -452,6 +509,8 @@ def main() -> None:
                         "b/": receiver_target,
                     }
                 )
+                if shadow is not None:
+                    shadow.commit_actual()
                 physical_samples.append(resumed)
                 executed_actions.append(receiver_action.copy())
                 passer_actions.append(current_action.copy())
@@ -499,6 +558,9 @@ def main() -> None:
             or digest(physical) != row["artifacts"]["physics"]["hash"]
             or digest(initial) != row["artifacts"]["initial"]["hash"]
             or digest(velocity) != row["artifacts"]["receiver_velocity"]["hash"]
+            or (
+                a.with_shadow and digest(shadow_path) != row["artifacts"]["receiver_shadow"]["hash"]
+            )
         ):
             raise ValueError("original physical or neural input changed")
         rows.append(
@@ -520,6 +582,7 @@ def main() -> None:
                 receiving_ready=bool(ready),
                 last_control=scratch.control_steps,
                 selector_class=selection,
+                own_shadow_verified=a.with_shadow,
             )
         )
         if probe is not None or selector_weights is not None or a.dynamic_boundary:
@@ -591,6 +654,7 @@ def main() -> None:
             future_controls_used=False,
             receiver_role_selector_verified_at_boundary=True,
             causal_receiving_boundary_reconstructed=a.dynamic_boundary,
+            own_shadow_recurrence_verified=a.with_shadow,
             coupled_physics_continuation_verified=all(
                 r["coupled_native_substeps_exact"] for r in rows
             ),
