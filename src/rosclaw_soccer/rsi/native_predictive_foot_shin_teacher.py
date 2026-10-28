@@ -24,12 +24,15 @@ class NativePredictiveFootShinTeacher:
         early_intercept: bool = False,
         contact_lead: bool = False,
         all_knee_colliders: bool = False,
+        max_delta_rad: float = 0.16,
     ) -> None:
         if (
             type(axis_local_fallback) is not bool
             or type(early_intercept) is not bool
             or type(contact_lead) is not bool
             or type(all_knee_colliders) is not bool
+            or type(max_delta_rad) is not float
+            or not 0 < max_delta_rad <= 0.2
             or (contact_lead and not early_intercept)
         ):
             raise ValueError("explicit axis-local fallback and early-intercept flags required")
@@ -37,6 +40,7 @@ class NativePredictiveFootShinTeacher:
         self.early_intercept = early_intercept
         self.contact_lead = contact_lead
         self.all_knee_colliders = all_knee_colliders
+        self.max_delta_rad = max_delta_rad
         self.next_frame = 0
         self.foot: int | None = None
         self.previous_delta = np.zeros(29, dtype=np.float64)
@@ -103,6 +107,7 @@ class NativePredictiveFootShinTeacher:
                 shin_gap_jacobian=np.zeros((2, 29)),
                 foot=foot,
                 enabled=False,
+                max_delta_rad=self.max_delta_rad,
                 axis_local_fallback=self.axis_local_fallback,
             )
             self.previous_delta = result["applied_delta"].copy()
@@ -166,6 +171,7 @@ class NativePredictiveFootShinTeacher:
             shin_gap_jacobian=gradients,
             foot=foot,
             enabled=active,
+            max_delta_rad=self.max_delta_rad,
             axis_local_fallback=self.axis_local_fallback,
         )
         self.previous_delta = result["applied_delta"].copy()

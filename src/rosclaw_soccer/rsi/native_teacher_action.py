@@ -8,13 +8,18 @@ from rosclaw_soccer.providers.g1.velocity_policy import target29
 
 
 def teacher_target_to_action(
-    action: np.ndarray, proposed_target: np.ndarray, proposed_delta: np.ndarray, params: Any
+    action: np.ndarray,
+    proposed_target: np.ndarray,
+    proposed_delta: np.ndarray,
+    params: Any,
+    *,
+    max_delta_rad: float = 0.16,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Invert the native float32 PD target map only on teacher-modified axes.
 
     Return the actual target difference, not the ideal float64 proposal.
     Float32 rounding may require a search toward the parent to keep the
-    teacher's hard 0.16 rad bound; no other axis may change.
+    teacher's declared bound; no other axis may change.
     """
     if (
         not isinstance(action, np.ndarray)
@@ -26,7 +31,9 @@ def teacher_target_to_action(
         or proposed_delta.shape != (29,)
         or not np.isfinite(proposed_target).all()
         or not np.isfinite(proposed_delta).all()
-        or np.max(np.abs(proposed_delta)) > 0.16 + 1e-12
+        or type(max_delta_rad) is not float
+        or not 0 < max_delta_rad <= 0.16
+        or np.max(np.abs(proposed_delta)) > max_delta_rad + 1e-12
     ):
         raise ValueError("bounded finite teacher proposal and actual action required")
     nominal = target29(action, params)
@@ -40,7 +47,7 @@ def teacher_target_to_action(
         (proposed_target[mask].astype(np.float32) - offset[mask]) / scale[mask]
     ).astype(np.float32)
     actual = target29(new_action, params) - nominal
-    for index in np.flatnonzero(np.abs(actual) > 0.16 + 1e-12):
+    for index in np.flatnonzero(np.abs(actual) > max_delta_rad + 1e-12):
         # An action ULP can be much smaller than one target ULP. Bisect in
         # action space instead of assuming a fixed number of nextafter calls
         # will move the float32 target calculation across its rounding bin.
@@ -53,13 +60,13 @@ def teacher_target_to_action(
             trial = new_action.copy()
             trial[index] = middle
             difference = target29(trial, params)[index] - nominal[index]
-            if abs(difference) <= 0.16 + 1e-12:
+            if abs(difference) <= max_delta_rad + 1e-12:
                 safe = middle
             else:
                 unsafe = middle
         new_action[index] = safe
     actual = target29(new_action, params) - nominal
-    if np.any(new_action[~mask] != action[~mask]) or np.max(np.abs(actual)) > 0.16 + 1e-12:
+    if np.any(new_action[~mask] != action[~mask]) or np.max(np.abs(actual)) > max_delta_rad + 1e-12:
         raise ValueError("actual teacher action exceeded bound or changed parent-only axes")
     if not np.allclose(actual, proposed_delta, atol=1e-6, rtol=0):
         raise ValueError("actual target cannot represent bounded proposal")

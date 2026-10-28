@@ -20,11 +20,14 @@ def main():
     p.add_argument("--lateral-study", action="store_true")
     p.add_argument("--receive-window", type=int, choices=(40, 60), default=40)
     p.add_argument("--intercept-teacher", action="store_true")
+    p.add_argument("--robust-teacher", action="store_true")
     a = p.parse_args()
     if a.lateral_study and a.launch_frame != "heading":
         raise ValueError("lateral study requires an explicit body-heading launch")
     if a.intercept_teacher and (not a.lateral_study or a.receive_window != 60):
         raise ValueError("teacher requires the declared 60-control lateral study")
+    if a.robust_teacher and not a.intercept_teacher:
+        raise ValueError("robust authority bound requires explicit teacher")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
 
@@ -202,6 +205,7 @@ def main():
                 axis_local_fallback=True,
                 all_knee_colliders=True,
                 reject_actual_slew_conflict=True,
+                max_delta_rad=0.012 if a.robust_teacher else 0.16,
             )
             if a.intercept_teacher
             else None,
@@ -230,6 +234,7 @@ def main():
                     early_intercept=True,
                     contact_lead=True,
                     all_knee_colliders=True,
+                    max_delta_rad=0.012 if a.robust_teacher else 0.16,
                 )
                 for _ in range(env.worlds)
             ]
@@ -264,7 +269,11 @@ def main():
                         ) from error
                     if np.any(proposal["applied_delta"]):
                         action[i], teacher_delta[i] = teacher_target_to_action(
-                            action[i], proposal["target"], proposal["applied_delta"], params
+                            action[i],
+                            proposal["target"],
+                            proposal["applied_delta"],
+                            params,
+                            max_delta_rad=0.012 if a.robust_teacher else 0.16,
                         )
                         teachers[i].previous_delta = teacher_delta[i].copy()
                     try:
@@ -312,6 +321,7 @@ def main():
                 failed=int(raw["terminated"].sum()),
                 training=False,
                 intercept_teacher=a.intercept_teacher,
+                robust_teacher=a.robust_teacher,
                 teacher_active_controls=int(raw["teacher_active"].sum()),
                 teacher_changed_controls=int(np.any(raw["teacher_delta"] != 0, axis=-1).sum()),
                 independent_replay=False,

@@ -57,3 +57,16 @@ def test_slew_conflict_is_rejected_instead_of_snapping_to_parent():
     next_delta = previous.copy()
     next_delta[9] += 0.025
     require_teacher_slew(previous, next_delta)
+
+
+def test_small_declared_authority_also_bounds_float32_realized_target():
+    params = SimpleNamespace(action_scale=(0.23,) * 29, action_offset=(1.9,) * 29)
+    action = np.linspace(-1, 1, 29, dtype=np.float32)
+    nominal = target29(action, params)
+    delta = np.zeros(29)
+    delta[9] = -0.012
+    _, realized = teacher_target_to_action(
+        action, nominal + delta, delta, params, max_delta_rad=0.012
+    )
+    assert abs(realized[9]) <= 0.012 + 1e-12
+    require_teacher_slew(-realized, realized)
