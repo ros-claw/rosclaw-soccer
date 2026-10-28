@@ -69,14 +69,6 @@ def predictive_foot_shin_target(
     leg = slice(6 * foot, 6 * foot + 6)
     predicted_gap = shin_gap + horizon_sec * shin_gap_rate
     desired_gap = np.clip(target_gap_m - predicted_gap, 0.0, 0.08)
-    requested = np.zeros(29, dtype=np.float64)
-    if enabled:
-        # Two shin rows and the selected foot share the same six leg joints.
-        # A damped least-squares correction is merely an instantaneous local
-        # proposal; its dynamic tracking and contact outcome remain unproved.
-        jac = np.vstack((foot_jacobian[:, leg], 2.0 * shin_gap_jacobian[:, leg]))
-        desired = np.concatenate((foot_displacement, 2.0 * desired_gap))
-        requested[leg] = np.linalg.solve(jac.T @ jac + 0.04**2 * np.eye(6), jac.T @ desired)
     lower = np.maximum.reduce(
         (
             np.full(6, -max_delta_rad),
@@ -91,10 +83,28 @@ def predictive_foot_shin_target(
             joint_ranges[leg, 1] - nominal[leg],
         )
     )
-    fallback = bool(np.any(lower > upper))
+    invalid = lower > upper
+    outside_parent = (nominal[leg] < joint_ranges[leg, 0]) | (nominal[leg] > joint_ranges[leg, 1])
+    # A parent target can already lie outside the physical range. An axis
+    # that has never received our correction is frozen exactly at that parent,
+    # not repaired or falsely certified. If our own previous nonzero correction
+    # cannot meet slew and physical limits simultaneously, abstain entirely.
+    fallback = bool(np.any(invalid & (previous_delta[leg] != 0)))
+    frozen = invalid | (outside_parent & (previous_delta[leg] == 0))
+    free = ~frozen
+    requested = np.zeros(29, dtype=np.float64)
+    if enabled and not fallback and np.any(free):
+        # Only feasible axes participate in the task solution.
+        jac = np.vstack((foot_jacobian[:, leg], 2.0 * shin_gap_jacobian[:, leg]))[:, free]
+        desired = np.concatenate((foot_displacement, 2.0 * desired_gap))
+        leg_request = requested[leg]
+        leg_request[free] = np.linalg.solve(
+            jac.T @ jac + 0.04**2 * np.eye(int(free.sum())), jac.T @ desired
+        )
     delta = np.zeros(29, dtype=np.float64)
     if not fallback:
-        delta[leg] = np.clip(requested[leg], lower, upper)
+        leg_delta = delta[leg]
+        leg_delta[free] = np.clip(requested[leg][free], lower[free], upper[free])
     target = nominal.copy() if not np.any(delta) else nominal + delta
     return dict(
         target=target,
@@ -103,5 +113,6 @@ def predictive_foot_shin_target(
         predicted_shin_gap=predicted_gap,
         desired_shin_clearance=desired_gap,
         fallback=fallback,
+        frozen_parent_axes=frozen,
         enabled=enabled,
     )

@@ -48,9 +48,20 @@ def test_disable_slews_previous_correction_toward_zero():
     assert predictive_foot_shin_target(**args)["applied_delta"][3] == pytest.approx(0.025)
 
 
-def test_infeasible_joint_limits_fall_back_to_parent():
+def test_outside_parent_axis_is_frozen_without_disabling_other_axes():
     args = inputs()
     args["nominal"][0] = 3
+    out = predictive_foot_shin_target(**args)
+    assert not out["fallback"]
+    assert out["frozen_parent_axes"][0]
+    assert out["target"][0] == args["nominal"][0]
+    assert out["applied_delta"][3] > 0
+
+
+def test_nonzero_prior_correction_with_infeasible_bounds_falls_back():
+    args = inputs()
+    args["nominal"][0] = 3
+    args["previous_delta"][0] = 0.01
     out = predictive_foot_shin_target(**args)
     assert out["fallback"]
     np.testing.assert_array_equal(out["target"], args["nominal"])
