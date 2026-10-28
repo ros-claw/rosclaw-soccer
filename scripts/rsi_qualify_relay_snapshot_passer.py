@@ -144,7 +144,7 @@ def main() -> None:
         mujoco.mj_forward(setup.model, data)
         view = PlayerObservationView(SimpleNamespace(data=data, layouts={"a/": layout}), "a/")
         ep = setup.episodes[item["context"]]
-        if ep.clip.length < 176 or (row["handoff"] is not None and row["handoff"]["control"] < 176):
+        if ep.clip.length < 178 or (row["handoff"] is not None and row["handoff"]["control"] < 178):
             raise ValueError("contact proof must stop before actual motion or receiver handoff")
         with (
             np.load(trace, allow_pickle=False) as t,
@@ -276,7 +276,7 @@ def main() -> None:
             previous_receiver_action = receiver_action.copy()
             previous_receiver_phase = receiver_phase
             past_ball_vel = np.concatenate((past_ball_vel, receiver_v[None, 35:37]), axis=0)
-            for frame in range(141, 176):
+            for frame in range(141, 178):
                 mujoco.mj_forward(setup.model, scratch.data)
                 view = PlayerObservationView(scratch, "a/")
                 obs = ep.build_observation(
@@ -329,7 +329,7 @@ def main() -> None:
                 ):
                     raise ValueError(f"restored own live policy history differs at {frame}")
                 if probe is not None:
-                    amplitude = float(np.sin(np.pi * (frame - 140) / 36.0) ** 2)
+                    amplitude = float(np.sin(np.pi * (frame - 140) / 38.0) ** 2)
                     receiver_action, receiver_target = receiver_counterfactual_residual(
                         receiver_action, probe, velocity_policy.params, amplitude=amplitude
                     )

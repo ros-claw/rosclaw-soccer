@@ -42,3 +42,13 @@ def test_nonfinite_rejected():
     cand["qvel"][1, 0, 0] = np.nan
     with pytest.raises(ValueError, match="finite aligned"):
         compare(base, cand)
+
+
+def test_half_second_after_early_contact_requires_adequate_horizon():
+    base, cand = trajectory(38), trajectory(38)
+    cand["ball_forces"][11, 7, 1, 0] = 5
+    result = compare(base, cand)
+    assert result["candidate"]["first_contact"]["half_second_observed"] is True
+    assert result["candidate"]["first_contact"]["first_contact_substep"] == 117
+    short = {k: v[:36] for k, v in cand.items()}
+    assert compare(base, short)["candidate"]["first_contact"]["half_second_observed"] is False

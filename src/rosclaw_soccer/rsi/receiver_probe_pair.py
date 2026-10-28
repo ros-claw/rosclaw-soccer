@@ -31,7 +31,7 @@ def compare_receiver_probe_pair(
             ):
                 raise ValueError("finite aligned shared native substeps required")
             lengths.add(len(a))
-        if len(lengths) != 1 or not 1 <= lengths.pop() <= 36:
+        if len(lengths) != 1 or not 1 <= lengths.pop() <= 38:
             raise ValueError("bounded internally aligned physical history required")
     if any(not np.array_equal(baseline[k][0], candidate[k][0]) for k in shapes):
         raise ValueError("identical first actual shared control required")
