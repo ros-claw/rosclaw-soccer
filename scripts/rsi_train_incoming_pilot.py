@@ -34,6 +34,7 @@ def main():
         raise ValueError("exact source receipts required")
     qual, incoming = json.loads(qual_path.read_text()), json.loads(incoming_path.read_text())
     motion = a.motion_reference_root is not None
+    motion_multi = False
     if motion != bool(a.motion_reference_hash):
         raise ValueError("motion reference requires an exact root and hash together")
     if qual.get("status") != "NATIVE_CONTACT24_COURSE_QUALIFIED_NOT_SKILL":
@@ -43,11 +44,18 @@ def main():
         if digest(reference_path) != a.motion_reference_hash:
             raise ValueError("exact MotionDecode reference receipt required")
         reference = json.loads(reference_path.read_text())
+        motion_multi = (
+            reference.get("status") == "MOTIONDECODE_TRAIN8_KINEMATIC_FK_NOT_TRACKED_SKILL"
+        )
         if (
             incoming.get("status") != "MOTIONDECODE_INCOMING_SINGLE_ACTOR_PROBE_NOT_SKILL"
             or incoming.get("reference_hash") != a.motion_reference_hash
-            or reference.get("status")
-            != "MOTIONDECODE_KINEMATIC_NATIVE_FK_REFERENCE_NOT_TRACKED_SKILL"
+            or (
+                not motion_multi
+                and reference.get("status")
+                != "MOTIONDECODE_KINEMATIC_NATIVE_FK_REFERENCE_NOT_TRACKED_SKILL"
+            )
+            or incoming.get("reference_clip_count") != (8 if motion_multi else 1)
             or incoming.get("launch_frame") != "heading"
             or incoming.get("training") is not False
         ):
@@ -71,7 +79,15 @@ def main():
     }
     if motion:
         pins[str(reference_path)] = a.motion_reference_hash
-        pins[str(a.motion_reference_root / "reference.npz")] = reference["raw_hash"]
+        if motion_multi:
+            if len(reference["records"]) != 8:
+                raise ValueError("complete declared eight clip references required")
+            for i, record in enumerate(reference["records"]):
+                pins[str(a.motion_reference_root / f"reference-{i:02d}.npz")] = record[
+                    "reference_hash"
+                ]
+        else:
+            pins[str(a.motion_reference_root / "reference.npz")] = reference["raw_hash"]
     check_pins(pins)
 
     def pinned(suffix):
@@ -122,10 +138,18 @@ def main():
     if motion:
         if pins[str(model_path)] != reference["model_hash"]:
             raise ValueError("actual reference model must match")
-        with np.load(a.motion_reference_root / "reference.npz", allow_pickle=False) as z:
-            plan = {k.removeprefix("plan_"): z[k].copy() for k in z.files if k.startswith("plan_")}
-            body = {k.removeprefix("body_"): z[k].copy() for k in z.files if k.startswith("body_")}
-        plans, refs = [plan] * 8, [body] * 8
+        plans, refs = [], []
+        for i in range(8):
+            path = a.motion_reference_root / (
+                f"reference-{i:02d}.npz" if motion_multi else "reference.npz"
+            )
+            with np.load(path, allow_pickle=False) as z:
+                plans.append(
+                    {k.removeprefix("plan_"): z[k].copy() for k in z.files if k.startswith("plan_")}
+                )
+                refs.append(
+                    {k.removeprefix("body_"): z[k].copy() for k in z.files if k.startswith("body_")}
+                )
     else:
         plans = []
         for name in TRAIN_MOTION_NAMES:
@@ -185,7 +209,9 @@ def main():
             kick_derived_motion_reference=not motion,
             motiondecode_reference=motion,
             motion_reference_hash=a.motion_reference_hash,
-            one_motion_clip_and_overlapping_reference_windows=motion,
+            motion_reference_clip_count=(8 if motion_multi else 1) if motion else 0,
+            overlapping_reference_windows=motion,
+            reference_group_independence_unproven=motion,
             planar_capture_distance=True,
             actor_learning_rate=3e-6,
             post_update_rollout_kl_limit=0.02,
