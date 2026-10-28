@@ -11,6 +11,7 @@ from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.relay_follow_prefix_audit import verify_follow_prefix
 from rosclaw_soccer.rsi.relay_return_pair_comparison import compare_return_pair
 from rosclaw_soccer.rsi.relay_snapshot_cases import select_relay_snapshot_cases
+from rosclaw_soccer.rsi.relay_teammate_successor import teammate_successor
 from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
@@ -93,9 +94,10 @@ def main() -> None:
         raise ValueError("exact native scene required")
     scene_hash = digest(scene)
     model = mujoco.MjModel.from_xml_path(str(scene))
-    ball_q = NativeVelocityLayout(
+    teammate = NativeVelocityLayout(
         model, robot_prefix="a/", ball_body_name="soccer_ball", player_count=2
-    ).bq
+    )
+    ball_q = teammate.bq
     original = {
         r["index"]: r for r in select_relay_snapshot_cases(source["records"], nondefault=True)
     }
@@ -144,12 +146,28 @@ def main() -> None:
             ball_qpos=ball_q,
             return_goal=goal,
         )
+        successors = [
+            teammate_successor(
+                data["qpos"],
+                data["qvel"],
+                data["ball_forces"],
+                return_start=br["receiver_velocity_controls"],
+                ball_q=teammate.bq,
+                ball_v=teammate.bv,
+                teammate_q=teammate.rq,
+                teammate_v=teammate.rv,
+                timestep=float(model.opt.timestep),
+            )
+            for data in arrays
+        ]
         rows.append(
             dict(
                 index=index,
                 receiving_ready=bool(handoff),
                 baseline_body_failure=br["body_failure"],
                 candidate_body_failure=cr["body_failure"],
+                baseline_teammate_successor=successors[0],
+                candidate_teammate_successor=successors[1],
                 **prefix,
                 **measured,
             )
