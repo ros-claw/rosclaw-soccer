@@ -23,7 +23,10 @@ def main() -> None:
     a = p.parse_args()
     clean(a.expected_head)
     if (
-        re.fullmatch(r"rosclaw-passer-velocity-(?:recovery|blend)-b0-[0-9]{8}\.service", a.unit)
+        re.fullmatch(
+            r"rosclaw-passer-(?:velocity-(?:recovery|blend)|blend-fix)-b0-[0-9]{8}\.service",
+            a.unit,
+        )
         is None
         or not 1 <= a.timeout_sec <= 7200
         or a.output.exists()
