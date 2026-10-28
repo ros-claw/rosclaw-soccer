@@ -28,18 +28,29 @@ class NativeReceiveCredit:
     It is a shaping signal, not a match success or safety certification.
     """
 
-    def __init__(self, worlds: int):
-        if type(worlds) is not int or worlds < 1:
+    def __init__(self, worlds: int, *, strict_native: bool = False):
+        if type(worlds) is not int or worlds < 1 or type(strict_native) is not bool:
             raise ValueError("positive explicit world count required")
         self.worlds = worlds
+        self.strict_native = strict_native
         self.next_step = 0
         self.foot_seen = np.zeros(worlds, dtype=bool)
         self.nonfoot_seen = np.zeros(worlds, dtype=bool)
         self.capture_emitted = np.zeros(worlds, dtype=bool)
         self.stable_controls = np.zeros(worlds, dtype=np.int64)
+        self.stable_native_samples = np.zeros(worlds, dtype=np.int64)
 
     def step(
-        self, *, step, forces, active, ball_root_planar_distance_m, relative_speed_mps, healthy
+        self,
+        *,
+        step,
+        forces,
+        active,
+        ball_root_planar_distance_m,
+        relative_speed_mps,
+        healthy,
+        native_planar_distance_m=None,
+        native_relative_speed_mps=None,
     ):
         f, a, dist, speed, good = map(
             np.asarray, (forces, active, ball_root_planar_distance_m, relative_speed_mps, healthy)
@@ -60,6 +71,18 @@ class NativeReceiveCredit:
             or np.any(speed < 0)
         ):
             raise ValueError("ordered finite actual native receiving data required")
+        if self.strict_native:
+            native_dist = np.asarray(native_planar_distance_m)
+            native_speed = np.asarray(native_relative_speed_mps)
+            if (
+                native_dist.shape != (self.worlds, 10)
+                or native_speed.shape != (self.worlds, 10)
+                or not np.isfinite(native_dist).all()
+                or not np.isfinite(native_speed).all()
+                or np.any(native_dist < 0)
+                or np.any(native_speed < 0)
+            ):
+                raise ValueError("all finite 10-substep receiving measurements required")
         first_foot = np.zeros(self.worlds, dtype=np.float32)
         first_nonfoot = np.zeros(self.worlds, dtype=np.float32)
         foot_seen_before_control = self.foot_seen.copy()
@@ -79,10 +102,23 @@ class NativeReceiveCredit:
             & (speed <= 0.5)
         )
         self.stable_controls[a] = np.where(eligible[a], self.stable_controls[a] + 1, 0)
-        capture = eligible & (self.stable_controls >= 10) & ~self.capture_emitted
+        if self.strict_native:
+            native_base = a & foot_seen_before_control & ~self.nonfoot_seen & good
+            capture = np.zeros(self.worlds, dtype=bool)
+            for j in range(10):
+                sample_eligible = (
+                    native_base & (native_dist[:, j] <= 0.65) & (native_speed[:, j] <= 0.5)
+                )
+                self.stable_native_samples[a] = np.where(
+                    sample_eligible[a], self.stable_native_samples[a] + 1, 0
+                )
+                capture |= sample_eligible & (self.stable_native_samples >= 100)
+            capture &= ~self.capture_emitted
+        else:
+            capture = eligible & (self.stable_controls >= 10) & ~self.capture_emitted
         self.capture_emitted |= capture
         self.next_step += 1
-        return dict(
+        result = dict(
             first_clean_foot=first_foot,
             first_nonfoot=first_nonfoot,
             sustained_capture=capture.astype(np.float32),
@@ -90,3 +126,6 @@ class NativeReceiveCredit:
             contaminated=self.nonfoot_seen.copy(),
             stable_controls=self.stable_controls.copy(),
         )
+        if self.strict_native:
+            result["stable_native_samples"] = self.stable_native_samples.copy()
+        return result

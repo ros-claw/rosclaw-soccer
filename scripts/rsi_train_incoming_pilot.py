@@ -28,6 +28,7 @@ def main():
     p.add_argument("--train-target-rate-filter", action="store_true")
     p.add_argument("--ball-only-adaptation", action="store_true")
     p.add_argument("--dense-shin-risk", action="store_true")
+    p.add_argument("--strict-native-capture", action="store_true")
     p.add_argument("--demonstrations-root", type=Path)
     p.add_argument("--demonstrations-hash")
     p.add_argument("--resume-checkpoint", type=Path)
@@ -72,6 +73,8 @@ def main():
         raise ValueError("ball-only adaptation requires separate dev bank and no target filter")
     if a.dense_shin_risk and not expanded:
         raise ValueError("dense shin risk requires the expanded receiving protocol")
+    if a.strict_native_capture and not expanded:
+        raise ValueError("strict native capture requires the expanded receiving protocol")
     if bool(a.demonstrations_root) != bool(a.demonstrations_hash):
         raise ValueError("demonstration root and exact receipt hash required together")
     if a.demonstrations_root and (
@@ -358,6 +361,7 @@ def main():
             receive_reward=True,
             receive_window=60 if expanded else 40,
             dense_shin_risk=a.dense_shin_risk and not development,
+            strict_native_capture=a.strict_native_capture,
         )
 
     a.output.mkdir()
@@ -389,6 +393,7 @@ def main():
             actor_learning_rate=3e-5 if a.ball_only_adaptation else 3e-6,
             ball_only_adaptation=a.ball_only_adaptation,
             dense_shin_risk=a.dense_shin_risk,
+            strict_native_capture=a.strict_native_capture,
             demonstrations_hash=a.demonstrations_hash,
             imitation=imitation_metrics,
             dense_shin_risk_weight=0.1 if a.dense_shin_risk else None,
@@ -414,6 +419,7 @@ def main():
         train_target_rate_filter=a.train_target_rate_filter,
         ball_only_adaptation=a.ball_only_adaptation,
         dense_shin_risk=a.dense_shin_risk,
+        strict_native_capture=a.strict_native_capture,
         demonstrations_hash=a.demonstrations_hash,
         expanded=expanded,
         training_episodes=episode_count,

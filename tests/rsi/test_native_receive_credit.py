@@ -62,3 +62,50 @@ def test_fast_ball_breaks_consecutive_control_and_credit_is_not_repeated():
         r = step(c, t, f)
     assert r["sustained_capture"][0] == 1
     assert step(c, 12, f)["sustained_capture"][0] == 0
+
+
+def test_native_capture_rejects_hidden_between_control_speed_spikes():
+    legacy, strict = NativeReceiveCredit(1), NativeReceiveCredit(1, strict_native=True)
+    for t in range(11):
+        f = np.zeros((1, 10, 3))
+        if t == 0:
+            f[0, 0, 0] = 11
+        native_speed = np.full((1, 10), 0.2)
+        native_speed[0, 4] = 0.6
+        kwargs = dict(
+            step=t,
+            forces=f,
+            active=np.ones(1, bool),
+            ball_root_planar_distance_m=np.array([0.4]),
+            relative_speed_mps=np.array([0.2]),
+            healthy=np.ones(1, bool),
+        )
+        old = legacy.step(**kwargs)
+        new = strict.step(
+            **kwargs,
+            native_planar_distance_m=np.full((1, 10), 0.4),
+            native_relative_speed_mps=native_speed,
+        )
+    assert old["sustained_capture"][0] == 1
+    assert new["sustained_capture"][0] == 0
+
+
+def test_native_capture_emits_once_after_100_continuous_postfoot_samples():
+    strict = NativeReceiveCredit(1, strict_native=True)
+    results = []
+    for t in range(12):
+        f = np.zeros((1, 10, 3))
+        if t == 0:
+            f[0, 0, 0] = 11
+        result = strict.step(
+            step=t,
+            forces=f,
+            active=np.ones(1, bool),
+            ball_root_planar_distance_m=np.array([0.4]),
+            relative_speed_mps=np.array([0.2]),
+            healthy=np.ones(1, bool),
+            native_planar_distance_m=np.full((1, 10), 0.4),
+            native_relative_speed_mps=np.full((1, 10), 0.2),
+        )
+        results.append(result["sustained_capture"][0])
+    assert results == [0] * 10 + [1, 0]

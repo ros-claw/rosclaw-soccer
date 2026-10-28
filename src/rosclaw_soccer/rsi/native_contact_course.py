@@ -72,6 +72,7 @@ class NativeContactCourse:
         receive_reward: bool = False,
         receive_window: int = 24,
         dense_shin_risk: bool = False,
+        strict_native_capture: bool = False,
     ) -> None:
         if (
             type(receive_reward) is not bool
@@ -80,10 +81,13 @@ class NativeContactCourse:
             or (not receive_reward and receive_window != 24)
             or type(dense_shin_risk) is not bool
             or (dense_shin_risk and (not receive_reward or receive_window != 60))
+            or type(strict_native_capture) is not bool
+            or (strict_native_capture and (not receive_reward or receive_window != 60))
         ):
             raise ValueError("explicit bounded experimental receive reward mode required")
         self.receive_reward = receive_reward
         self.dense_shin_risk = dense_shin_risk
+        self.strict_native_capture = strict_native_capture
         self.window = receive_window
         self.receive_failure_penalty = 800 if receive_window == 60 else 600
         self.model, self.params = model, params
@@ -180,7 +184,11 @@ class NativeContactCourse:
         self.elapsed = np.zeros(self.worlds, dtype=np.int64)
         self.control = 0
         self.credit = IdentityKickCredit(self.worlds, "cpu")
-        self.receive_credit = NativeReceiveCredit(self.worlds) if self.receive_reward else None
+        self.receive_credit = (
+            NativeReceiveCredit(self.worlds, strict_native=self.strict_native_capture)
+            if self.receive_reward
+            else None
+        )
         self.batch = NativePhysicsBatch(self.model, self.worlds, threads=self.threads)
         previous_ctrl = np.zeros((self.worlds, self.model.nu))
         previous_ctrl[:, self.layout.ai] = np.stack(
@@ -330,6 +338,24 @@ class NativeContactCourse:
                         axis=1,
                     ),
                     healthy=~guards.any(axis=1),
+                    native_planar_distance_m=(
+                        np.linalg.norm(
+                            qs[:, :, self.layout.bq : self.layout.bq + 2]
+                            - qs[:, :, self.layout.rq : self.layout.rq + 2],
+                            axis=2,
+                        )
+                        if self.strict_native_capture
+                        else None
+                    ),
+                    native_relative_speed_mps=(
+                        np.linalg.norm(
+                            vs[:, :, self.layout.bv : self.layout.bv + 3]
+                            - vs[:, :, self.layout.rv : self.layout.rv + 3],
+                            axis=2,
+                        )
+                        if self.strict_native_capture
+                        else None
+                    ),
                 )
             else:
                 scores = self.credit.step(

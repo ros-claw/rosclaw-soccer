@@ -49,12 +49,15 @@ def main():
     p.add_argument("--isolate-teacher-rejections", action="store_true")
     p.add_argument("--target-rate-filter", action="store_true")
     p.add_argument("--ankle-rate-filter", action="store_true")
+    p.add_argument("--strict-native-capture", action="store_true")
     p.add_argument("--experimental-imitation-receipt", type=Path)
     p.add_argument("--experimental-imitation-hash")
     p.add_argument("--experimental-imitation-declaration-hash")
     a = p.parse_args()
     if a.lateral_study and a.launch_frame != "heading":
         raise ValueError("lateral study requires an explicit body-heading launch")
+    if a.strict_native_capture and (not a.lateral_study or a.receive_window != 60):
+        raise ValueError("strict native capture requires the 60-control lateral study")
     if not a.lateral_study and a.lateral_speed != 1.25:
         raise ValueError("explicit lateral speed requires lateral study")
     if a.intercept_teacher and (not a.lateral_study or a.receive_window != 60):
@@ -312,6 +315,7 @@ def main():
             target_rate_filter=a.target_rate_filter,
             max_total_target_step_rad=0.08 if a.target_rate_filter else None,
             ankle_rate_filter=a.ankle_rate_filter,
+            strict_native_capture=a.strict_native_capture,
             ankle_joint_indices=list(ANKLE_JOINT_INDICES) if a.ankle_rate_filter else None,
             max_ankle_target_step_rad=0.08 if a.ankle_rate_filter else None,
             teacher_configuration=dict(
@@ -342,6 +346,7 @@ def main():
         threads=2,
         receive_reward=True,
         receive_window=a.receive_window,
+        strict_native_capture=a.strict_native_capture,
     )
     try:
         env.reset()
@@ -502,6 +507,7 @@ def main():
                 freeze_teacher_ankles=a.freeze_teacher_ankles,
                 target_rate_filter=a.target_rate_filter,
                 ankle_rate_filter=a.ankle_rate_filter,
+                strict_native_capture=a.strict_native_capture,
                 ankle_joint_indices=list(ANKLE_JOINT_INDICES) if a.ankle_rate_filter else None,
                 target_filter_changed_controls=int(
                     (np.any(raw["filter_delta"] != 0, axis=-1) & raw["valid"]).sum()
