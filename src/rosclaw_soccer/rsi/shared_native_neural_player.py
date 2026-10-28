@@ -79,6 +79,7 @@ class SharedNativeNeuralPlayer:
         previous_action: np.ndarray | None = None,
         reference_context: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
         reference_bridge_controls: int = 0,
+        reference_rate: float = 1.0,
     ) -> None:
         if (
             type(actor)
@@ -98,6 +99,9 @@ class SharedNativeNeuralPlayer:
             or sorted(order.tolist()) != list(range(29))
             or any(a.shape != (29,) or not np.isfinite(a).all() for a in (offset, scale))
             or (scale <= 0).any()
+            or type(reference_rate) not in (int, float)
+            or not np.isfinite(reference_rate)
+            or not 0.5 <= reference_rate <= 1.0
         ):
             raise ValueError(
                 "frozen explicit Dual256 motor, real reference and HG29 codec required"
@@ -162,6 +166,8 @@ class SharedNativeNeuralPlayer:
         if reference_context is not None:
             self.ref_pos, self.ref_vel, self.ref_ang = (a.copy() for a in reference_context)
         self.frame, self.decisions = 0, 0
+        self.reference_rate = float(reference_rate)
+        self.reference_position = 0.0
         self.phase = "MOTION"
         self.boundary = world.control_steps
         self.pending: dict[str, Any] | None = None
@@ -311,11 +317,19 @@ class SharedNativeNeuralPlayer:
         self.last_action = action.copy()
         self.pending = None
         if self.phase == "MOTION":
-            self.ref_pos = self.clip.joint_pos[self.frame].copy()
-            self.ref_vel = self.clip.joint_vel[self.frame].copy()
-            self.ref_ang = self.clip.body_ang_vel_w[self.frame, self.torso_index].copy()
-            self.frame += 1
-            if self.frame == self.clip.length:
+            if self.reference_rate == 1.0:
+                self.ref_pos = self.clip.joint_pos[self.frame].copy()
+                self.ref_vel = self.clip.joint_vel[self.frame].copy()
+                self.ref_ang = self.clip.body_ang_vel_w[self.frame, self.torso_index].copy()
+            else:
+                from rosclaw_soccer.rsi.motion_reference_tempo import sample_reference
+
+                self.ref_pos, self.ref_vel, self.ref_ang = sample_reference(
+                    self.clip, self.torso_index, self.reference_position, self.reference_rate
+                )
+            self.reference_position += self.reference_rate
+            self.frame = min(int(self.reference_position), self.clip.length)
+            if self.reference_position >= self.clip.length:
                 self.phase = "MOTION_COMPLETE"
         self.boundary = self.world.control_steps
         self.decisions += 1

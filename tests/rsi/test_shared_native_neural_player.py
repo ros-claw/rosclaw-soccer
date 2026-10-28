@@ -80,6 +80,35 @@ def test_reference_end_cannot_be_silently_padded():
             p.propose()
 
 
+def test_slower_reference_advances_only_on_real_shared_commits():
+    w, existing = players()
+    p = existing["a/"]
+    slowed = SharedNativeNeuralPlayer(
+        w,
+        "a/",
+        p.actor,
+        clip=p.clip,
+        torso_index=0,
+        build_observation=p.build_observation,
+        goal=p.goal,
+        offset=p.offset,
+        scale=p.scale,
+        order=p.order,
+        reference_rate=0.8,
+    )
+    other = existing["b/"]
+    for _ in range(2):
+        w.advance({"a/": slowed.propose()[0], "b/": other.propose()[0]})
+        slowed.commit()
+        other.commit()
+        if other.phase == "MOTION_COMPLETE":
+            other.begin_standing()
+        if slowed.decisions == 1:
+            assert slowed.phase == "MOTION" and slowed.reference_position == 0.8
+    assert slowed.phase == "MOTION_COMPLETE"
+    assert slowed.decisions == 2 and w.native_steps == 20
+
+
 def test_committed_options_keep_private_state_through_actual_commit_and_standing():
     from test_committed_neural_motor import fixture
 

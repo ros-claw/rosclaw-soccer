@@ -42,6 +42,7 @@ def main():
     p.add_argument("--receiver-continuation-pair", action="store_true")
     p.add_argument("--passer-residual-pair", action="store_true")
     p.add_argument("--passer-strike-teacher-pair", action="store_true")
+    p.add_argument("--passer-reference-tempo-pair", action="store_true")
     p.add_argument("--passer-velocity-recovery-pair", action="store_true")
     p.add_argument("--passer-velocity-blend", action="store_true")
     p.add_argument("--precontact-fullbody-pair", action="store_true")
@@ -68,6 +69,36 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.passer_reference_tempo_pair and (
+        a.new_context_block is None
+        or a.reference_bridge_controls != [0]
+        or any(
+            getattr(a, name)
+            for name in (
+                "successor_alignment_study",
+                "balance_teacher_pair",
+                "balance_expanded",
+                "receiver_follow_study",
+                "receiver_lateral_authority",
+                "receiver_foot_teacher_pair",
+                "receiver_leg_limit_pair",
+                "receiver_whole_identity",
+                "receiver_center_curriculum",
+                "receiver_learned_pair",
+                "receiver_dense_pair",
+                "receiver_motion_pair",
+                "receiver_continuation_pair",
+                "passer_residual_pair",
+                "passer_strike_teacher_pair",
+                "passer_velocity_recovery_pair",
+                "precontact_fullbody_pair",
+                "passer_contact_exit",
+                "receiver_exploration",
+                "receiver_learned_exploration",
+            )
+        )
+    ):
+        p.error("passer reference tempo requires one isolated development block")
     if a.passer_strike_teacher_pair and (
         a.new_context_block is None
         or a.reference_bridge_controls != [0]
@@ -467,6 +498,16 @@ def main():
             )
             for enabled in (False, True)
         ]
+    if a.passer_reference_tempo_pair:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                passer_reference_rate=rate,
+            )
+            for rate in (1.0, 0.8)
+        ]
     if a.precontact_fullbody_pair:
         arms = [
             dict(
@@ -624,7 +665,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_passer_strike_torque.development.v1"
+                "soccer.neural_relay_passer_reference_tempo.development.v1"
+                if a.passer_reference_tempo_pair
+                else "soccer.neural_relay_passer_strike_torque.development.v1"
                 if a.passer_strike_teacher_pair
                 else "soccer.neural_relay_passer_velocity_blend.development.v31"
                 if a.passer_velocity_blend
@@ -742,6 +785,7 @@ def main():
             no_future_readiness=True,
             cartesian_teachers_enabled=a.receiver_foot_teacher_pair or a.passer_strike_teacher_pair,
             passer_strike_teacher_is_unlearned=a.passer_strike_teacher_pair,
+            passer_reference_tempo_is_unlearned=a.passer_reference_tempo_pair,
             receiver_foot_teacher_is_unlearned=a.receiver_foot_teacher_pair,
             receiver_predictive_foot_shin_is_unlearned=a.receiver_predictive_foot_shin,
             receiver_axis_local_fallback=a.receiver_axis_local_fallback,
@@ -986,6 +1030,7 @@ def main():
                 offset=ep.offset,
                 scale=ep.scale,
                 order=ep.order,
+                reference_rate=course["arm"].get("passer_reference_rate", 1.0),
             )
             velocity = setup.velocity()
             passer_recovery = None
@@ -1581,7 +1626,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_PASSER_STRIKE_TEACHER16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_PASSER_REFERENCE_TEMPO16_PENDING_OWN_REPLAY"
+                    if a.passer_reference_tempo_pair
+                    else "NEURAL_RELAY_PASSER_STRIKE_TEACHER16_PENDING_OWN_REPLAY"
                     if a.passer_strike_teacher_pair
                     else "NEURAL_RELAY_PASSER_VELOCITY_BLEND16_PENDING_OWN_REPLAY"
                     if a.passer_velocity_blend
