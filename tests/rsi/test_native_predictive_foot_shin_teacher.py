@@ -65,10 +65,15 @@ def test_early_candidate_responds_to_incoming_ball_without_editing_physics():
     new = NativePredictiveFootShinTeacher(axis_local_fallback=True, early_intercept=True).propose(
         **common
     )
+    lead = NativePredictiveFootShinTeacher(
+        axis_local_fallback=True, early_intercept=True, contact_lead=True
+    ).propose(**common)
     assert old["foot_index"] == -1
     assert new["early_active"] and new["foot_index"] in (0, 1)
     assert 0.03 <= new["early_eta_s"] <= 0.6
     assert new["foot_gap"] > 0.55
+    assert lead["early_active"]
+    assert not np.array_equal(lead["target"], new["target"])
     assert np.max(np.abs(new["applied_delta"])) <= 0.025 + 1e-12
     for actual, saved in zip(
         (data.qpos, data.qvel, data.ctrl, data.xfrc_applied), before, strict=True

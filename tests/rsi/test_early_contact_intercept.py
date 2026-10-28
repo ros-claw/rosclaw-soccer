@@ -15,6 +15,14 @@ def test_incoming_ball_has_causal_closest_approach():
     assert result["miss_m"] == pytest.approx(0.2)
 
 
+def test_contact_lead_moves_foot_toward_the_incoming_side():
+    incoming = early_contact_intercept(v([1.5, 0, 0]), v([-3, 0, 0]), contact_lead_m=0.1)
+    assert incoming["eligible"]
+    np.testing.assert_allclose(incoming["displacement"], [0.1, 0, 0])
+    with pytest.raises(ValueError):
+        early_contact_intercept(v([1, 0, 0]), v([-1, 0, 0]), contact_lead_m=0.5)
+
+
 @pytest.mark.parametrize(
     "position,velocity",
     [

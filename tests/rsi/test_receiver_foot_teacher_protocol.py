@@ -124,6 +124,32 @@ def test_early_intercept_requires_isolated_predictive_axis_study():
     assert "early intercept requires the predictive axis-local foot teacher" in result.stderr
 
 
+def test_contact_lead_requires_explicit_early_intercept():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
+            "--frontier-root",
+            "/not-read",
+            "--frontier-head",
+            "unused",
+            "--frontier-hash",
+            "unused",
+            "--expected-head",
+            "unused",
+            "--output",
+            "/not-written",
+            "--receiver-early-contact-lead",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "contact lead requires the early foot intercept study" in result.stderr
+
+
 @pytest.mark.parametrize(
     "conflict", ["--receiver-lateral-authority", "--receiver-foot-teacher-pair"]
 )

@@ -37,7 +37,8 @@ def main():
     leg_limit_pair = projected_memory or (
         dec["protocol"] == "soccer.neural_relay_receiver_leg_target_projection.development.v26"
     )
-    early_intercept = (
+    contact_lead = dec["protocol"] == "soccer.neural_relay_receiver_contact_lead.development.v29"
+    early_intercept = contact_lead or (
         dec["protocol"] == "soccer.neural_relay_receiver_early_intercept.development.v28"
     )
     axis_local_fallback = early_intercept or (
@@ -144,6 +145,8 @@ def main():
         if projected_memory
         else "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY"
         if leg_limit_pair
+        else "NEURAL_RELAY_RECEIVER_CONTACT_LEAD16_PENDING_OWN_REPLAY"
+        if contact_lead
         else "NEURAL_RELAY_RECEIVER_EARLY_INTERCEPT16_PENDING_OWN_REPLAY"
         if early_intercept
         else "NEURAL_RELAY_RECEIVER_AXIS_LOCAL_FALLBACK16_PENDING_OWN_REPLAY"
@@ -218,6 +221,7 @@ def main():
             "soccer.neural_relay_receiver_predictive_foot_shin.development.v24",
             "soccer.neural_relay_receiver_axis_local_fallback.development.v25",
             "soccer.neural_relay_receiver_early_intercept.development.v28",
+            "soccer.neural_relay_receiver_contact_lead.development.v29",
             "soccer.neural_relay_receiver_leg_target_projection.development.v26",
             "soccer.neural_relay_receiver_projected_action_memory.development.v27",
             "soccer.neural_relay_passer_residual_pair.development.v11",
@@ -430,6 +434,8 @@ def main():
             raise ValueError("explicit axis-local fallback research contract required")
         if early_intercept and dec.get("receiver_early_foot_intercept_is_unlearned") is not True:
             raise ValueError("explicit unlearned early intercept contract required")
+        if contact_lead and dec.get("receiver_early_contact_lead_is_unlearned") is not True:
+            raise ValueError("explicit unlearned contact lead contract required")
         if leg_limit_pair and (
             dec.get("receiver_leg_projection_is_unlearned") is not True
             or dec.get("receiver_actor_previous_action_remains_raw") is not (not projected_memory)
@@ -763,6 +769,7 @@ def main():
                 foot_teacher = NativePredictiveFootShinTeacher(
                     axis_local_fallback=axis_local_fallback,
                     early_intercept=early_intercept,
+                    contact_lead=contact_lead,
                 )
             foot_bodies = [
                 w.model.body("b/" + side + "_ankle_roll_link").id for side in ("left", "right")

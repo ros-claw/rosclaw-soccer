@@ -33,7 +33,10 @@ def main() -> None:
     root, audit = a.source / "source", a.source / "audit/complete.json"
     old, old_audit = a.lateral_source / "source", a.lateral_source / "audit/complete.json"
     declaration = json.loads((root / "declaration.json").read_text())
-    early_intercept = (
+    contact_lead = (
+        declaration.get("protocol") == "soccer.neural_relay_receiver_contact_lead.development.v29"
+    )
+    early_intercept = contact_lead or (
         declaration.get("protocol")
         == "soccer.neural_relay_receiver_early_intercept.development.v28"
     )
@@ -49,7 +52,9 @@ def main() -> None:
         root,
         audit,
         a.audit_hash,
-        "NEURAL_RELAY_RECEIVER_EARLY_INTERCEPT16_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_RECEIVER_CONTACT_LEAD16_PENDING_OWN_REPLAY"
+        if contact_lead
+        else "NEURAL_RELAY_RECEIVER_EARLY_INTERCEPT16_PENDING_OWN_REPLAY"
         if early_intercept
         else "NEURAL_RELAY_RECEIVER_AXIS_LOCAL_FALLBACK16_PENDING_OWN_REPLAY"
         if axis_local
@@ -76,6 +81,8 @@ def main() -> None:
         and declaration.get("receiver_axis_local_fallback") is not True
         or early_intercept
         and declaration.get("receiver_early_foot_intercept_is_unlearned") is not True
+        or contact_lead
+        and declaration.get("receiver_early_contact_lead_is_unlearned") is not True
     ):
         raise ValueError("exact unlearned development-only foot teacher required")
     index = {

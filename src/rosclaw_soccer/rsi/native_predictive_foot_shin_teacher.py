@@ -17,11 +17,23 @@ class NativePredictiveFootShinTeacher:
     weights. Physical contact and balance must be independently verified.
     """
 
-    def __init__(self, *, axis_local_fallback: bool = False, early_intercept: bool = False) -> None:
-        if type(axis_local_fallback) is not bool or type(early_intercept) is not bool:
+    def __init__(
+        self,
+        *,
+        axis_local_fallback: bool = False,
+        early_intercept: bool = False,
+        contact_lead: bool = False,
+    ) -> None:
+        if (
+            type(axis_local_fallback) is not bool
+            or type(early_intercept) is not bool
+            or type(contact_lead) is not bool
+            or (contact_lead and not early_intercept)
+        ):
             raise ValueError("explicit axis-local fallback and early-intercept flags required")
         self.axis_local_fallback = axis_local_fallback
         self.early_intercept = early_intercept
+        self.contact_lead = contact_lead
         self.next_frame = 0
         self.foot: int | None = None
         self.previous_delta = np.zeros(29, dtype=np.float64)
@@ -61,6 +73,7 @@ class NativePredictiveFootShinTeacher:
                     candidates[index] = early_contact_intercept(
                         np.asarray(ball_pos - surface["world_point"], dtype=np.float64),
                         np.asarray(ball_vel - surface["point_velocity"], dtype=np.float64),
+                        contact_lead_m=0.1 if self.contact_lead else 0.0,
                     )
         eligible = [i for i, item in enumerate(candidates) if item is not None and item["eligible"]]
         if self.foot is None and eligible:

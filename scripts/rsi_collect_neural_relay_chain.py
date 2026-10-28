@@ -29,6 +29,7 @@ def main():
     p.add_argument("--receiver-predictive-foot-shin", action="store_true")
     p.add_argument("--receiver-axis-local-fallback", action="store_true")
     p.add_argument("--receiver-early-foot-intercept", action="store_true")
+    p.add_argument("--receiver-early-contact-lead", action="store_true")
     p.add_argument("--receiver-leg-limit-pair", action="store_true")
     p.add_argument("--receiver-projection-executed-memory", action="store_true")
     p.add_argument("--receiver-whole-identity", action="store_true")
@@ -62,6 +63,8 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.receiver_early_contact_lead and not a.receiver_early_foot_intercept:
+        p.error("contact lead requires the early foot intercept study")
     if a.receiver_early_foot_intercept and not (
         a.receiver_predictive_foot_shin and a.receiver_axis_local_fallback
     ):
@@ -518,6 +521,8 @@ def main():
                 if a.receiver_projection_executed_memory
                 else "soccer.neural_relay_receiver_leg_target_projection.development.v26"
                 if a.receiver_leg_limit_pair
+                else "soccer.neural_relay_receiver_contact_lead.development.v29"
+                if a.receiver_early_contact_lead
                 else "soccer.neural_relay_receiver_early_intercept.development.v28"
                 if a.receiver_early_foot_intercept
                 else "soccer.neural_relay_receiver_axis_local_fallback.development.v25"
@@ -622,6 +627,7 @@ def main():
             receiver_predictive_foot_shin_is_unlearned=a.receiver_predictive_foot_shin,
             receiver_axis_local_fallback=a.receiver_axis_local_fallback,
             receiver_early_foot_intercept_is_unlearned=a.receiver_early_foot_intercept,
+            receiver_early_contact_lead_is_unlearned=a.receiver_early_contact_lead,
             receiver_leg_projection_is_unlearned=a.receiver_leg_limit_pair,
             receiver_actor_previous_action_remains_raw=(
                 a.receiver_leg_limit_pair and not a.receiver_projection_executed_memory
@@ -900,6 +906,7 @@ def main():
                 foot_teacher = NativePredictiveFootShinTeacher(
                     axis_local_fallback=a.receiver_axis_local_fallback,
                     early_intercept=a.receiver_early_foot_intercept,
+                    contact_lead=a.receiver_early_contact_lead,
                 )
             foot_bodies = [
                 w.model.body("b/" + side + "_ankle_roll_link").id for side in ("left", "right")
@@ -1317,6 +1324,8 @@ def main():
                     if a.receiver_projection_executed_memory
                     else "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY"
                     if a.receiver_leg_limit_pair
+                    else "NEURAL_RELAY_RECEIVER_CONTACT_LEAD16_PENDING_OWN_REPLAY"
+                    if a.receiver_early_contact_lead
                     else "NEURAL_RELAY_RECEIVER_EARLY_INTERCEPT16_PENDING_OWN_REPLAY"
                     if a.receiver_early_foot_intercept
                     else "NEURAL_RELAY_RECEIVER_AXIS_LOCAL_FALLBACK16_PENDING_OWN_REPLAY"
