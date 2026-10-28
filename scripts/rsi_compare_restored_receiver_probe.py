@@ -36,6 +36,12 @@ def main() -> None:
         base.get("status") != "RELAY_LEG_RESIDUAL_ZERO_OWN_REPLAY_NOT_FOOTBALL_SUCCESS"
         or cand.get("status") != "RELAY_LEG_RESIDUAL_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
         or base.get("probe_leg_rad") != [0.0] * 12
+        or type(cand.get("probe_leg_rad")) is not list
+        or len(cand["probe_leg_rad"]) != 12
+        or any(
+            type(v) not in (int, float) or not np.isfinite(v) or abs(v) > 0.15
+            for v in cand["probe_leg_rad"]
+        )
         or not any(cand.get("probe_leg_rad", []))
         or a.scene.is_symlink()
         or digest(a.scene) != snapshot.get("scene_hash")
@@ -119,8 +125,22 @@ def main() -> None:
             receiver_q=layout.rq,
             receiver_v=layout.rv,
         )
+        if (
+            b[index].get("consecutive_controls") != compared["baseline_controls"]
+            or c[index].get("consecutive_controls") != compared["candidate_controls"]
+            or type(b[index].get("body_failure")) is not bool
+            or type(c[index].get("body_failure")) is not bool
+        ):
+            raise ValueError("physical exposure and explicit body failure evidence required")
         rows.append(
-            dict(index=index, context=b[index]["context"], side=b[index]["side"], **compared)
+            dict(
+                index=index,
+                context=b[index]["context"],
+                side=b[index]["side"],
+                baseline_body_failure=b[index]["body_failure"],
+                candidate_body_failure=c[index]["body_failure"],
+                **compared,
+            )
         )
     for path, expected in (
         (a.baseline, a.baseline_hash),
@@ -129,6 +149,8 @@ def main() -> None:
     ):
         if digest(path) != expected:
             raise ValueError("input changed during comparison")
+    if digest(a.scene) != snapshot["scene_hash"]:
+        raise ValueError("physical scene changed during comparison")
     clean(a.expected_head)
     a.output.parent.mkdir(parents=True, exist_ok=True)
     write_once(
