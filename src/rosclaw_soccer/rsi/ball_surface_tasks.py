@@ -11,10 +11,12 @@ import numpy as np
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 
 
-def measure_ball_surfaces(model: Any, donor: Any, layout: NativeVelocityLayout) -> dict[str, Any]:
+def measure_ball_surfaces(
+    model: Any, donor: Any, layout: NativeVelocityLayout, *, all_knee_colliders: bool = False
+) -> dict[str, Any]:
     import mujoco
 
-    if layout.model is not model:
+    if layout.model is not model or type(all_knee_colliders) is not bool:
         raise ValueError("own qualified layout required")
     layout.canonical(donor)
     ball = np.flatnonzero(model.geom_bodyid == layout.ball)
@@ -32,7 +34,7 @@ def measure_ball_surfaces(model: Any, donor: Any, layout: NativeVelocityLayout) 
                 (model.geom_bodyid == body)
                 & ((model.geom_contype != 0) | (model.geom_conaffinity != 0))
             )
-            if part == "shin":
+            if part == "shin" and not all_knee_colliders:
                 geoms = np.array([int(model.geom(layout.robot_prefix + side + "_shin").id)])
                 if int(model.geom_bodyid[geoms[0]]) != body:
                     raise ValueError("shin collision surface belongs to unexpected body")

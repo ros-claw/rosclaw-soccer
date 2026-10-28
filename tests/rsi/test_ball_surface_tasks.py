@@ -58,3 +58,41 @@ def test_distance_sentinel_is_not_fabricated_surface():
     m, d, layout = fixture()
     d.qpos[layout.bq : layout.bq + 3] = [10, 0, 0]
     assert all(not r["available"] for r in measure_ball_surfaces(m, d, layout)["surfaces"].values())
+
+
+def test_all_knee_colliders_uses_nearest_actual_brace_without_touching_snapshot():
+    root = ET.fromstring(source_xml())
+    for i, side, part in (
+        (3, "left", "knee"),
+        (5, "left", "ankle_roll"),
+        (9, "right", "knee"),
+        (11, "right", "ankle_roll"),
+    ):
+        body = root.find(f'.//body[@name="link{i}"]')
+        body.set("name", side + "_" + part + "_link")
+        geom = body.find("geom")
+        geom.set("contype", "1")
+        geom.set("pos", ".3 .2 -.4")
+        geom.set("name", side + ("_shin" if part == "knee" else "_foot"))
+        if side == "left" and part == "knee":
+            ET.SubElement(
+                body,
+                "geom",
+                name="left_brace",
+                type="sphere",
+                size=".03",
+                pos=".5 .2 -.4",
+                contype="1",
+            )
+    m = mujoco.MjModel.from_xml_string(
+        shared_native_scene(ET.tostring(root, encoding="unicode"), prefixes=("a/",))
+    )
+    d = mujoco.MjData(m)
+    layout = NativeVelocityLayout(m, robot_prefix="a/", ball_body_name="ball")
+    mujoco.mj_forward(m, d)
+    d.qpos[layout.bq : layout.bq + 3] = d.geom_xpos[m.geom("a/left_brace").id] + [0.2, 0, 0]
+    mujoco.mj_forward(m, d)
+    before = d.qpos.copy()
+    surface = measure_ball_surfaces(m, d, layout, all_knee_colliders=True)["surfaces"]["left_shin"]
+    assert surface["geom"] == m.geom("a/left_brace").id
+    np.testing.assert_array_equal(d.qpos, before)

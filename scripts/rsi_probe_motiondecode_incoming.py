@@ -19,9 +19,12 @@ def main():
     p.add_argument("--launch-frame", choices=("world", "heading"), default="world")
     p.add_argument("--lateral-study", action="store_true")
     p.add_argument("--receive-window", type=int, choices=(40, 60), default=40)
+    p.add_argument("--intercept-teacher", action="store_true")
     a = p.parse_args()
     if a.lateral_study and a.launch_frame != "heading":
         raise ValueError("lateral study requires an explicit body-heading launch")
+    if a.intercept_teacher and (not a.lateral_study or a.receive_window != 60):
+        raise ValueError("teacher requires the declared 60-control lateral study")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
 
@@ -64,10 +67,13 @@ def main():
     import numpy as np
     import torch
 
-    from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
+    from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters, target29
     from rosclaw_soccer.rsi.native_contact_course import (
         NativeContactCourse,
         balanced_course_indices,
+    )
+    from rosclaw_soccer.rsi.native_predictive_foot_shin_teacher import (
+        NativePredictiveFootShinTeacher,
     )
     from rosclaw_soccer.rsi.native_receive_bank import build_incoming_bank
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
@@ -184,6 +190,16 @@ def main():
             controls=a.receive_window,
             no_mid_episode_resets=True,
             training=False,
+            intercept_teacher=a.intercept_teacher,
+            teacher_unlearned=a.intercept_teacher,
+            teacher_configuration=dict(
+                early_intercept=True,
+                contact_lead=True,
+                axis_local_fallback=True,
+                all_knee_colliders=True,
+            )
+            if a.intercept_teacher
+            else None,
             hardware_authorized=False,
             promotion_authorized=False,
         ),
@@ -202,12 +218,60 @@ def main():
     )
     try:
         env.reset()
+        teachers = (
+            [
+                NativePredictiveFootShinTeacher(
+                    axis_local_fallback=True,
+                    early_intercept=True,
+                    contact_lead=True,
+                    all_knee_colliders=True,
+                )
+                for _ in range(env.worlds)
+            ]
+            if a.intercept_teacher
+            else None
+        )
+        scales = np.asarray(params.action_scale, dtype=np.float32)
+        offsets = np.asarray(params.action_offset, dtype=np.float32)
         rows = []
         while not env.ended.all():
             with torch.no_grad():
                 action = actor(torch.from_numpy(env.observation)).numpy().copy()
+            nominal_action = action.copy()
+            teacher_delta = np.zeros((env.worlds, 29), dtype=np.float64)
+            teacher_active = np.zeros(env.worlds, dtype=bool)
+            if teachers is not None:
+                assert env.batch is not None
+                for i in np.flatnonzero(~env.ended):
+                    nominal = target29(action[i], params)
+                    proposal = teachers[i].propose(
+                        model=model,
+                        snapshot=env.batch.data[i],
+                        layout=env.layout,
+                        nominal=nominal,
+                        enabled=True,
+                        frame=int(env.elapsed[i]),
+                    )
+                    if np.any(proposal["applied_delta"]):
+                        action[i] = (
+                            (proposal["target"].astype(np.float32) - offsets) / scales
+                        ).astype(np.float32)
+                        actual = target29(action[i], params)
+                        if not np.allclose(actual, proposal["target"], atol=1e-6, rtol=0):
+                            raise ValueError("actual action-to-target conversion mismatch")
+                        teacher_delta[i] = actual - nominal
+                        teachers[i].previous_delta = teacher_delta[i].copy()
+                    teacher_active[i] = proposal["active"]
             result = env.step(action)
-            rows.append({**result, "action": action})
+            rows.append(
+                {
+                    **result,
+                    "action": action,
+                    "nominal_action": nominal_action,
+                    "teacher_delta": teacher_delta,
+                    "teacher_active": teacher_active,
+                }
+            )
         raw = {key: np.stack([row[key] for row in rows]) for key in rows[0]}
         np.savez_compressed(a.output / "physical.npz", bank_index=env.index, **raw)
         check_pins(pins)
@@ -235,6 +299,9 @@ def main():
                 capture=int(raw["credit_sustained_capture"].sum()),
                 failed=int(raw["terminated"].sum()),
                 training=False,
+                intercept_teacher=a.intercept_teacher,
+                teacher_active_controls=int(raw["teacher_active"].sum()),
+                teacher_changed_controls=int(np.any(raw["teacher_delta"] != 0, axis=-1).sum()),
                 independent_replay=False,
                 hardware_authorized=False,
                 promotion_authorized=False,

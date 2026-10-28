@@ -23,17 +23,20 @@ class NativePredictiveFootShinTeacher:
         axis_local_fallback: bool = False,
         early_intercept: bool = False,
         contact_lead: bool = False,
+        all_knee_colliders: bool = False,
     ) -> None:
         if (
             type(axis_local_fallback) is not bool
             or type(early_intercept) is not bool
             or type(contact_lead) is not bool
+            or type(all_knee_colliders) is not bool
             or (contact_lead and not early_intercept)
         ):
             raise ValueError("explicit axis-local fallback and early-intercept flags required")
         self.axis_local_fallback = axis_local_fallback
         self.early_intercept = early_intercept
         self.contact_lead = contact_lead
+        self.all_knee_colliders = all_knee_colliders
         self.next_frame = 0
         self.foot: int | None = None
         self.previous_delta = np.zeros(29, dtype=np.float64)
@@ -61,7 +64,9 @@ class NativePredictiveFootShinTeacher:
             or not np.isfinite(nominal).all()
         ):
             raise ValueError("own consecutive SIM snapshot and finite HG target required")
-        surfaces = measure_ball_surfaces(model, snapshot, layout)["surfaces"]
+        surfaces = measure_ball_surfaces(
+            model, snapshot, layout, all_knee_colliders=self.all_knee_colliders
+        )["surfaces"]
         feet = [surfaces[side + "_foot"] for side in ("left", "right")]
         foot_gaps = [x["gap_m"] if x["available"] else 2.0 for x in feet]
         candidates = [None, None]
