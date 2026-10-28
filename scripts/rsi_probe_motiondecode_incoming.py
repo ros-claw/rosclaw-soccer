@@ -58,6 +58,7 @@ def main():
     p.add_argument("--launch-frame", choices=("world", "heading"), default="world")
     p.add_argument("--lateral-study", action="store_true")
     p.add_argument("--lateral-speed", type=float, choices=(1.25, 1.75, 2.25, 3.0), default=1.25)
+    p.add_argument("--launch-distance", type=float, choices=(0.9, 1.8), default=0.9)
     p.add_argument("--receive-window", type=int, choices=(40, 60), default=40)
     p.add_argument("--intercept-teacher", action="store_true")
     p.add_argument("--robust-teacher", action="store_true")
@@ -81,6 +82,8 @@ def main():
         raise ValueError("strict native capture requires the 60-control lateral study")
     if not a.lateral_study and a.lateral_speed != 1.25:
         raise ValueError("explicit lateral speed requires lateral study")
+    if a.launch_distance != 0.9 and not a.lateral_study:
+        raise ValueError("experimental launch distance requires a lateral study")
     if a.intercept_teacher and (not a.lateral_study or a.receive_window != 60):
         raise ValueError("teacher requires the declared 60-control lateral study")
     if (
@@ -280,6 +283,7 @@ def main():
         plans=plans,
         courses=courses,
         launch_frame=a.launch_frame,
+        launch_distance_m=a.launch_distance,
     )
     if a.lateral_study:
         layout = NativeVelocityLayout(model, robot_prefix="robot/", ball_body_name="ball/ball")
@@ -329,6 +333,7 @@ def main():
             lateral_study=a.lateral_study,
             lateral_m=[-0.24, -0.08, 0.08, 0.24] if a.lateral_study else None,
             fixed_speed_mps=a.lateral_speed if a.lateral_study else None,
+            launch_distance_m=a.launch_distance,
             robot_initial_state_matched_by_source=a.lateral_study,
             controls=a.receive_window,
             no_mid_episode_resets=True,
@@ -512,6 +517,7 @@ def main():
                 launch_frame=a.launch_frame,
                 lateral_study=a.lateral_study,
                 fixed_speed_mps=a.lateral_speed if a.lateral_study else None,
+                launch_distance_m=a.launch_distance,
                 receive_window=a.receive_window,
                 worlds=32 if a.lateral_study else 8,
                 reference_clip_count=8 if multi else 1,

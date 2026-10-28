@@ -3,7 +3,11 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.native_receive_bank import build_incoming_bank, heading_launch
+from rosclaw_soccer.rsi.native_receive_bank import (
+    build_incoming_bank,
+    heading_launch,
+    scale_launch_distance,
+)
 from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse
 
 
@@ -36,3 +40,15 @@ def test_heading_rotation_preserves_offsets_and_speed():
     np.testing.assert_allclose(new_velocity, (0, 1.25, 0), atol=1e-12)
     with pytest.raises(ValueError, match="unit pelvis quaternion"):
         heading_launch(position, velocity, root, np.zeros(4))
+
+
+@pytest.mark.parametrize("sign", [-1, 1])
+def test_distance_changes_only_longitudinal_position_before_heading(sign):
+    root = (2.0, 3.0, 0.8)
+    position = (root[0] + sign * 0.9, 3.08, 0.11)
+    np.testing.assert_allclose(
+        scale_launch_distance(position, root, 1.8), (2 + sign * 1.8, 3.08, 0.11)
+    )
+    np.testing.assert_allclose(scale_launch_distance(position, root, 0.9), position)
+    with pytest.raises(ValueError, match="predeclared"):
+        scale_launch_distance(position, root, 5.0)

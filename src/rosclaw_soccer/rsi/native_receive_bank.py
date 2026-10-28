@@ -44,6 +44,13 @@ def heading_launch(
     )
 
 
+def scale_launch_distance(position, root, distance_m):
+    """Change only declared longitudinal reset distance, never live physics."""
+    if distance_m not in (0.9, 1.8):
+        raise ValueError("predeclared launch distance required")
+    return (root[0] + (position[0] - root[0]) * distance_m / 0.9, position[1], position[2])
+
+
 def build_incoming_bank(
     *,
     model: Any,
@@ -52,6 +59,7 @@ def build_incoming_bank(
     plans: list[dict[str, NDArray[Any]]],
     courses: tuple[ReceivingCourse, ...],
     launch_frame: str = "world",
+    launch_distance_m: float = 0.9,
 ) -> tuple[dict[str, NDArray[Any]], str]:
     """Build all 256 resets after preflight; never mutate a live simulation.
 
@@ -62,11 +70,26 @@ def build_incoming_bank(
     subsequently determines its actual motion. Reject the entire bank when
     any launched ball initially intersects a robot collider.
     """
-    if len(courses) != 256 or len(plans) != 8 or launch_frame not in ("world", "heading"):
+    if (
+        len(courses) != 256
+        or len(plans) != 8
+        or launch_frame not in ("world", "heading")
+        or launch_distance_m not in (0.9, 1.8)
+    ):
         raise ValueError("entire 256-state source and course bank required")
     binding = preflight_receiving_courses(courses)
     if launch_frame == "heading":
         binding = str(hash_json(dict(schema="soccer.heading_receiving.v1", base=binding)))
+    if launch_distance_m != 0.9:
+        binding = str(
+            hash_json(
+                dict(
+                    schema="soccer.receiving_launch_distance.v1",
+                    base=binding,
+                    distance_m=launch_distance_m,
+                )
+            )
+        )
     layout = NativeVelocityLayout(model, robot_prefix="robot/", ball_body_name="ball/ball")
     geometry = [i for i in range(model.ngeom) if int(model.geom_bodyid[i]) == layout.ball]
     if len(geometry) != 1 or model.geom_type[geometry[0]] != mujoco.mjtGeom.mjGEOM_SPHERE:
@@ -92,6 +115,8 @@ def build_incoming_bank(
         data.qvel[:] = result["qvel"][i]
         root = tuple(float(x) for x in data.qpos[layout.rq : layout.rq + 3])
         position, velocity = receiving_ball_launch(course, origin=root, radius_m=radius)
+        if launch_distance_m != 0.9:
+            position = scale_launch_distance(position, root, launch_distance_m)
         if launch_frame == "heading":
             position, velocity = heading_launch(
                 position, velocity, root, data.qpos[layout.rq + 3 : layout.rq + 7]
