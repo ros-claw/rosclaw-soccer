@@ -211,6 +211,7 @@ def main():
             )
             warmup = episode < 2
             stop = False
+            update_metrics = []
             for _ in range(2):
                 for ids in torch.tensor_split(torch.randperm(int(mask.sum()), device="cuda"), 4):
                     if not len(ids):
@@ -228,6 +229,13 @@ def main():
                         value_only=warmup,
                     )
                     if not warmup and float(metrics["approximate_kl"]) > 0.02:
+                        update_metrics.append(
+                            dict(
+                                optimizer_step=False,
+                                reason="kl_limit",
+                                metrics={key: float(value) for key, value in metrics.items()},
+                            )
+                        )
                         stop = True
                         break
                     optimizer.zero_grad(set_to_none=True)
@@ -237,6 +245,14 @@ def main():
                         raise ValueError("finite PPO loss and gradients required")
                     optimizer.step()
                     updates += 1
+                    update_metrics.append(
+                        dict(
+                            optimizer_step=True,
+                            gradient_norm=float(norm),
+                            loss=float(loss.detach()),
+                            metrics={key: float(value) for key, value in metrics.items()},
+                        )
+                    )
                     with torch.no_grad():
                         policy.log_std.clamp_(math.log(0.01), math.log(0.1))
                     if any(not torch.isfinite(v).all() for v in policy.state_dict().values()):
@@ -253,6 +269,7 @@ def main():
                     failed=int(raw["terminated"].sum()),
                     warmup=warmup,
                     optimizer_updates=updates,
+                    update_metrics=update_metrics,
                     raw_hash=digest(file),
                 )
             )
