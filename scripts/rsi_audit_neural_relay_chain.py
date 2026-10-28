@@ -44,7 +44,10 @@ def main():
         center_exploration
         or dec["protocol"] == "soccer.neural_relay_receiver_exploration.development.v9"
     )
-    learned_pair = dec["protocol"] == "soccer.neural_relay_receiver_learned_pair.development.v10"
+    dense_pair = dec["protocol"] == "soccer.neural_relay_receiver_dense_pair.development.v17"
+    learned_pair = (
+        dense_pair or dec["protocol"] == "soccer.neural_relay_receiver_learned_pair.development.v10"
+    )
     contact_exit = dec["protocol"] == "soccer.neural_relay_passer_contact_exit.development.v12"
     passer_pair = (
         contact_exit
@@ -100,6 +103,8 @@ def main():
         if contact_exit
         else "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY"
         if passer_pair
+        else "NEURAL_RELAY_RECEIVER_DENSE_PAIR16_PENDING_OWN_REPLAY"
+        if dense_pair
         else "NEURAL_RELAY_RECEIVER_LEARNED_PAIR16_PENDING_OWN_REPLAY"
         if learned_pair
         else "NEURAL_RELAY_RECEIVER_EXPLORATION32_PENDING_OWN_REPLAY"
@@ -136,6 +141,7 @@ def main():
             "soccer.neural_relay_whole_receiver_identity.development.v8",
             "soccer.neural_relay_receiver_exploration.development.v9",
             "soccer.neural_relay_receiver_learned_pair.development.v10",
+            "soccer.neural_relay_receiver_dense_pair.development.v17",
             "soccer.neural_relay_passer_residual_pair.development.v11",
             "soccer.neural_relay_passer_contact_exit.development.v12",
             "soccer.neural_relay_receiver_center_identity.development.v13",
@@ -242,6 +248,8 @@ def main():
         sides = (
             (-0.2, 0.2)
             if center_identity or center_exploration
+            else (-0.35, 0.35)
+            if dense_pair
             else (-0.75, -0.35, 0.35, 0.75)
             if balance_expanded
             else (-0.55, 0.55)
@@ -486,6 +494,7 @@ def main():
                 dec["receiver_candidate_audit_hash"],
                 Path(dec["receiver_dataset"]),
                 dec["receiver_dataset_hash"],
+                dense_mode=dense_pair,
             )
             if learned_pair
             else None

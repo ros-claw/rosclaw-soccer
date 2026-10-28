@@ -70,3 +70,49 @@ def test_candidate_loader_requires_exact_audit_and_model_identity(tmp_path, monk
         load_research_receiver(
             setup, checkpoint, "sha256:wrong", audit, file_hash(audit), dataset, file_hash(dataset)
         )
+    dataset.write_text(
+        json.dumps(
+            {
+                "model_identity": [str(model), "m", str(config), "c"],
+                "reward_profile": "center-strict-full-history-v1",
+            }
+        )
+    )
+    torch.save(
+        dict(
+            actor=state,
+            dataset_hash=file_hash(dataset),
+            dense_audit_hash="dense-audit",
+            promotion_authorized=False,
+            hardware_authorized=False,
+            physical_retention_proven=False,
+        ),
+        checkpoint,
+    )
+    audit.write_text(
+        json.dumps(
+            dict(
+                status="DENSE_RECEIVER_CANDIDATE_READBACK_MATCH",
+                checkpoint_hash=file_hash(checkpoint),
+                dataset_hash=file_hash(dataset),
+                dense_audit_hash="dense-audit",
+                episodes=72,
+                sampled_controls=18903,
+                physical_retention_proven=False,
+                promotion_authorized=False,
+                hardware_authorized=False,
+            )
+        )
+    )
+    args = (
+        setup,
+        checkpoint,
+        file_hash(checkpoint),
+        audit,
+        file_hash(audit),
+        dataset,
+        file_hash(dataset),
+    )
+    with pytest.raises(ValueError, match="exact audited candidate"):
+        load_research_receiver(*args)
+    assert load_research_receiver(*args, dense_mode=True) is actor

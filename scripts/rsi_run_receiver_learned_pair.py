@@ -29,6 +29,7 @@ def main() -> None:
     ):
         p.add_argument("--" + key, required=True)
     p.add_argument("--new-context-block", type=int, choices=(0, 1, 2), required=True)
+    p.add_argument("--receiver-dense-pair", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
@@ -40,6 +41,7 @@ def main() -> None:
         "-m",
         "scripts.rsi_collect_neural_relay_chain",
         "--receiver-learned-pair",
+        *(["--receiver-dense-pair"] if a.receiver_dense_pair else []),
         "--new-context-block",
         str(a.new_context_block),
         "--output",

@@ -27,6 +27,7 @@ def main():
     p.add_argument("--receiver-whole-identity", action="store_true")
     p.add_argument("--receiver-center-curriculum", action="store_true")
     p.add_argument("--receiver-learned-pair", action="store_true")
+    p.add_argument("--receiver-dense-pair", action="store_true")
     p.add_argument("--passer-residual-pair", action="store_true")
     p.add_argument("--precontact-fullbody-pair", action="store_true")
     p.add_argument("--precontact-smooth", action="store_true")
@@ -51,6 +52,8 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.receiver_dense_pair and not a.receiver_learned_pair:
+        p.error("dense research candidate requires the isolated learned pair")
     if a.precontact_smooth and not a.precontact_fullbody_pair:
         p.error("smooth transition requires the isolated precontact pair")
     if a.precontact_fullbody_pair and (
@@ -376,6 +379,8 @@ def main():
     sides = (
         (-0.2, 0.2)
         if a.receiver_center_curriculum
+        else (-0.35, 0.35)
+        if a.receiver_dense_pair
         else (-0.75, -0.35, 0.35, 0.75)
         if a.balance_expanded
         else (-0.55, 0.55)
@@ -400,6 +405,8 @@ def main():
                 if a.passer_contact_exit
                 else "soccer.neural_relay_passer_residual_pair.development.v11"
                 if a.passer_residual_pair
+                else "soccer.neural_relay_receiver_dense_pair.development.v17"
+                if a.receiver_dense_pair
                 else "soccer.neural_relay_receiver_learned_pair.development.v10"
                 if a.receiver_learned_pair
                 else "soccer.neural_relay_receiver_exploration.development.v9"
@@ -552,6 +559,7 @@ def main():
                 a.receiver_candidate_audit_hash,
                 a.receiver_dataset,
                 a.receiver_dataset_hash,
+                dense_mode=a.receiver_dense_pair,
             )
             if a.receiver_learned_pair
             else None
@@ -1066,6 +1074,8 @@ def main():
                     if a.passer_contact_exit
                     else "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY"
                     if a.passer_residual_pair
+                    else "NEURAL_RELAY_RECEIVER_DENSE_PAIR16_PENDING_OWN_REPLAY"
+                    if a.receiver_dense_pair
                     else "NEURAL_RELAY_RECEIVER_LEARNED_PAIR16_PENDING_OWN_REPLAY"
                     if a.receiver_learned_pair
                     else "NEURAL_RELAY_RECEIVER_EXPLORATION32_PENDING_OWN_REPLAY"
