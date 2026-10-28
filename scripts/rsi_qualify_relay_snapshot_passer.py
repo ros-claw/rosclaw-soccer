@@ -20,6 +20,7 @@ from rosclaw_soccer.rsi.receiver_contextual_selector import selector_class
 from rosclaw_soccer.rsi.receiver_counterfactual_residual import receiver_counterfactual_residual
 from rosclaw_soccer.rsi.receiver_transition_blend import receiver_transition_action
 from rosclaw_soccer.rsi.relay_restored_receiving_role import restored_receiving_role
+from rosclaw_soccer.rsi.relay_snapshot_cases import select_relay_snapshot_cases
 from rosclaw_soccer.rsi.restored_motion_reference import restored_motion_reference
 from rosclaw_soccer.rsi.restored_scratch_world import restored_scratch_world
 from rosclaw_soccer.rsi.restored_shadow_motor import restored_shadow_motor
@@ -232,7 +233,14 @@ def main() -> None:
     ):
         raise ValueError("exact original frozen passer model and lineage required")
     check_pins(pins)
-    indices = (2, 3, 5, 7)
+    indices = tuple(sorted({r["context"] for r in snaps["rows"]}))
+    selected = select_relay_snapshot_cases(
+        source["records"], nondefault=a.nondefault, contexts=indices
+    )
+    if {r["index"] for r in selected} != {r["index"] for r in snaps["rows"]} or (
+        "contexts" in snaps and tuple(snaps["contexts"]) != indices
+    ):
+        raise ValueError("complete snapshot identity for the declared development block required")
     bench, base = open_motor(pins, base_hash, {i: contexts[i] for i in indices})
     candidate = candidates[0]
     _, training = receipt(pins, candidate["training_hash"])
