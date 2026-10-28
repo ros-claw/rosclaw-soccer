@@ -62,6 +62,7 @@ def lookahead_candidates(
         foot_first = None
         nonfoot_first = None
         peak_nonfoot = 0.0
+        failed_players: list[str] = []
         for control in range(horizon_controls):
             step = world.advance(proposed)
             forces = step["ball_forces"][:, player_index, :]
@@ -73,6 +74,7 @@ def lookahead_candidates(
                 nonfoot_first = control * 10 + int(np.flatnonzero(forces[:, 2] > 1)[0])
             peak_nonfoot = max(peak_nonfoot, float(forces[:, 2].max()))
             if world.failed:
+                failed_players = [p for p, failed in step["body_failed"].items() if failed]
                 break
         layout = world.layouts[receiver]
         q, v = layout.canonical(scratch)
@@ -84,6 +86,7 @@ def lookahead_candidates(
                 receiver_nonfoot_first=nonfoot_first,
                 maximum_nonfoot_force_n=peak_nonfoot,
                 body_failed=bool(world.failed),
+                failed_players=failed_players,
                 final_ball_relative_xy_m=(q[36:38] - q[:2]).tolist(),
                 final_ball_relative_velocity_xy_mps=(v[35:37] - v[:2]).tolist(),
                 held_targets_only=True,
