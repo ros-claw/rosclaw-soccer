@@ -22,7 +22,12 @@ def main() -> None:
     if (
         a.output.exists()
         or a.output.resolve().is_relative_to(Path.cwd())
-        or not a.unit.startswith("rosclaw-receiver-foot-teacher-axis-review-")
+        or not a.unit.startswith(
+            (
+                "rosclaw-receiver-foot-teacher-axis-review-",
+                "rosclaw-receiver-foot-teacher-early-review-",
+            )
+        )
         or not a.unit.endswith(".service")
         or "/" in a.unit
         or not 1 <= a.timeout_sec <= 7200
