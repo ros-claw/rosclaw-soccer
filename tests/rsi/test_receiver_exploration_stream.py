@@ -58,3 +58,27 @@ def test_sampling_log_density_matches_complete_executed_history():
         rho=0.9,
     )
     assert np.allclose(density.numpy(), np.stack(logps), atol=1e-4, rtol=0)
+
+
+def test_sampling_density_tracks_nonzero_learned_actor_mean():
+    scale = np.full(29, 0.25, np.float32)
+    reference = np.zeros((6, 29), np.float32)
+    means = np.stack([np.full(29, 0.08 + 0.01 * t, np.float32) for t in range(6)])
+    stream = ReceiverExplorationStream(scale, seed=92117)
+    actions, logps = [], []
+    for t, mean in enumerate(means):
+        action, trace = stream.propose(mean, reference[t], control=t)
+        stream.commit(action)
+        actions.append(action)
+        logps.append(trace["logp"])
+        assert np.max(np.abs((action - reference[t]) * scale)) < 0.2
+    density = history_motor_logp(
+        "box-truncated-ar1",
+        torch.from_numpy(means),
+        torch.from_numpy(np.stack(actions)),
+        torch.from_numpy(reference),
+        torch.from_numpy(scale),
+        torch.full((29,), math.log(0.02), dtype=torch.float32),
+        rho=0.9,
+    )
+    assert np.allclose(density.numpy(), np.stack(logps), atol=1e-4, rtol=0)

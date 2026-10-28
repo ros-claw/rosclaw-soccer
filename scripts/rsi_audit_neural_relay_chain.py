@@ -44,9 +44,18 @@ def main():
         center_exploration
         or dec["protocol"] == "soccer.neural_relay_receiver_exploration.development.v9"
     )
-    motion_pair = dec["protocol"] == "soccer.neural_relay_receiver_motion_pair.development.v18"
+    learned_exploration = dec["protocol"] in (
+        "soccer.neural_relay_receiver_dense_exploration.development.v19",
+        "soccer.neural_relay_receiver_motion_exploration.development.v20",
+    )
+    motion_pair = dec["protocol"] in (
+        "soccer.neural_relay_receiver_motion_pair.development.v18",
+        "soccer.neural_relay_receiver_motion_exploration.development.v20",
+    )
     dense_pair = (
-        motion_pair or dec["protocol"] == "soccer.neural_relay_receiver_dense_pair.development.v17"
+        motion_pair
+        or learned_exploration
+        or dec["protocol"] == "soccer.neural_relay_receiver_dense_pair.development.v17"
     )
     learned_pair = (
         dense_pair or dec["protocol"] == "soccer.neural_relay_receiver_learned_pair.development.v10"
@@ -81,7 +90,9 @@ def main():
     reference_study = dec["protocol"] == "soccer.neural_relay_reference_bridge.v2"
     team_entry_study = dec["protocol"] == "soccer.neural_relay_team_entry.v3"
     expected_worlds = (
-        16
+        32
+        if learned_exploration
+        else 16
         if whole_identity or learned_pair or passer_pair or precontact_fullbody
         else 64
         if balance_expanded
@@ -106,6 +117,8 @@ def main():
         if contact_exit
         else "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY"
         if passer_pair
+        else "NEURAL_RELAY_RECEIVER_LEARNED_EXPLORATION32_PENDING_OWN_REPLAY"
+        if learned_exploration
         else "NEURAL_RELAY_RECEIVER_MOTION_PAIR16_PENDING_OWN_REPLAY"
         if motion_pair
         else "NEURAL_RELAY_RECEIVER_DENSE_PAIR16_PENDING_OWN_REPLAY"
@@ -148,6 +161,8 @@ def main():
             "soccer.neural_relay_receiver_learned_pair.development.v10",
             "soccer.neural_relay_receiver_dense_pair.development.v17",
             "soccer.neural_relay_receiver_motion_pair.development.v18",
+            "soccer.neural_relay_receiver_dense_exploration.development.v19",
+            "soccer.neural_relay_receiver_motion_exploration.development.v20",
             "soccer.neural_relay_passer_residual_pair.development.v11",
             "soccer.neural_relay_passer_contact_exit.development.v12",
             "soccer.neural_relay_receiver_center_identity.development.v13",
@@ -183,6 +198,18 @@ def main():
                 for enabled in (False, True)
             ]
             if precontact_fullbody
+            else [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_whole=True,
+                    receiver_learned=True,
+                    exploration_seed=seed,
+                )
+                for seed in (None, 92117, 92143, 92171)
+            ]
+            if learned_exploration
             else [
                 dict(
                     start=80,
@@ -264,7 +291,7 @@ def main():
             "receiver_lateral_offsets_m"
         ) != list(sides):
             raise ValueError("exact center curriculum offsets required")
-        if exploration and (
+        if (exploration or learned_exploration) and (
             dec.get("receiver_exploration_is_stochastic_not_training") is not True
             or dec.get("receiver_sampling_profile") != "contact-v1"
             or dec.get("receiver_sampling_law") != "box-truncated-ar1"
@@ -424,7 +451,7 @@ def main():
     counts = dict(native_steps=0, actual_actor_calls=0, shadow_actor_calls=0)
     if whole_identity or exploration or learned_pair:
         counts.update(receiver_onnx_calls=0, receiver_plastic_calls=0, receiver_anchor_calls=0)
-    if exploration:
+    if exploration or learned_exploration:
         counts["receiver_stochastic_calls"] = 0
     records = []
     try:

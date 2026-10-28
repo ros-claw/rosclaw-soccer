@@ -42,6 +42,7 @@ def main():
     ):
         p.add_argument("--" + key)
     p.add_argument("--receiver-exploration", action="store_true")
+    p.add_argument("--receiver-learned-exploration", action="store_true")
     p.add_argument("--identity-review", type=Path)
     p.add_argument("--identity-review-hash")
     p.add_argument("--identity-review-head")
@@ -53,6 +54,8 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.receiver_learned_exploration and not a.receiver_dense_pair:
+        p.error("learned exploration requires the pinned dense learned candidate")
     if a.receiver_motion_pair and not a.receiver_dense_pair:
         p.error("motion candidate requires explicit dense-pair evaluation")
     if a.receiver_dense_pair and not a.receiver_learned_pair:
@@ -361,6 +364,18 @@ def main():
             )
             for learned in (False, True)
         ]
+    if a.receiver_learned_exploration:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                receiver_whole=True,
+                receiver_learned=True,
+                exploration_seed=seed,
+            )
+            for seed in (None, 92117, 92143, 92171)
+        ]
     if a.receiver_exploration:
         arms = [
             dict(
@@ -408,6 +423,10 @@ def main():
                 if a.passer_contact_exit
                 else "soccer.neural_relay_passer_residual_pair.development.v11"
                 if a.passer_residual_pair
+                else "soccer.neural_relay_receiver_motion_exploration.development.v20"
+                if a.receiver_learned_exploration and a.receiver_motion_pair
+                else "soccer.neural_relay_receiver_dense_exploration.development.v19"
+                if a.receiver_learned_exploration
                 else "soccer.neural_relay_receiver_motion_pair.development.v18"
                 if a.receiver_motion_pair
                 else "soccer.neural_relay_receiver_dense_pair.development.v17"
@@ -466,6 +485,7 @@ def main():
             prior_closed_relay=prior,
             joint_targets_remain_actual_neural_outputs=a.balance_teacher_pair is None
             and not a.receiver_exploration
+            and not a.receiver_learned_exploration
             and not a.passer_residual_pair
             and not a.precontact_smooth,
             bounded_teacher_added_after_neural=a.balance_teacher_pair is not None,
@@ -476,12 +496,18 @@ def main():
             geometry_role_selector_is_teacher=True,
             post_touch_velocity_follow_is_unlearned_teacher=a.receiver_follow_study,
             whole_receiver_identity_not_trained=a.receiver_whole_identity,
-            receiver_exploration_is_stochastic_not_training=a.receiver_exploration,
+            receiver_exploration_is_stochastic_not_training=(
+                a.receiver_exploration or a.receiver_learned_exploration
+            ),
             passer_residual_is_unlearned_teacher=a.passer_residual_pair,
             precontact_fullbody_is_unlearned_teacher=a.precontact_fullbody_pair,
             precontact_smooth_controls=10 if a.precontact_smooth else 0,
-            receiver_sampling_profile="contact-v1" if a.receiver_exploration else None,
-            receiver_sampling_law="box-truncated-ar1" if a.receiver_exploration else None,
+            receiver_sampling_profile="contact-v1"
+            if a.receiver_exploration or a.receiver_learned_exploration
+            else None,
+            receiver_sampling_law="box-truncated-ar1"
+            if a.receiver_exploration or a.receiver_learned_exploration
+            else None,
             actual_actor_calls_are_body_proposals_not_auxiliary_forward_passes=True,
             receiver_velocity_original_H300_preserved=True,
             longer_dual_neural_standing_is_NEW_UNQUALIFIED_PROFILE=True,
@@ -498,7 +524,7 @@ def main():
     counts = dict(native_steps=0, actual_actor_calls=0, shadow_actor_calls=0)
     if a.receiver_whole_identity or a.receiver_exploration or a.receiver_learned_pair:
         counts.update(receiver_onnx_calls=0, receiver_plastic_calls=0, receiver_anchor_calls=0)
-    if a.receiver_exploration:
+    if a.receiver_exploration or a.receiver_learned_exploration:
         counts["receiver_stochastic_calls"] = 0
     records = []
     try:
@@ -1080,6 +1106,8 @@ def main():
                     if a.passer_contact_exit
                     else "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY"
                     if a.passer_residual_pair
+                    else "NEURAL_RELAY_RECEIVER_LEARNED_EXPLORATION32_PENDING_OWN_REPLAY"
+                    if a.receiver_learned_exploration
                     else "NEURAL_RELAY_RECEIVER_MOTION_PAIR16_PENDING_OWN_REPLAY"
                     if a.receiver_motion_pair
                     else "NEURAL_RELAY_RECEIVER_DENSE_PAIR16_PENDING_OWN_REPLAY"
