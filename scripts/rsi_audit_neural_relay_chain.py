@@ -105,8 +105,13 @@ def main():
     longitudinal_authority = (
         dec["protocol"] == "soccer.neural_relay_receiver_longitudinal_authority.development.v32"
     )
-    lateral_authority = longitudinal_authority or (
-        dec["protocol"] == "soccer.neural_relay_receiver_lateral_authority.development.v22"
+    adaptive_intercept = (
+        dec["protocol"] == "soccer.neural_relay_receiver_adaptive_intercept.development.v33"
+    )
+    lateral_authority = (
+        longitudinal_authority
+        or adaptive_intercept
+        or (dec["protocol"] == "soccer.neural_relay_receiver_lateral_authority.development.v22")
     )
     balance_expanded = dec["protocol"] == "soccer.neural_relay_balance_expanded.development.v6"
     balance_study = (
@@ -182,6 +187,8 @@ def main():
         if passer_pair
         else "NEURAL_RELAY_RECEIVER_LONGITUDINAL_AUTHORITY32_PENDING_OWN_REPLAY"
         if longitudinal_authority
+        else "NEURAL_RELAY_RECEIVER_ADAPTIVE_INTERCEPT32_PENDING_OWN_REPLAY"
+        if adaptive_intercept
         else "NEURAL_RELAY_RECEIVER_LATERAL_AUTHORITY32_PENDING_OWN_REPLAY"
         if lateral_authority
         else "NEURAL_RELAY_RECEIVER_CONTINUATION_PAIR16_PENDING_OWN_REPLAY"
@@ -234,6 +241,7 @@ def main():
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
             "soccer.neural_relay_receiver_continuation_pair.development.v21",
             "soccer.neural_relay_receiver_lateral_authority.development.v22",
+            "soccer.neural_relay_receiver_adaptive_intercept.development.v33",
             "soccer.neural_relay_receiver_longitudinal_authority.development.v32",
             "soccer.neural_relay_receiver_foot_teacher.development.v23",
             "soccer.neural_relay_receiver_predictive_foot_shin.development.v24",
@@ -320,6 +328,18 @@ def main():
                 for enabled in (False, True)
             ]
             if precontact_fullbody
+            else [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_lateral_offset_m=offset,
+                    receiver_adaptive_intercept=adaptive,
+                )
+                for offset in (-0.12, 0.12)
+                for adaptive in (False, True)
+            ]
+            if adaptive_intercept
             else [
                 dict(
                     start=80,
@@ -463,6 +483,8 @@ def main():
             or dec.get("bounded_teacher_added_after_neural") is not False
         ):
             raise ValueError("explicit unlearned lateral command authority required")
+        if adaptive_intercept and dec.get("adaptive_intercept_is_unlearned_teacher") is not True:
+            raise ValueError("explicit unlearned adaptive command authority required")
         if (
             longitudinal_authority
             and dec.get("longitudinal_intercept_is_unlearned_teacher") is not True
@@ -1011,6 +1033,9 @@ def main():
                         pass_direction=forward,
                         launch_seen=launch,
                         ready_anchor_xy=anchor,
+                        mode="velocity-match-v4"
+                        if course["arm"].get("receiver_adaptive_intercept", False)
+                        else "pursuit-v1",
                         lateral_offset_m=course["arm"].get("receiver_lateral_offset_m", 0.12),
                         longitudinal_offset_m=course["arm"].get(
                             "receiver_longitudinal_offset_m", 0.35

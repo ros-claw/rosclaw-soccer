@@ -68,6 +68,36 @@ def test_longitudinal_authority_is_bounded_causal_and_preserves_default():
             receiving_intent(**s, longitudinal_offset_m=invalid)
 
 
+def test_velocity_match_uses_current_incoming_ball_and_is_bounded():
+    s = state()
+    anchor = np.array([4.0, 0.5])
+    s.update(ball_xy=np.array([3.0, 0.0]), ball_velocity_xy=np.array([2.0, 0.0]))
+    before = {k: v.copy() for k, v in s.items() if isinstance(v, np.ndarray)}
+    baseline = receiving_intent(**s, ready_anchor_xy=anchor)
+    candidate = receiving_intent(**s, ready_anchor_xy=anchor, mode="velocity-match-v4")
+    assert candidate.role_state == "VELOCITY_MATCH_INTERCEPT"
+    assert candidate.command_body != baseline.command_body
+    assert -0.5 <= candidate.command_body[0] <= 1.0
+    assert abs(candidate.command_body[1]) <= 0.5
+    assert abs(candidate.command_body[2]) <= 1.0
+    for key, value in before.items():
+        np.testing.assert_array_equal(s[key], value)
+
+
+def test_velocity_match_falls_back_outside_approach_window():
+    s = state()
+    anchor = np.array([4.0, 0.5])
+    for ball, velocity in (
+        ([0.0, 0.0], [2.0, 0.0]),
+        ([4.5, 0.0], [2.0, 0.0]),
+        ([3.0, 0.0], [0.0, 0.0]),
+    ):
+        s.update(ball_xy=np.array(ball), ball_velocity_xy=np.array(velocity))
+        assert receiving_intent(**s, ready_anchor_xy=anchor, mode="velocity-match-v4") == (
+            receiving_intent(**s, ready_anchor_xy=anchor)
+        )
+
+
 def test_backward_ball_does_not_fabricate_pass_and_nonfinite_rejected():
     s = state()
     s["ball_velocity_xy"] = np.array([-5.0, 0.0])

@@ -35,7 +35,8 @@ def receiving_intent(
 ) -> ReceivingIntent:
     if (
         type(mode) is not str
-        or mode not in ("pursuit-v1", "anchor-plane-v2", "projected-capture-v3")
+        or mode
+        not in ("pursuit-v1", "anchor-plane-v2", "projected-capture-v3", "velocity-match-v4")
         or (mode != "pursuit-v1" and ready_anchor_xy is None)
         or (mode == "projected-capture-v3" and capture_target_xy is None)
         or type(lateral_offset_m) is not float
@@ -105,6 +106,23 @@ def receiving_intent(
             else "WAIT_PASS"
         )
     velocity = 1.4 * (target - root_xy)
+    if mode == "velocity-match-v4" and launch:
+        along = float((root_xy - ball_xy) @ pass_direction)
+        incoming = float(ball_velocity_xy @ pass_direction)
+        if 0.0 < along <= 1.8 and incoming > 0.4:
+            # A bounded causal interception teacher, not a contact model:
+            # use only current measured position/velocity, preserve the chosen
+            # foot-side offset and ask the locomotion actor to match the ball.
+            eta = float(np.clip(along / incoming, 0.0, 0.5))
+            lateral = np.array([-pass_direction[1], pass_direction[0]])
+            target = (
+                ball_xy
+                + eta * ball_velocity_xy
+                + longitudinal_offset_m * pass_direction
+                + lateral_offset_m * lateral
+            )
+            velocity = ball_velocity_xy + 1.4 * (target - root_xy)
+            phase = "VELOCITY_MATCH_INTERCEPT"
     norm = float(np.linalg.norm(velocity))
     if norm > 1:
         velocity /= norm

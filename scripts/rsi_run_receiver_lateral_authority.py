@@ -17,7 +17,10 @@ def main() -> None:
         p.add_argument("--" + key, required=True)
     p.add_argument("--new-context-block", type=int, choices=(0, 1, 2), required=True)
     p.add_argument("--longitudinal", action="store_true")
+    p.add_argument("--adaptive-intercept", action="store_true")
     a = p.parse_args()
+    if a.longitudinal and a.adaptive_intercept:
+        p.error("adaptive and longitudinal studies must remain isolated")
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("unused external physical evidence root required")
@@ -30,6 +33,7 @@ def main() -> None:
             "scripts.rsi_collect_neural_relay_chain",
             "--receiver-lateral-authority",
             *(["--receiver-longitudinal-authority"] if a.longitudinal else []),
+            *(["--receiver-adaptive-intercept"] if a.adaptive_intercept else []),
             "--new-context-block",
             str(a.new_context_block),
             "--frontier-root",
