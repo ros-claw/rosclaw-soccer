@@ -10,6 +10,47 @@ import numpy as np
 from numpy.typing import NDArray
 
 
+def guarded_ppo_optimizer_step(
+    policy: Any, optimizer: Any, obs: Any, action: Any, old_logp: Any, *, kl_limit: float = 0.02
+) -> tuple[bool, float]:
+    """Roll back both network and optimizer if post-update rollout KL is high.
+
+    The caller has already computed/clipped gradients. KL is measured on all
+    valid samples from the actual rollout, not just the update minibatch.
+    This is an empirical on-policy guard, not a safety or generalization proof.
+    """
+    import copy
+    import math
+
+    import torch
+
+    if not math.isfinite(kl_limit) or kl_limit <= 0:
+        raise ValueError("positive finite KL limit required")
+    before_policy = copy.deepcopy(policy.state_dict())
+    before_optimizer = copy.deepcopy(optimizer.state_dict())
+    try:
+        optimizer.step()
+        with torch.no_grad():
+            policy.log_std.clamp_(math.log(0.01), math.log(0.1))
+            log_ratio = policy.distribution(obs).log_prob(action).sum(-1) - old_logp
+            if not torch.isfinite(log_ratio).all() or log_ratio.abs().max() > 40:
+                raise ValueError("nonfinite or extreme post-update likelihood ratio")
+            kl = float(((log_ratio.exp() - 1) - log_ratio).mean())
+            if not math.isfinite(kl):
+                raise ValueError("finite post-update KL required")
+            if any(not torch.isfinite(v).all() for v in policy.state_dict().values()):
+                raise ValueError("finite post-update model required")
+        if kl > kl_limit:
+            policy.load_state_dict(before_policy, strict=True)
+            optimizer.load_state_dict(before_optimizer)
+            return False, kl
+        return True, kl
+    except Exception:
+        policy.load_state_dict(before_policy, strict=True)
+        optimizer.load_state_dict(before_optimizer)
+        raise
+
+
 def course_gae(
     reward: NDArray[np.float32],
     value: NDArray[np.float32],

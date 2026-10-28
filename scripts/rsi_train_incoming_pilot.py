@@ -6,7 +6,6 @@ neither a qualified receiving skill nor an independent match evaluation.
 
 import argparse
 import json
-import math
 import subprocess
 from pathlib import Path
 
@@ -90,6 +89,7 @@ def main():
     from rosclaw_soccer.rsi.native_contact_course import NativeContactCourse
     from rosclaw_soccer.rsi.native_contact_ppo import (
         course_gae,
+        guarded_ppo_optimizer_step,
         make_contact_actor_critic,
         native_ppo_loss,
     )
@@ -149,7 +149,7 @@ def main():
     original = {k: v.detach().cpu().clone() for k, v in policy.actor.state_dict().items()}
     optimizer = torch.optim.Adam(
         [
-            dict(params=policy.actor.parameters(), lr=3e-5),
+            dict(params=policy.actor.parameters(), lr=3e-6),
             dict(params=policy.critic.parameters(), lr=3e-4),
             dict(params=[policy.log_std], lr=1e-5),
         ]
@@ -187,6 +187,9 @@ def main():
             motion_reference_hash=a.motion_reference_hash,
             one_motion_clip_and_overlapping_reference_windows=motion,
             planar_capture_distance=True,
+            actor_learning_rate=3e-6,
+            post_update_rollout_kl_limit=0.02,
+            rollback_policy_and_optimizer_on_excess_kl=True,
             cpu_physics=True,
             one_gpu_learner=True,
             independent_fresh_exam=False,
@@ -281,18 +284,35 @@ def main():
                     norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
                     if not torch.isfinite(loss) or not torch.isfinite(norm):
                         raise ValueError("finite PPO loss and gradients required")
-                    optimizer.step()
+                    if warmup:
+                        optimizer.step()
+                        accepted, post_kl = True, None
+                    else:
+                        accepted, post_kl = guarded_ppo_optimizer_step(
+                            policy, optimizer, data["obs"], data["action"], data["old_logp"]
+                        )
+                    if not accepted:
+                        update_metrics.append(
+                            dict(
+                                optimizer_step=False,
+                                reason="post_step_kl_rollback",
+                                post_update_kl=post_kl,
+                                gradient_norm=float(norm),
+                                metrics={key: float(value) for key, value in metrics.items()},
+                            )
+                        )
+                        stop = True
+                        break
                     updates += 1
                     update_metrics.append(
                         dict(
                             optimizer_step=True,
                             gradient_norm=float(norm),
+                            post_update_kl=post_kl,
                             loss=float(loss.detach()),
                             metrics={key: float(value) for key, value in metrics.items()},
                         )
                     )
-                    with torch.no_grad():
-                        policy.log_std.clamp_(math.log(0.01), math.log(0.1))
                     if any(not torch.isfinite(v).all() for v in policy.state_dict().values()):
                         raise ValueError("finite policy and critic required")
                 if stop:

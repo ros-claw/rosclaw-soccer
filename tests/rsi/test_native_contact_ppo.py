@@ -48,6 +48,47 @@ def test_40_control_course_requires_explicit_opt_in():
     assert np.array_equal(advantage, returns)
 
 
+def test_post_update_kl_guard_rolls_back_network_and_adam():
+    import torch
+    from torch import nn
+
+    from rosclaw_soccer.rsi.native_contact_ppo import (
+        guarded_ppo_optimizer_step,
+        make_contact_actor_critic,
+    )
+
+    class Actor(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.register_buffer("prior_mean", torch.zeros(1, 98))
+            self.register_buffer("prior_denominator", torch.ones(1, 98))
+            self.head = nn.Linear(177, 29)
+
+        def forward(self, obs):
+            return self.head(obs)
+
+    torch.manual_seed(1)
+    policy = make_contact_actor_critic(Actor())
+    optimizer = torch.optim.Adam(policy.actor.parameters(), lr=0.01)
+    obs = torch.zeros(8, 177)
+    obs[:, 0] = 1
+    with torch.no_grad():
+        dist = policy.distribution(obs)
+        actions = dist.loc.clone()
+        old_logp = dist.log_prob(actions).sum(-1)
+    before = {k: v.clone() for k, v in policy.state_dict().items()}
+    (-policy.actor(obs).sum()).backward()
+    accepted, kl = guarded_ppo_optimizer_step(policy, optimizer, obs, actions, old_logp)
+    assert not accepted and kl > 0.02
+    assert not optimizer.state
+    assert all(torch.equal(v, before[k]) for k, v in policy.state_dict().items())
+    optimizer.param_groups[0]["lr"] = 1e-5
+    accepted, kl = guarded_ppo_optimizer_step(policy, optimizer, obs, actions, old_logp)
+    assert accepted and kl < 0.02
+    assert optimizer.state
+    assert any(not torch.equal(v, before[k]) for k, v in policy.state_dict().items())
+
+
 def test_value_warmup_cannot_touch_actor_or_exploration():
     import torch
     from torch import nn
