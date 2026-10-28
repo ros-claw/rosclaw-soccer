@@ -1,6 +1,27 @@
 import numpy as np
+import pytest
 
-from rosclaw_soccer.rsi.passer_curriculum_outcome import strict_pass_receive
+from rosclaw_soccer.rsi.passer_curriculum_outcome import delivery_center_speeds, strict_pass_receive
+
+
+def test_delivery_speeds_use_post_a_and_pre_b_samples():
+    velocities = np.array([[3.0, 0, 0], [0.6, 0.8, 0], [9.0, 0, 0]])
+    result = delivery_center_speeds(velocities, passer_substep=0, receiver_substep=2)
+    assert result["ball_center_speed_after_passer_mps"] == 3
+    assert result["ball_center_speed_before_receiver_mps"] == 1
+    assert result["speed_is_not_contact_point_relative_velocity"] is True
+    assert (
+        delivery_center_speeds(velocities, passer_substep=2, receiver_substep=2)[
+            "ball_center_speed_before_receiver_mps"
+        ]
+        is None
+    )
+    with pytest.raises(ValueError):
+        delivery_center_speeds(velocities, passer_substep=-1, receiver_substep=2)
+    with pytest.raises(ValueError):
+        delivery_center_speeds(
+            np.array([[float("nan"), 0, 0]]), passer_substep=0, receiver_substep=None
+        )
 
 
 def test_clean_receiver_requires_order_no_body_contact_and_health():

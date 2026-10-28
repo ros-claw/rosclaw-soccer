@@ -3,6 +3,40 @@
 import numpy as np
 
 
+def delivery_center_speeds(
+    ball_qvel: np.ndarray, *, passer_substep: int | None, receiver_substep: int | None
+) -> dict:
+    """Measure sampled ball-center speed after A and just before B's contact.
+
+    These are world-frame center speeds, not surface-relative contact speeds.
+    Substep velocities must come from the post-step native physics trace.
+    """
+    if (
+        not isinstance(ball_qvel, np.ndarray)
+        or ball_qvel.ndim != 2
+        or ball_qvel.shape[1] != 3
+        or len(ball_qvel) == 0
+        or not np.isfinite(ball_qvel).all()
+    ):
+        raise ValueError("finite post-step ball-center velocities are required")
+    for index in (passer_substep, receiver_substep):
+        if index is not None and (type(index) is not int or not 0 <= index < len(ball_qvel)):
+            raise ValueError("contact substep must index the velocity trace")
+    after_a = None if passer_substep is None else float(np.linalg.norm(ball_qvel[passer_substep]))
+    before_b = None
+    if (
+        passer_substep is not None
+        and receiver_substep is not None
+        and passer_substep < receiver_substep
+    ):
+        before_b = float(np.linalg.norm(ball_qvel[receiver_substep - 1]))
+    return {
+        "ball_center_speed_after_passer_mps": after_a,
+        "ball_center_speed_before_receiver_mps": before_b,
+        "speed_is_not_contact_point_relative_velocity": True,
+    }
+
+
 def strict_pass_receive(ball_forces: np.ndarray, body_failed: np.ndarray, *, handoff: bool) -> dict:
     """Require A foot first, B foot next, no B nonfoot anywhere, and both healthy."""
     n = len(ball_forces)
