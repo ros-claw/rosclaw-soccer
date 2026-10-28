@@ -39,7 +39,7 @@ def main():
         p.add_argument("--" + key, required=True)
     p.add_argument("--launch-frame", choices=("world", "heading"), default="world")
     p.add_argument("--lateral-study", action="store_true")
-    p.add_argument("--lateral-speed", type=float, choices=(1.25, 3.0), default=1.25)
+    p.add_argument("--lateral-speed", type=float, choices=(1.25, 1.75, 2.25, 3.0), default=1.25)
     p.add_argument("--receive-window", type=int, choices=(40, 60), default=40)
     p.add_argument("--intercept-teacher", action="store_true")
     p.add_argument("--robust-teacher", action="store_true")

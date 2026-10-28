@@ -17,6 +17,15 @@ def test_fast_lateral_course_bank_is_valid_and_distinct():
     assert preflight_receiving_courses(fast) != preflight_receiving_courses(slow)
 
 
+@pytest.mark.parametrize("speed", [1.25, 1.75, 2.25, 3.0])
+def test_curriculum_speeds_are_distinct_valid_launch_domains(speed):
+    courses = tuple(
+        replace(BASE, seed=300 + i, speed_mps=speed, lateral_m=lateral)
+        for i, lateral in enumerate((-0.24, -0.08, 0.08, 0.24))
+    )
+    assert preflight_receiving_courses(courses).startswith("sha256:")
+
+
 def test_bank_binding_is_deterministic_and_preserves_input():
     courses = (BASE, replace(BASE, seed=124, speed_mps=1.8))
     assert preflight_receiving_courses(courses) == preflight_receiving_courses(courses)
