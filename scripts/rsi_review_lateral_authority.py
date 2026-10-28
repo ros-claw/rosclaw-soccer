@@ -27,6 +27,10 @@ def main() -> None:
     for name in ("producer-head", "expected-head"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--wait-unit")
+    p.add_argument("--longitudinal", action="store_true")
+    p.add_argument("--prior", type=Path)
+    p.add_argument("--prior-hash")
+    p.add_argument("--prior-audit-hash")
     p.add_argument("--timeout-sec", type=int, default=7200)
     a = p.parse_args()
     clean(a.expected_head)
@@ -36,7 +40,11 @@ def main() -> None:
         or not 1 <= a.timeout_sec <= 7200
         or a.wait_unit is not None
         and (
-            not a.wait_unit.startswith("rosclaw-receiver-lateral-authority-")
+            not a.wait_unit.startswith(
+                "rosclaw-receiver-longitudinal-authority-"
+                if a.longitudinal
+                else "rosclaw-receiver-lateral-authority-"
+            )
             or not a.wait_unit.endswith(".service")
             or "/" in a.wait_unit
         )
@@ -73,15 +81,45 @@ def main() -> None:
     root, audit = a.source / "source", a.source / "audit/complete.json"
     ah = digest(audit)
     source, _, sh = report(
-        root, audit, ah, "NEURAL_RELAY_RECEIVER_LATERAL_AUTHORITY32_PENDING_OWN_REPLAY", worlds=32
+        root,
+        audit,
+        ah,
+        "NEURAL_RELAY_RECEIVER_LONGITUDINAL_AUTHORITY32_PENDING_OWN_REPLAY"
+        if a.longitudinal
+        else "NEURAL_RELAY_RECEIVER_LATERAL_AUTHORITY32_PENDING_OWN_REPLAY",
+        worlds=32,
     )
     declaration = json.loads((root / "declaration.json").read_text())
     if (
         source["source_head"] != a.producer_head
         or declaration.get("development_context_block") != 0
         or declaration.get("lateral_intercept_is_unlearned_teacher") is not True
+        or a.longitudinal
+        and declaration.get("longitudinal_intercept_is_unlearned_teacher") is not True
     ):
         raise ValueError("exact isolated development-only command authority required")
+    prior_root = None
+    prior_rows = {}
+    if a.longitudinal:
+        if a.prior is None or not a.prior_hash or not a.prior_audit_hash:
+            raise ValueError("pinned lateral baseline and independent replay required")
+        prior_root = a.prior / "source"
+        prior, _, prior_hash = report(
+            prior_root,
+            a.prior / "audit/complete.json",
+            a.prior_audit_hash,
+            "NEURAL_RELAY_RECEIVER_LATERAL_AUTHORITY32_PENDING_OWN_REPLAY",
+            worlds=32,
+        )
+        if prior_hash != a.prior_hash:
+            raise ValueError("exact historical baseline required")
+        prior_rows = {
+            (r["course"]["context"], r["course"]["lateral_m"]): r
+            for r in prior["records"]
+            if r["course"]["arm"]["receiver_lateral_offset_m"] == 0.12
+        }
+        if len(prior_rows) != 8:
+            raise ValueError("eight unique historical baseline worlds required")
     model = mujoco.MjModel.from_xml_path(str(root / "scene.xml"))
     layout = NativeVelocityLayout(
         model, robot_prefix="b/", ball_body_name="soccer_ball", player_count=2
@@ -90,16 +128,29 @@ def main() -> None:
         (
             r["course"]["context"],
             r["course"]["lateral_m"],
-            r["course"]["arm"]["receiver_lateral_offset_m"],
+            r["course"]["arm"][
+                "receiver_longitudinal_offset_m" if a.longitudinal else "receiver_lateral_offset_m"
+            ],
         ): r
         for r in source["records"]
     }
-    offsets = (-0.35, -0.12, 0.12, 0.35)
+    offsets = (0.1, 0.35, 0.6, 0.8) if a.longitudinal else (-0.35, -0.12, 0.12, 0.35)
+    baseline_offset = 0.35 if a.longitudinal else 0.12
     if len(indices) != 32:
         raise ValueError("complete paired four-arm source factorial required")
     rows = []
     for context, side in sorted({(c, s) for c, s, _ in indices}):
-        baseline = indices[(context, side, 0.12)]
+        baseline = indices[(context, side, baseline_offset)]
+        if a.longitudinal and (
+            prior_root is None
+            or (context, side) not in prior_rows
+            or not artifact_equal(
+                root, baseline, prior_root, prior_rows[(context, side)], "physics"
+            )
+        ):
+            raise ValueError(
+                "longitudinal default must reproduce historical actual physics exactly"
+            )
         base_velocity, base_physics = (
             bind(root, baseline, "receiver_velocity"),
             bind(root, baseline, "physics"),
@@ -181,6 +232,12 @@ def main() -> None:
             )
     if len(rows) != 32 or digest(root / "complete.json") != sh or digest(audit) != ah:
         raise ValueError("unchanged complete paired rollout and independent replay required")
+    if a.longitudinal and (
+        prior_root is None
+        or digest(prior_root / "complete.json") != a.prior_hash
+        or digest(a.prior / "audit/complete.json") != a.prior_audit_hash
+    ):
+        raise ValueError("historical baseline changed during comparison")
     summaries = {}
     for offset in offsets:
         subset = [r for r in rows if r["offset_m"] == offset]
@@ -204,10 +261,14 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="RECEIVER_LATERAL_AUTHORITY_DEVELOPMENT_REVIEWED",
+            status="RECEIVER_LONGITUDINAL_AUTHORITY_DEVELOPMENT_REVIEWED"
+            if a.longitudinal
+            else "RECEIVER_LATERAL_AUTHORITY_DEVELOPMENT_REVIEWED",
             source_head=a.expected_head,
             source_hash=sh,
             audit_hash=ah,
+            prior_hash=a.prior_hash if a.longitudinal else None,
+            prior_audit_hash=a.prior_audit_hash if a.longitudinal else None,
             conditions=8,
             summaries=summaries,
             records=rows,
