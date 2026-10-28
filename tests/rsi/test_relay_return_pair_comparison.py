@@ -75,6 +75,19 @@ def test_complete_followthrough_uses_actual_substeps():
     assert result["followthrough_includes_subsequent_contacts"] is True
 
 
+def test_ordered_relay_contacts_expose_nonfoot_and_do_not_claim_possession():
+    a, b = trajectory(), trajectory()
+    b["ball_forces"][2, 0, 1, 0] = 3
+    b["ball_forces"][2, 2, 0, 0] = 3
+    b["ball_forces"][2, 3, 0, 2] = 3
+    result = compare(a, b)["candidate_relay_contacts"]
+    assert result["status"] == "ORDERED_FOOT_CONTACTS_NOT_POSSESSION"
+    assert result["first_returner_substep"] == 0
+    assert result["first_teammate_substep"] == 2
+    assert result["intervening_nonfoot_substeps"] == 0
+    assert result["later_nonfoot_substeps"] == 1
+
+
 def test_rejects_nonfinite_or_incomplete_trajectory():
     a, b = trajectory(), trajectory()
     b["qpos"][3, 0, 0] = np.nan

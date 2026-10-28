@@ -76,6 +76,30 @@ def compare_return_pair(
             "forward_60_controls_m": float(np.dot(delta, direction / distance)),
         }
 
+    def relay_contacts(data: dict[str, np.ndarray]) -> dict[str, object]:
+        forces = data["ball_forces"][prefix_controls:].reshape(-1, 2, 3)
+        b_foot = np.flatnonzero(np.any(forces[:, 1, :2] > 1.0, axis=1))
+        if not b_foot.size:
+            return {"status": "NO_RETURNER_FOOT_CONTACT"}
+        first_b = int(b_foot[0])
+        a_foot = np.flatnonzero(
+            np.any(forces[:, 0, :2] > 1.0, axis=1) & (np.arange(len(forces)) > first_b)
+        )
+        if not a_foot.size:
+            return {"status": "NO_LATER_TEAMMATE_FOOT_CONTACT", "first_returner_substep": first_b}
+        first_a = int(a_foot[0])
+        return {
+            "status": "ORDERED_FOOT_CONTACTS_NOT_POSSESSION",
+            "first_returner_substep": first_b,
+            "first_teammate_substep": first_a,
+            "intervening_nonfoot_substeps": int(
+                np.count_nonzero(np.any(forces[first_b:first_a, :, 2] > 1.0, axis=1))
+            ),
+            "later_nonfoot_substeps": int(
+                np.count_nonzero(np.any(forces[first_a:, :, 2] > 1.0, axis=1))
+            ),
+        }
+
     first, second = minimum(baseline), minimum(candidate)
     return {
         "pre_intervention_controls_exact": prefix_controls,
@@ -90,5 +114,7 @@ def compare_return_pair(
         "baseline_first_foot_followthrough": first_foot_followthrough(baseline),
         "candidate_first_foot_followthrough": first_foot_followthrough(candidate),
         "followthrough_includes_subsequent_contacts": True,
+        "baseline_relay_contacts": relay_contacts(baseline),
+        "candidate_relay_contacts": relay_contacts(candidate),
         "goal_proximity_is_not_pass_success": True,
     }
