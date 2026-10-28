@@ -18,6 +18,7 @@ def main():
         p.add_argument("--" + key, required=True)
     p.add_argument("--launch-frame", choices=("world", "heading"), default="world")
     p.add_argument("--lateral-study", action="store_true")
+    p.add_argument("--lateral-speed", type=float, choices=(1.25, 3.0), default=1.25)
     p.add_argument("--receive-window", type=int, choices=(40, 60), default=40)
     p.add_argument("--intercept-teacher", action="store_true")
     p.add_argument("--robust-teacher", action="store_true")
@@ -28,6 +29,8 @@ def main():
     a = p.parse_args()
     if a.lateral_study and a.launch_frame != "heading":
         raise ValueError("lateral study requires an explicit body-heading launch")
+    if not a.lateral_study and a.lateral_speed != 1.25:
+        raise ValueError("explicit lateral speed requires lateral study")
     if a.intercept_teacher and (not a.lateral_study or a.receive_window != 60):
         raise ValueError("teacher requires the declared 60-control lateral study")
     if (a.robust_teacher or a.reserve_teacher) and not a.intercept_teacher:
@@ -156,7 +159,7 @@ def main():
         ReceivingCourse(
             ROSTER[i % 8],
             930000 + i,
-            1.25 if a.lateral_study else (1.25, 2.0)[(i // 8) % 2],
+            a.lateral_speed if a.lateral_study else (1.25, 2.0)[(i // 8) % 2],
             (-0.24, -0.08, 0.08, 0.24)[(i // 32) % 4]
             if a.lateral_study
             else (-0.08, 0.08)[(i // 16) % 2],
@@ -183,7 +186,7 @@ def main():
                 or not np.all(robot_v == robot_v[0])
                 or not np.all(bank["reference_frame"][group] == bank["reference_frame"][group[0]])
                 or [courses[int(j)].lateral_m for j in group] != [-0.24, -0.08, 0.08, 0.24]
-                or any(courses[int(j)].speed_mps != 1.25 for j in group)
+                or any(courses[int(j)].speed_mps != a.lateral_speed for j in group)
             ):
                 raise ValueError("all four lateral arms must share exact robot start and speed")
     actor = VelocityPriorActor.from_onnx(
@@ -211,7 +214,7 @@ def main():
             worlds=32 if a.lateral_study else 8,
             lateral_study=a.lateral_study,
             lateral_m=[-0.24, -0.08, 0.08, 0.24] if a.lateral_study else None,
-            fixed_speed_mps=1.25 if a.lateral_study else None,
+            fixed_speed_mps=a.lateral_speed if a.lateral_study else None,
             robot_initial_state_matched_by_source=a.lateral_study,
             controls=a.receive_window,
             no_mid_episode_resets=True,
@@ -372,6 +375,7 @@ def main():
                 course_binding=binding,
                 launch_frame=a.launch_frame,
                 lateral_study=a.lateral_study,
+                fixed_speed_mps=a.lateral_speed if a.lateral_study else None,
                 receive_window=a.receive_window,
                 worlds=32 if a.lateral_study else 8,
                 reference_clip_count=8 if multi else 1,
