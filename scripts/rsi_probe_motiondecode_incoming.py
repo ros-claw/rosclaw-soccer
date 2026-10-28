@@ -1,7 +1,7 @@
 """Execute a bounded incoming-ball probe with MotionDecode FK reference.
 
-One source clip supplies correlated frames; no receiving labels are inferred
-from that source and this is not a training or promotion result.
+The source clips and frames may be correlated; no receiving labels are
+inferred from them and this is not a training or promotion result.
 """
 
 import argparse
@@ -29,17 +29,25 @@ def main():
     if digest(qual_path) != a.qualification_hash or digest(ref_path) != a.reference_hash:
         raise ValueError("exact input receipts required")
     qual, reference = json.loads(qual_path.read_text()), json.loads(ref_path.read_text())
-    if (
-        qual.get("status") != "NATIVE_CONTACT24_COURSE_QUALIFIED_NOT_SKILL"
-        or reference.get("status") != "MOTIONDECODE_KINEMATIC_NATIVE_FK_REFERENCE_NOT_TRACKED_SKILL"
+    multi = reference.get("status") == "MOTIONDECODE_TRAIN8_KINEMATIC_FK_NOT_TRACKED_SKILL"
+    if qual.get("status") != "NATIVE_CONTACT24_COURSE_QUALIFIED_NOT_SKILL" or (
+        not multi
+        and reference.get("status")
+        != "MOTIONDECODE_KINEMATIC_NATIVE_FK_REFERENCE_NOT_TRACKED_SKILL"
     ):
         raise ValueError("qualified actor assets and explicit nonphysical reference required")
     pins = {
         **qual["input_file_hashes"],
         str(qual_path): a.qualification_hash,
         str(ref_path): a.reference_hash,
-        str(a.reference_root / "reference.npz"): reference["raw_hash"],
     }
+    if multi:
+        if len(reference["records"]) != 8:
+            raise ValueError("all eight declared motion references required")
+        for i, record in enumerate(reference["records"]):
+            pins[str(a.reference_root / f"reference-{i:02d}.npz")] = record["reference_hash"]
+    else:
+        pins[str(a.reference_root / "reference.npz")] = reference["raw_hash"]
     check_pins(pins)
 
     def pinned(suffix):
@@ -67,22 +75,32 @@ def main():
         raise ValueError("reference must use exact same model")
     params = VelocityPolicyParameters.load(cfg, expected_hash=pins[str(cfg)])
     model = mujoco.MjModel.from_binary_path(str(model_path))
-    with np.load(a.reference_root / "reference.npz", allow_pickle=False) as z:
-        plan = {k.removeprefix("plan_"): z[k].copy() for k in z.files if k.startswith("plan_")}
-        body = {k.removeprefix("body_"): z[k].copy() for k in z.files if k.startswith("body_")}
-    plans, refs = [plan] * 8, [body] * 8
+    plans, refs = [], []
+    for i in range(8):
+        path = a.reference_root / (f"reference-{i:02d}.npz" if multi else "reference.npz")
+        with np.load(path, allow_pickle=False) as z:
+            plans.append(
+                {k.removeprefix("plan_"): z[k].copy() for k in z.files if k.startswith("plan_")}
+            )
+            refs.append(
+                {k.removeprefix("body_"): z[k].copy() for k in z.files if k.startswith("body_")}
+            )
     world = np.arange(256, dtype=np.int64)
     source = world % 8
     frame = 20 + source * 25 + (world // 8) * 5
-    if int(frame.max()) + 40 >= len(plan["joint"]):
+    if any(int(f) + 40 >= len(plans[int(s)]["joint"]) for f, s in zip(frame, source, strict=True)):
         raise ValueError("all declared forty-step references required")
     bank = dict(
         world=world,
         source_id=source,
         reference_frame=frame,
         lead_controls=np.array([10, 20, 40, 80], dtype=np.int64)[(world // 8) % 4],
-        qpos=plan["native_qpos"][frame].copy(),
-        qvel=plan["native_qvel"][frame].copy(),
+        qpos=np.stack(
+            [plans[int(s)]["native_qpos"][int(f)] for f, s in zip(frame, source, strict=True)]
+        ),
+        qvel=np.stack(
+            [plans[int(s)]["native_qvel"][int(f)] for f, s in zip(frame, source, strict=True)]
+        ),
         qacc_warmstart=np.zeros((256, model.nv)),
         previous_action=np.zeros((256, 29), dtype=np.float32),
         phase_before=np.zeros(256, dtype=np.float32),
@@ -123,7 +141,7 @@ def main():
             qualification_hash=a.qualification_hash,
             course_binding=binding,
             launch_frame=a.launch_frame,
-            source_clip_count=1,
+            source_clip_count=8 if multi else 1,
             correlated_reference_frames=True,
             source_fps_assumption=reference["source_fps_assumption"],
             scene="single G1, one free ball",
@@ -168,7 +186,7 @@ def main():
                 reference_hash=a.reference_hash,
                 course_binding=binding,
                 launch_frame=a.launch_frame,
-                reference_clip_count=1,
+                reference_clip_count=8 if multi else 1,
                 bank_hash=digest(a.output / "incoming-bank.npz"),
                 raw_hash=digest(a.output / "physical.npz"),
                 controls=len(rows),
