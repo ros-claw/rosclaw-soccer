@@ -12,6 +12,7 @@ import torch
 from rosclaw_soccer.providers.g1.velocity_policy import observation98, target29
 from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+from rosclaw_soccer.rsi.receiver_contextual_selector import selector_class
 from rosclaw_soccer.rsi.receiver_counterfactual_residual import receiver_counterfactual_residual
 from rosclaw_soccer.rsi.relay_restored_receiving_role import restored_receiving_role
 from rosclaw_soccer.rsi.restored_scratch_world import restored_scratch_world
@@ -41,12 +42,37 @@ def main() -> None:
     ):
         p.add_argument("--" + key, required=True)
     p.add_argument("--probe-leg-rad", type=float, nargs=12)
+    p.add_argument("--selector-receipt", type=Path)
+    p.add_argument("--selector-receipt-hash")
     a = p.parse_args()
     probe = None if a.probe_leg_rad is None else np.asarray(a.probe_leg_rad, dtype=np.float64)
     if probe is not None and (not np.isfinite(probe).all() or np.abs(probe).max() > 0.15):
         raise ValueError("finite bounded 12-leg SIM probe required")
-    validate_original = probe is None or not np.any(probe)
     clean(a.expected_head)
+    selector_weights = None
+    if (a.selector_receipt is None) != (a.selector_receipt_hash is None) or (
+        a.selector_receipt is not None and probe is not None
+    ):
+        raise ValueError("one explicitly bound selector or one fixed probe required")
+    if a.selector_receipt is not None:
+        if a.selector_receipt.is_symlink() or digest(a.selector_receipt) != a.selector_receipt_hash:
+            raise ValueError("exact selector training receipt required")
+        selector_receipt = json.loads(a.selector_receipt.read_text())
+        weights_path = a.selector_receipt.parent / "weights.npz"
+        if (
+            selector_receipt.get("status")
+            != "RECEIVER_CONTEXT_SELECTOR_TRAINED_DEV_ONLY_NOT_PHYSICALLY_VALIDATED"
+            or any(
+                selector_receipt.get(k) is not False
+                for k in ("goal_complete", "hardware_authorized", "promotion_authorized")
+            )
+            or weights_path.is_symlink()
+            or digest(weights_path) != selector_receipt.get("weights_hash")
+        ):
+            raise ValueError("unpromoted exact selector weight artifact required")
+        with np.load(weights_path, allow_pickle=False) as archive:
+            selector_weights = {key: archive[key].copy() for key in archive.files}
+        selector_class(np.zeros(98, dtype=np.float32), selector_weights)
     root, audit, snapshot_receipt = (
         a.source / "source",
         a.source / "audit/complete.json",
@@ -240,6 +266,15 @@ def main() -> None:
                 or not np.array_equal(receiver_target, physics["target_b"][140])
             ):
                 raise ValueError("receiver own inference differs at restored boundary")
+            selection = None
+            case_probe = probe
+            if selector_weights is not None:
+                selection = selector_class(receiver_obs, selector_weights)
+                knee = (0.0, 0.1, -0.1)[selection]
+                case_probe = np.asarray(
+                    [0.0, 0.0, 0.0, knee, -0.5 * knee, 0.0] * 2, dtype=np.float64
+                )
+            validate_original = case_probe is None or not np.any(case_probe)
             vp = velocity_policy.params
             scratch = restored_scratch_world(
                 setup.model,
@@ -328,10 +363,10 @@ def main() -> None:
                     or receiver_phase != velocity_data["phase"][frame]
                 ):
                     raise ValueError(f"restored own live policy history differs at {frame}")
-                if probe is not None:
+                if case_probe is not None:
                     amplitude = float(np.sin(np.pi * (frame - 140) / 38.0) ** 2)
                     receiver_action, receiver_target = receiver_counterfactual_residual(
-                        receiver_action, probe, velocity_policy.params, amplitude=amplitude
+                        receiver_action, case_probe, velocity_policy.params, amplitude=amplitude
                     )
                 else:
                     receiver_target = target29(receiver_action, velocity_policy.params)
@@ -394,9 +429,10 @@ def main() -> None:
                 first_contact_frame_and_substep=first_contact,
                 first_contact_groups=first_groups,
                 body_failure=bool(scratch.failed),
+                selector_class=selection,
             )
         )
-        if probe is not None:
+        if probe is not None or selector_weights is not None:
             probe_trajectories.append(
                 {
                     **{
@@ -417,12 +453,19 @@ def main() -> None:
         or digest(audit) != a.audit_hash
         or digest(scene) != snaps["scene_hash"]
         or digest(a.role_proof) != a.role_proof_hash
+        or (
+            a.selector_receipt is not None
+            and (
+                digest(a.selector_receipt) != a.selector_receipt_hash
+                or digest(weights_path) != selector_receipt["weights_hash"]
+            )
+        )
     ):
         raise ValueError("all exact unchanged original eight cases required")
     clean(a.expected_head)
     check_pins(pins)
     a.output.mkdir(parents=True)
-    if probe is not None:
+    if probe is not None or selector_weights is not None:
         for row, trajectory in zip(rows, probe_trajectories, strict=True):
             path = a.output / f"trial-{row['index']}.npz"
             np.savez_compressed(path, **trajectory)
@@ -432,8 +475,10 @@ def main() -> None:
         a.output / "complete.json",
         dict(
             status=(
-                "RELAY_LEG_RESIDUAL_ZERO_OWN_REPLAY_NOT_FOOTBALL_SUCCESS"
-                if probe is not None and validate_original
+                "RELAY_CONTEXT_SELECTOR_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
+                if selector_weights is not None
+                else "RELAY_LEG_RESIDUAL_ZERO_OWN_REPLAY_NOT_FOOTBALL_SUCCESS"
+                if probe is not None and not np.any(probe)
                 else "RELAY_LEG_RESIDUAL_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
                 if probe is not None
                 else "RELAY_RESTORED_OWN_NEURAL_THROUGH_CONTACT_MATCH_NOT_FOOTBALL_SUCCESS"
@@ -448,10 +493,13 @@ def main() -> None:
             prior_own_action_and_recurrent_state_used=True,
             future_controls_used=False,
             receiver_role_selector_verified_at_boundary=True,
-            coupled_physics_continuation_verified=validate_original,
+            coupled_physics_continuation_verified=all(
+                r["coupled_native_substeps_exact"] for r in rows
+            ),
             native_steps=sum(row["consecutive_controls"] for row in rows) * 10,
             probe_leg_rad=None if probe is None else probe.tolist(),
-            probe_action_is_actual_history=probe is not None,
+            selector_receipt_hash=a.selector_receipt_hash,
+            probe_action_is_actual_history=probe is not None or selector_weights is not None,
             optimizer_updates=0,
             independent_fresh=False,
             promotion_authorized=False,

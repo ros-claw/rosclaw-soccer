@@ -32,17 +32,28 @@ def main() -> None:
     base = json.loads(a.baseline.read_text())
     cand = json.loads(a.candidate.read_text())
     snapshot = json.loads(a.snapshots.read_text())
+    selector_mode = (
+        cand.get("status") == "RELAY_CONTEXT_SELECTOR_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
+    )
+    residual = cand.get("probe_leg_rad")
+    valid_residual = (
+        type(residual) is list
+        and len(residual) == 12
+        and all(type(v) in (int, float) and np.isfinite(v) and abs(v) <= 0.15 for v in residual)
+        and any(residual)
+    )
     if (
         base.get("status") != "RELAY_LEG_RESIDUAL_ZERO_OWN_REPLAY_NOT_FOOTBALL_SUCCESS"
-        or cand.get("status") != "RELAY_LEG_RESIDUAL_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
-        or base.get("probe_leg_rad") != [0.0] * 12
-        or type(cand.get("probe_leg_rad")) is not list
-        or len(cand["probe_leg_rad"]) != 12
-        or any(
-            type(v) not in (int, float) or not np.isfinite(v) or abs(v) > 0.15
-            for v in cand["probe_leg_rad"]
+        or (
+            not selector_mode
+            and cand.get("status") != "RELAY_LEG_RESIDUAL_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
         )
-        or not any(cand.get("probe_leg_rad", []))
+        or base.get("probe_leg_rad") != [0.0] * 12
+        or (not selector_mode and not valid_residual)
+        or (
+            selector_mode
+            and (residual is not None or type(cand.get("selector_receipt_hash")) is not str)
+        )
         or a.scene.is_symlink()
         or digest(a.scene) != snapshot.get("scene_hash")
         or any(
@@ -89,6 +100,11 @@ def main() -> None:
     for index in sorted(b):
         if any(b[index].get(k) != c[index].get(k) for k in ("context", "side")):
             raise ValueError("paired source context required")
+        if selector_mode and (
+            type(c[index].get("selector_class")) is not int
+            or c[index]["selector_class"] not in (0, 1, 2)
+        ):
+            raise ValueError("each selector choice must be explicitly recorded")
         trajectories = []
         for receipt, row in ((a.baseline, b[index]), (a.candidate, c[index])):
             path = receipt.parent / row["physical_trajectory"]
@@ -139,6 +155,7 @@ def main() -> None:
                 side=b[index]["side"],
                 baseline_body_failure=b[index]["body_failure"],
                 candidate_body_failure=c[index]["body_failure"],
+                selector_class=c[index].get("selector_class"),
                 **compared,
             )
         )

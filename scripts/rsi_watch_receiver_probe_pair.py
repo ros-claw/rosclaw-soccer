@@ -19,6 +19,7 @@ def main() -> None:
     for name in ("baseline-hash", "snapshot-hash", "candidate-head", "expected-head", "unit"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--timeout-sec", type=int, default=7200)
+    p.add_argument("--selector-mode", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if (
@@ -77,7 +78,12 @@ def main() -> None:
     candidate = json.loads(a.candidate.read_text())
     if (
         candidate.get("source_head") != a.candidate_head
-        or candidate.get("status") != "RELAY_LEG_RESIDUAL_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
+        or candidate.get("status")
+        != (
+            "RELAY_CONTEXT_SELECTOR_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
+            if a.selector_mode
+            else "RELAY_LEG_RESIDUAL_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
+        )
         or candidate.get("snapshot_hash") != a.snapshot_hash
         or len(candidate.get("rows", [])) != 8
         or any(
