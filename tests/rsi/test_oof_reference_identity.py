@@ -40,3 +40,14 @@ def test_exact_requires_all_actor_history_and_identical_physics():
     del b["passer_action"]
     with pytest.raises(ValueError):
         exact_reference_arrays(a, b)
+
+
+def test_legacy_follow_fields_are_explicitly_unavailable_not_assumed():
+    a, b = arrays(), arrays()
+    for key in list(b):
+        if key.startswith("passer_follow_"):
+            del b[key]
+            a[key] = np.zeros((0,), dtype=np.float64)
+    assert exact_reference_arrays(a, b, legacy_empty_follow_unavailable=True)
+    a["passer_follow_action"] = np.ones(1)
+    assert not exact_reference_arrays(a, b, legacy_empty_follow_unavailable=True)

@@ -3,7 +3,9 @@
 import numpy as np
 
 
-def exact_reference_arrays(actual: dict, reference: dict) -> bool:
+def exact_reference_arrays(
+    actual: dict, reference: dict, *, legacy_empty_follow_unavailable: bool = False
+) -> bool:
     """Both bodies, contact and every saved actor history must be byte-identical."""
     keys = (
         "qpos",
@@ -24,13 +26,23 @@ def exact_reference_arrays(actual: dict, reference: dict) -> bool:
         "passer_follow_observation",
         "passer_follow_target",
     )
+    follow = {k for k in keys if k.startswith("passer_follow_")}
     if (
-        type(actual) is not dict
+        type(legacy_empty_follow_unavailable) is not bool
+        or type(actual) is not dict
         or type(reference) is not dict
-        or any(k not in actual or k not in reference for k in keys)
+        or any(
+            k not in actual
+            or (k not in reference and not (legacy_empty_follow_unavailable and k in follow))
+            for k in keys
+        )
     ):
         raise ValueError("all actual shared physical and own actor histories required")
     for key in keys:
+        if key not in reference:
+            if type(actual[key]) is not np.ndarray or actual[key].size != 0:
+                return False
+            continue
         a, b = actual[key], reference[key]
         if (
             type(a) is not np.ndarray

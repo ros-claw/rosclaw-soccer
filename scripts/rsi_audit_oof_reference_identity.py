@@ -101,7 +101,11 @@ def main() -> None:
                 histories.append({k: archive[k].copy() for k in archive.files})
             if digest(path) != row["physical_trajectory_hash"]:
                 raise ValueError("physical trajectory changed during audit")
-        match = exact_reference_arrays(*histories)
+        legacy = (
+            not ar["selector_class"]
+            and baseline.get("source_head") == "ee82b7079a7646408806d5abc5fd4791154dca5d"
+        )
+        match = exact_reference_arrays(*histories, legacy_empty_follow_unavailable=legacy)
         outcomes = all(
             ar[k] == reference_row[k]
             for k in (
@@ -119,6 +123,7 @@ def main() -> None:
                 context=ar["context"],
                 selected_arm="candidate" if ar["selector_class"] else "baseline",
                 arrays_exact=match,
+                legacy_follow_arrays_unavailable=legacy,
                 outcomes_exact=outcomes,
                 actual_body_failure=ar["body_failure"],
                 receiving_ready=ar["receiving_ready"],
@@ -138,7 +143,13 @@ def main() -> None:
             actual_hash=args.actual_hash,
             risk_hash=args.risk_hash,
             rows=rows,
-            all_arrays_exact=all(r["arrays_exact"] and r["outcomes_exact"] for r in rows),
+            all_available_arrays_exact=all(r["arrays_exact"] and r["outcomes_exact"] for r in rows),
+            all_arrays_exact=all(
+                r["arrays_exact"]
+                and r["outcomes_exact"]
+                and not r["legacy_follow_arrays_unavailable"]
+                for r in rows
+            ),
             independent_fresh=False,
             promotion_authorized=False,
             hardware_authorized=False,
