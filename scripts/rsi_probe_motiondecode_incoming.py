@@ -10,6 +10,18 @@ import subprocess
 from pathlib import Path
 
 
+def require_unpromoted_imitation(receipt):
+    if (
+        receipt.get("status") != "INCOMING_PPO_PILOT_REQUIRES_INDEPENDENT_EXAM"
+        or not receipt.get("imitation_hash")
+        or any(
+            receipt.get(key) is not False
+            for key in ("hardware_authorized", "promotion_authorized", "independent_fresh_exam")
+        )
+    ):
+        raise ValueError("unpromoted actual imitation training receipt required")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for key in ("qualification-root", "reference-root", "output"):
@@ -102,15 +114,7 @@ def main():
         ):
             raise ValueError("exact completed imitation receipt required")
         imitation = json.loads(a.experimental_imitation_receipt.read_text())
-        if (
-            imitation.get("status") != "INCOMING_PPO_PILOT_REQUIRES_INDEPENDENT_EXAM"
-            or not imitation.get("imitation_hash")
-            or any(
-                imitation.get(key) is not False
-                for key in ("hardware_authorized", "promotion_authorized", "independent_fresh")
-            )
-        ):
-            raise ValueError("unpromoted actual imitation training receipt required")
+        require_unpromoted_imitation(imitation)
         imitation_path = a.experimental_imitation_receipt.parent / "imitation.pt"
         imitation_declaration_path = a.experimental_imitation_receipt.parent / "declaration.json"
         if (
