@@ -22,6 +22,8 @@ def main():
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--direct-approach-reference", action="store_true")
     p.add_argument("--motion-reference", type=Path)
+    p.add_argument("--motion-reference-receipt", type=Path)
+    p.add_argument("--motion-reference-receipt-hash")
     p.add_argument("--ankle-roll-reference", action="store_true")
     p.add_argument("--motor-pilot", type=Path)
     p.add_argument("--motor-pilot-hash")
@@ -50,6 +52,29 @@ def main():
     old = json.loads(a.body_source.read_text())
     pins = dict(old["input_file_hashes"])
     pins[str(a.body_source)] = a.body_source_hash
+    derived_receipt = None
+    if (a.motion_reference_receipt is None) != (a.motion_reference_receipt_hash is None):
+        raise ValueError("derived motion requires its exact receipt hash")
+    if a.motion_reference_receipt is not None:
+        if (
+            a.motion_reference is None
+            or a.motion_reference_receipt.is_symlink()
+            or digest(a.motion_reference_receipt) != a.motion_reference_receipt_hash
+            or a.motion_reference.resolve()
+            != (a.motion_reference_receipt.parent / "reference.npz").resolve()
+        ):
+            raise ValueError("exact derived motion and receipt required")
+        derived_receipt = json.loads(a.motion_reference_receipt.read_text())
+        if (
+            derived_receipt.get("status") != "RETARGETED_TRAIN_RECEIVING_REFERENCE_NOT_PHYSICS"
+            or derived_receipt.get("artifact_hash") != digest(a.motion_reference)
+            or derived_receipt.get("noncommercial_source") is not True
+            or derived_receipt.get("promotion_authorized") is not False
+            or derived_receipt.get("physics_steps") != 0
+        ):
+            raise ValueError("exact unpromoted reference-only receipt required")
+        pins[str(a.motion_reference.resolve())] = derived_receipt["artifact_hash"]
+        pins[str(a.motion_reference_receipt.resolve())] = a.motion_reference_receipt_hash
     motor_plan = None
     if (a.motor_pilot is None) != (a.motor_pilot_hash is None):
         raise ValueError("motor nomination requires its explicit pinned hash")
@@ -91,7 +116,9 @@ def main():
         if a.direct_approach_reference or a.ankle_roll_reference or a.motion_reference.is_symlink():
             raise ValueError("whole-body motion and procedural conditioning are distinct protocols")
         motion_source = a.motion_reference.resolve()
-        if str(motion_source) not in pins or not motion_source.is_relative_to(external):
+        if str(motion_source) not in pins or (
+            derived_receipt is None and not motion_source.is_relative_to(external)
+        ):
             raise ValueError("motion must be in the pinned external source")
         motion = load_cftrack_motion(motion_source)
     a.output.mkdir()
@@ -134,6 +161,10 @@ def main():
             if motion is None
             else "complete_NPZmotion_frame_zero_no_trimming",
             motion_source=str(motion_source) if motion_source else None,
+            derived_motion_receipt_hash=a.motion_reference_receipt_hash,
+            derived_reference_ball_lift_m=None
+            if derived_receipt is None
+            else derived_receipt["ball_reference_lift_m"],
             motion_root_convention="author_body_index_zero_not_redundant_base_arrays",
             motion_base_body_max_position_difference_m=None
             if motion is None
