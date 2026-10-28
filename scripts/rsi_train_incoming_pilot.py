@@ -6,7 +6,9 @@ neither a qualified receiving skill nor an independent match evaluation.
 
 import argparse
 import json
+import random
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -177,6 +179,7 @@ def main():
     torch.set_num_threads(1)
     torch.manual_seed(7923)
     np.random.seed(7923)
+    random.seed(7923)
     if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
         raise ValueError("one isolated CUDA device required")
     cfg = pinned("/policy/velocity/v0/params/deploy.yaml")
@@ -316,6 +319,8 @@ def main():
         cuda_version=str(torch.version.cuda),
         device_name=torch.cuda.get_device_name(0),
         mujoco_version=mujoco.__version__,
+        numpy_version=np.__version__,
+        python_version=sys.version,
     )
     try:
         first_episode = 0
