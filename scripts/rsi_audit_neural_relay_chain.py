@@ -31,6 +31,9 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
+    precontact_fullbody = (
+        dec["protocol"] == "soccer.neural_relay_precontact_fullbody.development.v15"
+    )
     center_exploration = (
         dec["protocol"] == "soccer.neural_relay_receiver_center_exploration.development.v14"
     )
@@ -57,7 +60,8 @@ def main():
         balance_expanded or dec["protocol"] == "soccer.neural_relay_balance_teacher.development.v5"
     )
     development_study = (
-        passer_pair
+        precontact_fullbody
+        or passer_pair
         or learned_pair
         or exploration
         or whole_identity
@@ -68,7 +72,11 @@ def main():
     reference_study = dec["protocol"] == "soccer.neural_relay_reference_bridge.v2"
     team_entry_study = dec["protocol"] == "soccer.neural_relay_team_entry.v3"
     expected_worlds = (
-        16 if whole_identity or learned_pair or passer_pair else 64 if balance_expanded else 32
+        16
+        if whole_identity or learned_pair or passer_pair or precontact_fullbody
+        else 64
+        if balance_expanded
+        else 32
     )
     if reference_study:
         if dec["reference_bridge_controls"] not in ([0], [0, 5, 15, 30]):
@@ -79,7 +87,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_RECEIVER_CENTER_EXPLORATION32_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_PRECONTACT_FULLBODY16_PENDING_OWN_REPLAY"
+        if precontact_fullbody
+        else "NEURAL_RELAY_RECEIVER_CENTER_EXPLORATION32_PENDING_OWN_REPLAY"
         if center_exploration
         else "NEURAL_RELAY_RECEIVER_CENTER_IDENTITY16_PENDING_OWN_REPLAY"
         if center_identity
@@ -127,6 +137,7 @@ def main():
             "soccer.neural_relay_passer_contact_exit.development.v12",
             "soccer.neural_relay_receiver_center_identity.development.v13",
             "soccer.neural_relay_receiver_center_exploration.development.v14",
+            "soccer.neural_relay_precontact_fullbody.development.v15",
         )
         or len(s["records"]) != expected_worlds
         or len(dec["courses"]) != expected_worlds
@@ -147,6 +158,16 @@ def main():
             raise ValueError("exact development context identity and reference required")
         arms = (
             [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    precontact_fullbody=enabled,
+                )
+                for enabled in (False, True)
+            ]
+            if precontact_fullbody
+            else [
                 dict(
                     start=80,
                     memory="own_shadow_carry",
@@ -233,6 +254,8 @@ def main():
             or dec.get("bounded_teacher_added_after_neural") is not False
         ):
             raise ValueError("exact bounded stochastic receiver provenance required")
+        if precontact_fullbody and dec.get("precontact_fullbody_is_unlearned_teacher") is not True:
+            raise ValueError("explicit unlearned precontact full-body research teacher required")
         if passer_pair and (
             dec.get("passer_residual_is_unlearned_teacher") is not True
             or dec.get("joint_targets_remain_actual_neural_outputs") is not False
@@ -398,6 +421,7 @@ def main():
             PasserContactExitGate,
             blended_passer_action,
         )
+        from rosclaw_soccer.rsi.precontact_fullbody_gate import precontact_fullbody_gate
         from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
         from rosclaw_soccer.rsi.receiving_handoff_opportunity import body_contact_kind
         from rosclaw_soccer.rsi.receiving_successor_alignment import (
@@ -741,10 +765,21 @@ def main():
                         contact_eligible=readiness.contact_seen and not readiness.excluded_contact,
                         body_healthy=not w.failed,
                     )
+                    if course["arm"].get("precontact_fullbody", False):
+                        ready = ready or precontact_fullbody_gate(
+                            current_q,
+                            current_v,
+                            passer_foot_seen=passer_foot_seen,
+                            receiver_contact_seen=readiness.contact_seen
+                            or readiness.excluded_contact,
+                            world_healthy=not w.failed,
+                        )
                 else:
                     receiver.commit(
                         executed_action=action_b if balance_teacher is not None else None
                     )
+                    if precontact_fullbody:
+                        readiness.update()
                 if last_target is not None:
                     largest_jump = max(largest_jump, float(np.abs(target_b - last_target).max()))
                 last_target = target_b.copy()
@@ -807,7 +842,11 @@ def main():
                         "independent full-history normalized receiver sampling density differs"
                     )
             result = dict(
-                handoff_executed=handoff_control is not None,
+                handoff_executed=(
+                    readiness.first_ready_control is not None
+                    if precontact_fullbody
+                    else handoff_control is not None
+                ),
                 outgoing_foot_strike=False,
                 minimum_return_goal_error_3d_m=None,
                 return_0p1m_and_healthy=False,
@@ -851,6 +890,11 @@ def main():
                 result["A_requested_pass_goal"] = pass_goal.tolist()
             if result != claim["result"]:
                 raise ValueError("own return outcome differs")
+            if precontact_fullbody and (
+                claim.get("motor_transition_executed") != (handoff_control is not None)
+                or claim.get("original_receiving_ready_control") != readiness.first_ready_control
+            ):
+                raise ValueError("own early transition or actual original reception differs")
             records.append(dict(index=ci, course=course, termination=termination, result=result))
             write_once(a.output / f"trial{ci}.json", records[-1])
             print(json.dumps(dict(index=ci, counts=counts, result=result)), flush=True)

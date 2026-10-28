@@ -47,6 +47,36 @@ def test_center_curriculum_rejects_missing_identity_before_allocation(tmp_path):
     assert not (tmp_path / "out").exists()
 
 
+def test_precontact_fullbody_rejects_other_interventions_before_allocation(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
+            "--frontier-root",
+            str(tmp_path / "frontier"),
+            "--frontier-head",
+            "head",
+            "--frontier-hash",
+            "hash",
+            "--expected-head",
+            "head",
+            "--output",
+            str(tmp_path / "out"),
+            "--new-context-block",
+            "0",
+            "--precontact-fullbody-pair",
+            "--receiver-whole-identity",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "precontact full-body pair requires one isolated" in result.stderr
+    assert not (tmp_path / "out").exists()
+
+
 def test_identity_rejects_mixed_intervention_before_allocation(tmp_path):
     result = subprocess.run(
         [

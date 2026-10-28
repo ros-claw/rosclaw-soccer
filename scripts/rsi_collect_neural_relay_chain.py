@@ -28,6 +28,7 @@ def main():
     p.add_argument("--receiver-center-curriculum", action="store_true")
     p.add_argument("--receiver-learned-pair", action="store_true")
     p.add_argument("--passer-residual-pair", action="store_true")
+    p.add_argument("--precontact-fullbody-pair", action="store_true")
     p.add_argument("--passer-contact-exit", action="store_true")
     for key in ("receiver-checkpoint", "receiver-candidate-audit", "receiver-dataset"):
         p.add_argument("--" + key, type=Path)
@@ -49,6 +50,19 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.precontact_fullbody_pair and (
+        a.new_context_block is None
+        or a.passer_residual_pair
+        or a.receiver_whole_identity
+        or a.receiver_exploration
+        or a.receiver_learned_pair
+        or a.receiver_follow_study
+        or a.balance_teacher_pair is not None
+        or a.balance_expanded
+        or a.successor_alignment_study
+        or a.reference_bridge_controls != [0]
+    ):
+        p.error("precontact full-body pair requires one isolated development block")
     if a.passer_contact_exit and not a.passer_residual_pair:
         p.error("contact-exit is only defined for the isolated passer pair")
     if a.receiver_center_curriculum and not (a.receiver_whole_identity or a.receiver_exploration):
@@ -297,6 +311,16 @@ def main():
             )
             for fraction in (1.0, 0.5)
         ]
+    if a.precontact_fullbody_pair:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                precontact_fullbody=enabled,
+            )
+            for enabled in (False, True)
+        ]
     if a.receiver_follow_study:
         arms = [
             dict(
@@ -361,7 +385,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_receiver_center_exploration.development.v14"
+                "soccer.neural_relay_precontact_fullbody.development.v15"
+                if a.precontact_fullbody_pair
+                else "soccer.neural_relay_receiver_center_exploration.development.v14"
                 if a.receiver_center_curriculum and a.receiver_exploration
                 else "soccer.neural_relay_receiver_center_identity.development.v13"
                 if a.receiver_center_curriculum
@@ -434,6 +460,7 @@ def main():
             whole_receiver_identity_not_trained=a.receiver_whole_identity,
             receiver_exploration_is_stochastic_not_training=a.receiver_exploration,
             passer_residual_is_unlearned_teacher=a.passer_residual_pair,
+            precontact_fullbody_is_unlearned_teacher=a.precontact_fullbody_pair,
             receiver_sampling_profile="contact-v1" if a.receiver_exploration else None,
             receiver_sampling_law="box-truncated-ar1" if a.receiver_exploration else None,
             actual_actor_calls_are_body_proposals_not_auxiliary_forward_passes=True,
@@ -467,6 +494,7 @@ def main():
             PasserContactExitGate,
             blended_passer_action,
         )
+        from rosclaw_soccer.rsi.precontact_fullbody_gate import precontact_fullbody_gate
         from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
         from rosclaw_soccer.rsi.receiving_handoff_opportunity import body_contact_kind
         from rosclaw_soccer.rsi.receiving_successor_alignment import (
@@ -855,12 +883,23 @@ def main():
                         contact_eligible=readiness.contact_seen and not readiness.excluded_contact,
                         body_healthy=not w.failed,
                     )
+                    if course["arm"].get("precontact_fullbody", False):
+                        ready = ready or precontact_fullbody_gate(
+                            current_q,
+                            current_v,
+                            passer_foot_seen=passer_foot_seen,
+                            receiver_contact_seen=readiness.contact_seen
+                            or readiness.excluded_contact,
+                            world_healthy=not w.failed,
+                        )
                     nn_shadow.append(trace_shadow)
                     nn_v.append(trace_v)
                 else:
                     receiver.commit(
                         executed_action=action_b if balance_teacher is not None else None
                     )
+                    if a.precontact_fullbody_pair:
+                        readiness.update()
                     nn_b.append(trace_b)
                 nn_a.append(trace_a)
                 if previous_target_b is not None:
@@ -899,7 +938,11 @@ def main():
                 path=str(initial_path.relative_to(a.output)), hash=digest(initial_path)
             )
             result = dict(
-                handoff_executed=handoff is not None,
+                handoff_executed=(
+                    readiness.first_ready_control is not None
+                    if a.precontact_fullbody_pair
+                    else handoff is not None
+                ),
                 outgoing_foot_strike=False,
                 minimum_return_goal_error_3d_m=None,
                 return_0p1m_and_healthy=False,
@@ -952,6 +995,9 @@ def main():
                 original_clean_foot_grade_not_changed=True,
                 whole_game_verified=False,
             )
+            if a.precontact_fullbody_pair:
+                record["motor_transition_executed"] = handoff is not None
+                record["original_receiving_ready_control"] = readiness.first_ready_control
             records.append(record)
             write_once(a.output / f"trial{index}.json", record)
             print(
@@ -972,7 +1018,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_RECEIVER_CENTER_EXPLORATION32_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_PRECONTACT_FULLBODY16_PENDING_OWN_REPLAY"
+                    if a.precontact_fullbody_pair
+                    else "NEURAL_RELAY_RECEIVER_CENTER_EXPLORATION32_PENDING_OWN_REPLAY"
                     if a.receiver_center_curriculum and a.receiver_exploration
                     else "NEURAL_RELAY_RECEIVER_CENTER_IDENTITY16_PENDING_OWN_REPLAY"
                     if a.receiver_center_curriculum
