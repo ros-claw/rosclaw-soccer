@@ -22,6 +22,7 @@ from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_fresh_common import clean
+from scripts.rsi_review_relay_balance_counterfactual import bind, report
 
 
 def main() -> None:
@@ -30,6 +31,13 @@ def main() -> None:
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("trial-hash", "scene-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument(
+        "--original-source",
+        nargs=3,
+        action="append",
+        default=[],
+        metavar=("SOURCE_ROOT", "AUDIT_RECEIPT", "AUDIT_HASH"),
+    )
     a = p.parse_args()
     clean(a.expected_head)
     receipt = a.trial / "complete.json"
@@ -67,6 +75,7 @@ def main() -> None:
     )
     cases = []
     trajectory_pins = []
+    original_pins = []
     for row in source["rows"]:
         if not row["receiving_ready"]:
             continue
@@ -98,12 +107,76 @@ def main() -> None:
             raise ValueError("empty return trajectory")
         cases.append(
             dict(
-                index=row["index"], context=row["context"], x=x, y=y, onset=onset, censored=censored
+                collection="smooth10",
+                index=row["index"],
+                context=row["context"],
+                x=x,
+                y=y,
+                onset=onset,
+                censored=censored,
             )
         )
+    for group_index, (root_name, audit_name, audit_hash) in enumerate(a.original_source):
+        root, audit = Path(root_name), Path(audit_name)
+        original, _, original_hash = report(
+            root,
+            audit,
+            audit_hash,
+            "NEURAL_RELAY_RECEIVER_LATERAL_AUTHORITY32_PENDING_OWN_REPLAY",
+            worlds=32,
+        )
+        if digest(root / "scene.xml") != a.scene_hash:
+            raise ValueError("all original trajectories must use the exact compiled scene")
+        original_pins.extend(
+            (
+                (root / "complete.json", original_hash),
+                (audit, audit_hash),
+                (root / "scene.xml", a.scene_hash),
+            )
+        )
+        for row in original["records"]:
+            if row["handoff"] is None:
+                continue
+            path = bind(root, row, "physics")
+            if path is None:
+                raise ValueError("original physical trajectory required")
+            expected = row["artifacts"]["physics"]["hash"]
+            with np.load(path, allow_pickle=False) as data:
+                n = row["handoff"]["control"]
+                x = causal_features(
+                    data["qpos"],
+                    data["qvel"],
+                    start=n,
+                    ball_q=passer.bq,
+                    ball_v=passer.bv,
+                    passer_q=passer.rq,
+                    passer_v=passer.rv,
+                    returner_q=returner.rq,
+                    returner_v=returner.rv,
+                )
+                y, onset, censored = event_labels(data["ball_forces"], start=n)
+            if digest(path) != expected or len(x) != len(y):
+                raise ValueError("unchanged original physical evidence required")
+            trajectory_pins.append((path, expected))
+            if len(x):
+                cases.append(
+                    dict(
+                        collection=f"original-{group_index}",
+                        index=row["index"],
+                        context=row["course"]["context"],
+                        x=x,
+                        y=y,
+                        onset=onset,
+                        censored=censored,
+                    )
+                )
     groups = sorted({r["context"] for r in cases})
-    if len(cases) != 11 or len(groups) < 3 or len({r["index"] for r in cases}) != 11:
-        raise ValueError("11 distinct observed cases over at least three contexts required")
+    if (
+        len(cases) < 11
+        or len(groups) < 3
+        or len({(r["collection"], r["index"]) for r in cases}) != len(cases)
+    ):
+        raise ValueError("distinct observed cases over at least three contexts required")
     torch.set_num_threads(1)
     results = []
     models = []
@@ -140,6 +213,7 @@ def main() -> None:
                 per_case.append(
                     dict(
                         index=r["index"],
+                        collection=r["collection"],
                         event_control=r["onset"],
                         censored=r["censored"],
                         model=classify_first(prediction, r["onset"], r["censored"]),
@@ -175,6 +249,7 @@ def main() -> None:
         digest(receipt) != a.trial_hash
         or digest(a.scene) != a.scene_hash
         or any(digest(path) != expected for path, expected in trajectory_pins)
+        or any(digest(path) != expected for path, expected in original_pins)
     ):
         raise ValueError("training evidence changed")
     clean(a.expected_head)
@@ -193,6 +268,7 @@ def main() -> None:
             scene_hash=a.scene_hash,
             cases=len(cases),
             contexts=groups,
+            original_source_audit_hashes=[x[2] for x in a.original_source],
             optimizer_updates=200 * len(results),
             seeds=[11, 23, 37],
             model_artifacts=model_artifacts,
