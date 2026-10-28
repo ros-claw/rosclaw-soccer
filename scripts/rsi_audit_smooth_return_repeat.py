@@ -26,6 +26,7 @@ def main() -> None:
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("first-hash", "repeat-hash", "trial-head", "source-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--passer-follow", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
@@ -37,7 +38,19 @@ def main() -> None:
     first, repeat = [json.loads(p.read_text()) for p in paths]
     for data in (first, repeat):
         if (
-            data.get("status") != "RELAY_NONDEFAULT_SMOOTH_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS"
+            data.get("status")
+            != (
+                "RELAY_PASSER_FOLLOW_TEACHER_PHYSICAL_CANDIDATE_NOT_SUCCESS"
+                if a.passer_follow
+                else "RELAY_NONDEFAULT_SMOOTH_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS"
+            )
+            or (
+                a.passer_follow
+                and (
+                    data.get("passer_follow_return") is not True
+                    or data.get("passer_follow_trigger") != "sim_contact_oracle"
+                )
+            )
             or data.get("source_head") != a.trial_head
             or data.get("source_hash") != a.source_hash
             or len(data.get("rows", [])) != 24
@@ -90,7 +103,11 @@ def main() -> None:
     write_once(
         a.output,
         dict(
-            status="RETURN_SMOOTH_SAME_SOURCE_REPEAT_EXACT_NOT_FRESH",
+            status=(
+                "PASSER_FOLLOW_TEACHER_SAME_SOURCE_REPEAT_EXACT_NOT_FRESH"
+                if a.passer_follow
+                else "RETURN_SMOOTH_SAME_SOURCE_REPEAT_EXACT_NOT_FRESH"
+            ),
             source_head=a.expected_head,
             trial_head=a.trial_head,
             source_hash=a.source_hash,
