@@ -1,7 +1,7 @@
 """Bounded SIM-only PPO pilot on preflighted incoming-ball initial states.
 
-Robot states and motion references are kick-derived. This is neither a
-qualified receiving skill nor an independent match/promotion evaluation.
+Kicking or MotionDecode kinematic references are explicitly declared. This is
+neither a qualified receiving skill nor an independent match evaluation.
 """
 
 import argparse
@@ -17,6 +17,8 @@ def main():
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("qualification-hash", "incoming-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--motion-reference-root", type=Path)
+    p.add_argument("--motion-reference-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -32,21 +34,45 @@ def main():
     if digest(qual_path) != a.qualification_hash or digest(incoming_path) != a.incoming_hash:
         raise ValueError("exact source receipts required")
     qual, incoming = json.loads(qual_path.read_text()), json.loads(incoming_path.read_text())
-    if (
-        qual.get("status") != "NATIVE_CONTACT24_COURSE_QUALIFIED_NOT_SKILL"
-        or incoming.get("incoming") is not True
+    motion = a.motion_reference_root is not None
+    if motion != bool(a.motion_reference_hash):
+        raise ValueError("motion reference requires an exact root and hash together")
+    if qual.get("status") != "NATIVE_CONTACT24_COURSE_QUALIFIED_NOT_SKILL":
+        raise ValueError("qualified source assets required")
+    if motion:
+        reference_path = a.motion_reference_root / "complete.json"
+        if digest(reference_path) != a.motion_reference_hash:
+            raise ValueError("exact MotionDecode reference receipt required")
+        reference = json.loads(reference_path.read_text())
+        if (
+            incoming.get("status") != "MOTIONDECODE_INCOMING_SINGLE_ACTOR_PROBE_NOT_SKILL"
+            or incoming.get("reference_hash") != a.motion_reference_hash
+            or reference.get("status")
+            != "MOTIONDECODE_KINEMATIC_NATIVE_FK_REFERENCE_NOT_TRACKED_SKILL"
+            or incoming.get("launch_frame") != "heading"
+            or incoming.get("training") is not False
+        ):
+            raise ValueError("matched heading incoming and kinematic references required")
+        bank_hash = incoming["bank_hash"]
+    elif (
+        incoming.get("incoming") is not True
         or incoming.get("window") != 40
         or incoming.get("physics_identical") is not True
         or incoming.get("training") is not False
     ):
         raise ValueError("completed experimental incoming probe required, not skill qualification")
+    else:
+        bank_hash = incoming["incoming_bank_hash"]
     bank_path = a.incoming_root / "incoming-bank.npz"
     pins = {
         **qual["input_file_hashes"],
         str(qual_path): a.qualification_hash,
         str(incoming_path): a.incoming_hash,
-        str(bank_path): incoming["incoming_bank_hash"],
+        str(bank_path): bank_hash,
     }
+    if motion:
+        pins[str(reference_path)] = a.motion_reference_hash
+        pins[str(a.motion_reference_root / "reference.npz")] = reference["raw_hash"]
     check_pins(pins)
 
     def pinned(suffix):
@@ -91,18 +117,26 @@ def main():
     rehearsal = torch.from_numpy(
         np.concatenate((old, np.zeros((1200, 79), np.float32)), axis=1)
     ).cuda()
-    plans = []
-    for name in TRAIN_MOTION_NAMES:
-        path = pinned(
-            "/rsi-train-starts-body-bound-index-check-20261021/"
-            + name.removesuffix(".npz")
-            + "-plan.npz"
-        )
-        with np.load(path, allow_pickle=False) as z:
-            plans.append({k: z[k].copy() for k in z.files})
     model = mujoco.MjModel.from_binary_path(str(model_path))
     layout = NativeVelocityLayout(model, robot_prefix="robot/", ball_body_name="ball/ball")
-    refs = load_body_references(a.reference_root, model, layout, plans)
+    if motion:
+        if pins[str(model_path)] != reference["model_hash"]:
+            raise ValueError("actual reference model must match")
+        with np.load(a.motion_reference_root / "reference.npz", allow_pickle=False) as z:
+            plan = {k.removeprefix("plan_"): z[k].copy() for k in z.files if k.startswith("plan_")}
+            body = {k.removeprefix("body_"): z[k].copy() for k in z.files if k.startswith("body_")}
+        plans, refs = [plan] * 8, [body] * 8
+    else:
+        plans = []
+        for name in TRAIN_MOTION_NAMES:
+            path = pinned(
+                "/rsi-train-starts-body-bound-index-check-20261021/"
+                + name.removesuffix(".npz")
+                + "-plan.npz"
+            )
+            with np.load(path, allow_pickle=False) as z:
+                plans.append({k: z[k].copy() for k in z.files})
+        refs = load_body_references(a.reference_root, model, layout, plans)
     actor = VelocityPriorActor.from_onnx(
         onnx, expected_hash=pins[str(onnx)], reference_features=79
     ).cuda()
@@ -148,7 +182,11 @@ def main():
             training_episodes=6,
             critic_warmup_episodes=2,
             eval_episode_index=7,
-            kick_derived_motion_reference=True,
+            kick_derived_motion_reference=not motion,
+            motiondecode_reference=motion,
+            motion_reference_hash=a.motion_reference_hash,
+            one_motion_clip_and_overlapping_reference_windows=motion,
+            planar_capture_distance=True,
             cpu_physics=True,
             one_gpu_learner=True,
             independent_fresh_exam=False,
