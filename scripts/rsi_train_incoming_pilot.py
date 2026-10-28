@@ -5,6 +5,7 @@ neither a qualified receiving skill nor an independent match evaluation.
 """
 
 import argparse
+import copy
 import json
 import random
 import subprocess
@@ -27,6 +28,8 @@ def main():
     p.add_argument("--train-target-rate-filter", action="store_true")
     p.add_argument("--ball-only-adaptation", action="store_true")
     p.add_argument("--dense-shin-risk", action="store_true")
+    p.add_argument("--demonstrations-root", type=Path)
+    p.add_argument("--demonstrations-hash")
     p.add_argument("--resume-checkpoint", type=Path)
     p.add_argument("--resume-hash")
     p.add_argument("--stop-after-episode", type=int)
@@ -69,6 +72,12 @@ def main():
         raise ValueError("ball-only adaptation requires separate dev bank and no target filter")
     if a.dense_shin_risk and not expanded:
         raise ValueError("dense shin risk requires the expanded receiving protocol")
+    if bool(a.demonstrations_root) != bool(a.demonstrations_hash):
+        raise ValueError("demonstration root and exact receipt hash required together")
+    if a.demonstrations_root and (
+        not expanded or a.ball_only_adaptation or a.train_target_rate_filter or a.dense_shin_risk
+    ):
+        raise ValueError("imitation initialization requires isolated unfiltered expanded study")
     motion_multi = False
     if motion != bool(a.motion_reference_hash):
         raise ValueError("motion reference requires an exact root and hash together")
@@ -158,6 +167,43 @@ def main():
         pins[str(a.dev_incoming_root / "incoming-bank.npz")] = dev_incoming["bank_hash"]
         for i, record in enumerate(dev_reference["records"]):
             pins[str(a.dev_reference_root / f"reference-{i:02d}.npz")] = record["reference_hash"]
+    demonstration = None
+    if a.demonstrations_root:
+        demo_path = a.demonstrations_root / "complete.json"
+        if digest(demo_path) != a.demonstrations_hash:
+            raise ValueError("exact demonstration receipt required")
+        demonstration = json.loads(demo_path.read_text())
+        if (
+            demonstration.get("status") != "NATIVE_RECEIVE_DEMONSTRATIONS_NOT_SKILL"
+            or demonstration.get("qualification_hash") != a.qualification_hash
+            or demonstration.get("source_speed_mps") != 1.25
+            or demonstration.get("selected_worlds") != 2
+            or demonstration.get("negative_worlds") != 30
+            or incoming.get("fixed_speed_mps") != 3.0
+            or any(
+                demonstration.get(k) is not False
+                for k in ("hardware_authorized", "promotion_authorized", "independent_fresh")
+            )
+        ):
+            raise ValueError("two strict slow demonstrations and fast curriculum required")
+        source_paths = [
+            Path(path)
+            for path, value in demonstration["input_hashes"].items()
+            if value == demonstration["source_hash"] and path.endswith("/complete.json")
+        ]
+        if len(source_paths) != 2 or any(
+            json.loads(path.read_text()).get("reference_hash") != a.motion_reference_hash
+            for path in source_paths
+        ):
+            raise ValueError("same training references required for demonstrated motion")
+        extra = {
+            **demonstration["input_hashes"],
+            str(demo_path): a.demonstrations_hash,
+            str(a.demonstrations_root / "demonstrations.npz"): demonstration["dataset_hash"],
+        }
+        if any(key in pins and pins[key] != value for key, value in extra.items()):
+            raise ValueError("demonstration input commitments disagree")
+        pins.update(extra)
     check_pins(pins)
 
     def pinned(suffix):
@@ -180,6 +226,7 @@ def main():
         make_contact_actor_critic,
         native_ppo_loss,
     )
+    from rosclaw_soccer.rsi.native_receive_imitation import fit_receive_demonstrations
     from rosclaw_soccer.rsi.native_target_rate_filter import limit_target_rate
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
@@ -257,6 +304,29 @@ def main():
     )
     policy = make_contact_actor_critic(actor).cuda()
     original = {k: v.detach().cpu().clone() for k, v in policy.actor.state_dict().items()}
+    imitation_metrics, imitation_actor = None, None
+    if demonstration is not None:
+        with np.load(a.demonstrations_root / "demonstrations.npz", allow_pickle=False) as z:
+            selected = z["selected"]
+            if (
+                selected.shape != (32,)
+                or selected.dtype != np.bool_
+                or int(selected.sum()) != 2
+                or not z["valid"][:, selected].all()
+                or z["observation"].shape != (60, 32, 177)
+                or z["actual_action"].shape != (60, 32, 29)
+            ):
+                raise ValueError("complete qualified selected teacher sequences required")
+            teacher_obs = torch.from_numpy(
+                z["observation"][:, selected].reshape(-1, 177).copy()
+            ).cuda()
+            teacher_action = torch.from_numpy(
+                z["actual_action"][:, selected].reshape(-1, 29).copy()
+            ).cuda()
+        imitation_metrics = fit_receive_demonstrations(
+            policy, teacher_obs, teacher_action, rehearsal
+        )
+        imitation_actor = copy.deepcopy(policy.actor).eval()
     if a.ball_only_adaptation:
         ball_weight = policy.actor.mlp[0].weight
         ball_gradient_handle = enable_ball_only_actor_gradient(policy.actor)
@@ -319,6 +389,8 @@ def main():
             actor_learning_rate=3e-5 if a.ball_only_adaptation else 3e-6,
             ball_only_adaptation=a.ball_only_adaptation,
             dense_shin_risk=a.dense_shin_risk,
+            demonstrations_hash=a.demonstrations_hash,
+            imitation=imitation_metrics,
             dense_shin_risk_weight=0.1 if a.dense_shin_risk else None,
             ball_trainable_columns=[168, 169, 170, 171, 172, 173]
             if a.ball_only_adaptation
@@ -342,6 +414,7 @@ def main():
         train_target_rate_filter=a.train_target_rate_filter,
         ball_only_adaptation=a.ball_only_adaptation,
         dense_shin_risk=a.dense_shin_risk,
+        demonstrations_hash=a.demonstrations_hash,
         expanded=expanded,
         training_episodes=episode_count,
         seed=7923,
@@ -567,6 +640,12 @@ def main():
         )
         evaluations = {}
         evaluation_arms = [("parent", policy.baseline, False)]
+        imitation_hash = None
+        if imitation_actor is not None:
+            imitation_path = a.output / "imitation.pt"
+            torch.save({"actor_state_dict": imitation_actor.state_dict()}, imitation_path)
+            imitation_hash = digest(imitation_path)
+            evaluation_arms.append(("imitation", imitation_actor, False))
         if a.train_target_rate_filter:
             evaluation_arms.append(("parent-filter", policy.baseline, True))
         evaluation_arms.append(("candidate", policy.actor, a.train_target_rate_filter))
@@ -617,6 +696,8 @@ def main():
                 source_head=a.expected_head,
                 optimizer_updates=updates,
                 actor_changed=actor_changed,
+                imitation=imitation_metrics,
+                imitation_hash=imitation_hash,
                 checkpoint_hash=digest(checkpoint_path),
                 train=stats,
                 development=evaluations,
