@@ -76,6 +76,7 @@ def main():
         NativePredictiveFootShinTeacher,
     )
     from rosclaw_soccer.rsi.native_receive_bank import build_incoming_bank
+    from rosclaw_soccer.rsi.native_teacher_action import teacher_target_to_action
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
     from rosclaw_soccer.training.role_receiving_courses import ROSTER, ReceivingCourse
@@ -231,8 +232,6 @@ def main():
             if a.intercept_teacher
             else None
         )
-        scales = np.asarray(params.action_scale, dtype=np.float32)
-        offsets = np.asarray(params.action_offset, dtype=np.float32)
         rows = []
         while not env.ended.all():
             with torch.no_grad():
@@ -244,22 +243,24 @@ def main():
                 assert env.batch is not None
                 for i in np.flatnonzero(~env.ended):
                     nominal = target29(action[i], params)
-                    proposal = teachers[i].propose(
-                        model=model,
-                        snapshot=env.batch.data[i],
-                        layout=env.layout,
-                        nominal=nominal,
-                        enabled=True,
-                        frame=int(env.elapsed[i]),
-                    )
+                    try:
+                        proposal = teachers[i].propose(
+                            model=model,
+                            snapshot=env.batch.data[i],
+                            layout=env.layout,
+                            nominal=nominal,
+                            enabled=True,
+                            frame=int(env.elapsed[i]),
+                        )
+                    except ValueError as error:
+                        raise ValueError(
+                            f"teacher failed at world {i}, control {env.elapsed[i]}, "
+                            f"previous max {np.max(np.abs(teachers[i].previous_delta))}"
+                        ) from error
                     if np.any(proposal["applied_delta"]):
-                        action[i] = (
-                            (proposal["target"].astype(np.float32) - offsets) / scales
-                        ).astype(np.float32)
-                        actual = target29(action[i], params)
-                        if not np.allclose(actual, proposal["target"], atol=1e-6, rtol=0):
-                            raise ValueError("actual action-to-target conversion mismatch")
-                        teacher_delta[i] = actual - nominal
+                        action[i], teacher_delta[i] = teacher_target_to_action(
+                            action[i], proposal["target"], proposal["applied_delta"], params
+                        )
                         teachers[i].previous_delta = teacher_delta[i].copy()
                     teacher_active[i] = proposal["active"]
             result = env.step(action)
