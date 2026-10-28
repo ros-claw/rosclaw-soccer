@@ -22,6 +22,7 @@ def main():
     p.add_argument("--dev-reference-hash")
     p.add_argument("--dev-incoming-root", type=Path)
     p.add_argument("--dev-incoming-hash")
+    p.add_argument("--train-target-rate-filter", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -47,6 +48,8 @@ def main():
     expanded = all(dev_args)
     if any(dev_args) and not expanded:
         raise ValueError("all separate development evidence arguments are required together")
+    if a.train_target_rate_filter and not expanded:
+        raise ValueError("rate-filter training requires the expanded separate development bank")
     motion_multi = False
     if motion != bool(a.motion_reference_hash):
         raise ValueError("motion reference requires an exact root and hash together")
@@ -157,6 +160,7 @@ def main():
         make_contact_actor_critic,
         native_ppo_loss,
     )
+    from rosclaw_soccer.rsi.native_target_rate_filter import limit_target_rate
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
     from scripts.rsi_native_course_inputs import load_body_references
@@ -275,6 +279,10 @@ def main():
             overlapping_reference_windows=motion,
             reference_group_independence_unproven=motion,
             planar_capture_distance=True,
+            train_target_rate_filter=a.train_target_rate_filter,
+            latent_action_log_probability=True,
+            executed_action_in_policy_history=True,
+            parent_filter_ablation_in_development=a.train_target_rate_filter,
             actor_learning_rate=3e-6,
             post_update_rollout_kl_limit=0.02,
             rollback_policy_and_optimizer_on_excess_kl=True,
@@ -298,13 +306,22 @@ def main():
                     action = dist.sample()
                     old_logp = dist.log_prob(action).sum(-1)
                     value = policy.value(obs)
-                result = env.step(action.cpu().numpy().copy())
+                applied_action = action.cpu().numpy().copy()
+                if a.train_target_rate_filter:
+                    for i in np.flatnonzero(~env.ended):
+                        applied_action[i], _ = limit_target_rate(
+                            action=applied_action[i],
+                            previous_action=env.last_action[i],
+                            params=params,
+                        )
+                result = env.step(applied_action)
                 with torch.no_grad():
                     next_value = policy.value(torch.from_numpy(result["observation"]).cuda())
                 history.append(
                     {
                         **result,
                         "action": action.cpu().numpy(),
+                        "executed_action": applied_action,
                         "old_logp": old_logp.cpu().numpy(),
                         "old_value": value.cpu().numpy(),
                         "next_value": next_value.cpu().numpy(),
@@ -436,7 +453,11 @@ def main():
             checkpoint_path,
         )
         evaluations = {}
-        for label, evaluated_actor in (("parent", policy.baseline), ("candidate", policy.actor)):
+        evaluation_arms = [("parent", policy.baseline, False)]
+        if a.train_target_rate_filter:
+            evaluation_arms.append(("parent-filter", policy.baseline, True))
+        evaluation_arms.append(("candidate", policy.actor, a.train_target_rate_filter))
+        for label, evaluated_actor, use_filter in evaluation_arms:
             exam = make_course(development=expanded)
             try:
                 exam.episode = -1 if expanded else 6
@@ -452,8 +473,14 @@ def main():
                             .numpy()
                             .copy()
                         )
+                    nominal_action = action.copy()
+                    if use_filter:
+                        for i in np.flatnonzero(~exam.ended):
+                            action[i], _ = limit_target_rate(
+                                action=action[i], previous_action=exam.last_action[i], params=params
+                            )
                     result = exam.step(action)
-                    rows.append({**result, "action": action})
+                    rows.append({**result, "action": action, "nominal_action": nominal_action})
                 raw = {k: np.stack([row[k] for row in rows]) for k in rows[0]}
                 path = a.output / (label + "-development.npz")
                 np.savez_compressed(path, bank_index=exam.index, **raw)
