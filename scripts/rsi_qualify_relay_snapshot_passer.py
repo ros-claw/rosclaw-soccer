@@ -11,6 +11,7 @@ import numpy as np
 import torch
 
 from rosclaw_soccer.providers.g1.velocity_policy import observation98, phase_delta, target29
+from rosclaw_soccer.rsi.causal_ball_delta_trigger import CausalBallDeltaTrigger
 from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
 from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
@@ -61,6 +62,7 @@ def main() -> None:
     p.add_argument("--smooth-transition", action="store_true")
     p.add_argument("--smooth-transition-duration", type=int, default=20)
     p.add_argument("--passer-follow-return", action="store_true")
+    p.add_argument("--passer-follow-ball-delta", action="store_true")
     p.add_argument("--expanded-velocity-proof", type=Path)
     p.add_argument("--expanded-velocity-proof-hash")
     a = p.parse_args()
@@ -84,6 +86,8 @@ def main() -> None:
         raise ValueError("smooth candidate requires the full own return handoff")
     if a.passer_follow_return and not a.smooth_transition:
         raise ValueError("passer follow study requires the smooth return candidate")
+    if a.passer_follow_ball_delta and not a.passer_follow_return:
+        raise ValueError("observed trigger requires passer-follow study")
     if not 1 <= a.smooth_transition_duration <= 100 or (
         not a.smooth_transition and a.smooth_transition_duration != 20
     ):
@@ -577,6 +581,7 @@ def main() -> None:
             follow_controls = []
             follow_observations = []
             follow_targets = []
+            detector_deltas = []
             if a.return_handoff and ready:
                 return_path = bind(root, row, "receiver_return_nn")
                 if return_path is None or shadow is None:
@@ -591,11 +596,22 @@ def main() -> None:
                     transition_start = receiver.last_action.copy()
                     follow_active = False
                     return_foot_seen = False
+                    delta_detector = (
+                        CausalBallDeltaTrigger(receiver_v[35:38].copy(), threshold_mps=0.3)
+                        if a.passer_follow_ball_delta
+                        else None
+                    )
                     follow_direction = None
                     follow_phase = np.float32(0.0)
                     follow_last = np.zeros(29, dtype=np.float32)
                     for frame in range(start, 600):
                         mujoco.mj_forward(setup.model, scratch.data)
+                        if delta_detector is not None:
+                            _, current_v = scratch.layouts["a/"].canonical(scratch.data)
+                            return_foot_seen, observed_delta = delta_detector.observe(
+                                current_v[35:38]
+                            )
+                            detector_deltas.append(observed_delta)
                         view = PlayerObservationView(scratch, "a/")
                         ref_pos, ref_vel, ref_ang = restored_motion_reference(
                             ep.clip, ep.torso_index, frame
@@ -709,6 +725,7 @@ def main() -> None:
                         resumed = scratch.advance({"a/": target_a, "b/": target_b})
                         if (
                             a.passer_follow_return
+                            and not a.passer_follow_ball_delta
                             and (resumed["ball_forces"][:, 1, :2] > 1.0).any()
                         ):
                             return_foot_seen = True
@@ -803,6 +820,7 @@ def main() -> None:
                         -1, 3
                     ),
                     "passer_follow_control": np.asarray(follow_controls, dtype=np.int64),
+                    "passer_follow_detector_delta": np.asarray(detector_deltas, dtype=np.float64),
                     "passer_follow_observation": np.asarray(
                         follow_observations, dtype=np.float32
                     ).reshape(-1, 98),
@@ -879,7 +897,13 @@ def main() -> None:
             if a.smooth_transition
             else None,
             passer_follow_return=a.passer_follow_return,
-            passer_follow_trigger="sim_contact_oracle" if a.passer_follow_return else None,
+            passer_follow_trigger=(
+                "causal_ball_velocity_delta_0.3mps"
+                if a.passer_follow_ball_delta
+                else "sim_contact_oracle"
+                if a.passer_follow_return
+                else None
+            ),
             passer_follow_history_initialized_from_target=a.passer_follow_return,
             own_shadow_recurrence_verified=a.with_shadow,
             coupled_physics_continuation_verified=all(
