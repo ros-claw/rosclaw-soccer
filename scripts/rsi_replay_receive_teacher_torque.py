@@ -22,6 +22,14 @@ def main() -> None:
     for key in ("snapshot-hash", "physical-head", "expected-head"):
         p.add_argument("--" + key, required=True)
     p.add_argument("--timeout-sec", type=int, default=7200)
+    p.add_argument(
+        "--unit",
+        choices=(
+            "rosclaw-receiver-contact-teacher-b0-20261029.service",
+            "rosclaw-receiver-contact-capture-b0-20261029.service",
+        ),
+        default="rosclaw-receiver-contact-teacher-b0-20261029.service",
+    )
     a = p.parse_args()
     clean(a.expected_head)
     if (
@@ -39,7 +47,7 @@ def main() -> None:
                 "systemctl",
                 "--user",
                 "show",
-                "rosclaw-receiver-contact-teacher-b0-20261029.service",
+                a.unit,
                 "-p",
                 "ActiveState",
             ],
@@ -59,6 +67,8 @@ def main() -> None:
     if (
         candidate.get("status") != "RELAY_CONTACT_TEACHER_ASSISTED_PHYSICAL_NOT_SUCCESS"
         or candidate.get("contact_teacher_assisted") is not True
+        or candidate.get("contact_teacher_capture", False)
+        != (a.unit == "rosclaw-receiver-contact-capture-b0-20261029.service")
         or candidate.get("source_head") != a.physical_head
         or candidate.get("snapshot_hash") != a.snapshot_hash
         or any(
@@ -122,6 +132,7 @@ def main() -> None:
             status="RECEIVER_TEACHER_SAVED_TORQUE_REINTEGRATED_NOT_POLICY",
             source_head=a.expected_head,
             candidate_hash=candidate_hash,
+            capture_after_contact=candidate.get("contact_teacher_capture", False),
             snapshot_hash=a.snapshot_hash,
             rows=rows,
             native_steps=sum(r["native_steps"] for r in rows),
