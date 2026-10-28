@@ -16,6 +16,7 @@ def main():
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("qualification-hash", "reference-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--launch-frame", choices=("world", "heading"), default="world")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -97,7 +98,12 @@ def main():
         for i in range(256)
     )
     bank, binding = build_incoming_bank(
-        model=model, params=params, bank=bank, plans=plans, courses=courses
+        model=model,
+        params=params,
+        bank=bank,
+        plans=plans,
+        courses=courses,
+        launch_frame=a.launch_frame,
     )
     actor = VelocityPriorActor.from_onnx(
         onnx, expected_hash=pins[str(onnx)], reference_features=79
@@ -116,6 +122,7 @@ def main():
             reference_hash=a.reference_hash,
             qualification_hash=a.qualification_hash,
             course_binding=binding,
+            launch_frame=a.launch_frame,
             source_clip_count=1,
             correlated_reference_frames=True,
             source_fps_assumption=reference["source_fps_assumption"],
@@ -160,6 +167,7 @@ def main():
                 source_head=a.expected_head,
                 reference_hash=a.reference_hash,
                 course_binding=binding,
+                launch_frame=a.launch_frame,
                 reference_clip_count=1,
                 bank_hash=digest(a.output / "incoming-bank.npz"),
                 raw_hash=digest(a.output / "physical.npz"),

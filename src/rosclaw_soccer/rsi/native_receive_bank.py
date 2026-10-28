@@ -13,8 +13,35 @@ from numpy.typing import NDArray
 from rosclaw_soccer.providers.g1.velocity_policy import target29
 from rosclaw_soccer.rsi.native_reference_observation import native_reference_observation177
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
 from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse, receiving_ball_launch
+
+
+def heading_launch(
+    position: tuple[float, float, float],
+    velocity: tuple[float, float, float],
+    root: tuple[float, float, float],
+    quaternion: np.ndarray,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    """Rotate a declared launch by the measured initial pelvis heading only."""
+    q = np.asarray(quaternion, dtype=np.float64)
+    if q.shape != (4,) or not np.isfinite(q).all() or abs(np.linalg.norm(q) - 1) > 1e-5:
+        raise ValueError("finite unit pelvis quaternion required")
+    matrix = np.zeros(9)
+    mujoco.mju_quat2Mat(matrix, q)
+    forward = matrix.reshape(3, 3)[:2, 0]
+    length = float(np.linalg.norm(forward))
+    if length < 1e-6:
+        raise ValueError("nonvertical initial pelvis heading required")
+    c, s = forward / length
+    rotation = np.array([[c, -s], [s, c]])
+    offset = rotation @ (np.asarray(position[:2]) - np.asarray(root[:2]))
+    speed = rotation @ np.asarray(velocity[:2])
+    return (
+        (float(root[0] + offset[0]), float(root[1] + offset[1]), position[2]),
+        (float(speed[0]), float(speed[1]), velocity[2]),
+    )
 
 
 def build_incoming_bank(
@@ -24,18 +51,22 @@ def build_incoming_bank(
     bank: dict[str, NDArray[Any]],
     plans: list[dict[str, NDArray[Any]]],
     courses: tuple[ReceivingCourse, ...],
+    launch_frame: str = "world",
 ) -> tuple[dict[str, NDArray[Any]], str]:
     """Build all 256 resets after preflight; never mutate a live simulation.
 
-    The legacy classroom launch is world-axis aligned, 0.9m from the measured
-    pelvis projection. Positive x is not assumed to be the robot's forward
-    direction. A no-slip initial ball spin is set at reset; ground friction
+    The legacy world frame remains default. The explicit heading mode rotates
+    the same declared distribution into each initial pelvis heading; it defines
+    a different course bank, not the same initial physical conditions.
+    A no-slip initial ball spin is set at reset; ground friction
     subsequently determines its actual motion. Reject the entire bank when
     any launched ball initially intersects a robot collider.
     """
-    if len(courses) != 256 or len(plans) != 8:
+    if len(courses) != 256 or len(plans) != 8 or launch_frame not in ("world", "heading"):
         raise ValueError("entire 256-state source and course bank required")
     binding = preflight_receiving_courses(courses)
+    if launch_frame == "heading":
+        binding = str(hash_json(dict(schema="soccer.heading_receiving.v1", base=binding)))
     layout = NativeVelocityLayout(model, robot_prefix="robot/", ball_body_name="ball/ball")
     geometry = [i for i in range(model.ngeom) if int(model.geom_bodyid[i]) == layout.ball]
     if len(geometry) != 1 or model.geom_type[geometry[0]] != mujoco.mjtGeom.mjGEOM_SPHERE:
@@ -61,8 +92,17 @@ def build_incoming_bank(
         data.qvel[:] = result["qvel"][i]
         root = tuple(float(x) for x in data.qpos[layout.rq : layout.rq + 3])
         position, velocity = receiving_ball_launch(course, origin=root, radius_m=radius)
+        if launch_frame == "heading":
+            position, velocity = heading_launch(
+                position, velocity, root, data.qpos[layout.rq + 3 : layout.rq + 7]
+            )
         data.qpos[layout.bq : layout.bq + 7] = (*position, 1, 0, 0, 0)
-        data.qvel[layout.bv : layout.bv + 6] = (*velocity, 0, velocity[0] / radius, 0)
+        data.qvel[layout.bv : layout.bv + 6] = (
+            *velocity,
+            -velocity[1] / radius,
+            velocity[0] / radius,
+            0,
+        )
         data.ctrl[layout.ai] = target29(result["previous_action"][i], params)
         data.time = float(result["reference_frame"][i]) * model.opt.timestep * 10
         data.qacc_warmstart[:] = 0
