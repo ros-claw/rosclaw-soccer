@@ -76,7 +76,10 @@ def main():
         NativePredictiveFootShinTeacher,
     )
     from rosclaw_soccer.rsi.native_receive_bank import build_incoming_bank
-    from rosclaw_soccer.rsi.native_teacher_action import teacher_target_to_action
+    from rosclaw_soccer.rsi.native_teacher_action import (
+        require_teacher_slew,
+        teacher_target_to_action,
+    )
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
     from rosclaw_soccer.training.role_receiving_courses import ROSTER, ReceivingCourse
@@ -198,6 +201,7 @@ def main():
                 contact_lead=True,
                 axis_local_fallback=True,
                 all_knee_colliders=True,
+                reject_actual_slew_conflict=True,
             )
             if a.intercept_teacher
             else None,
@@ -243,6 +247,7 @@ def main():
                 assert env.batch is not None
                 for i in np.flatnonzero(~env.ended):
                     nominal = target29(action[i], params)
+                    previous_delta = teachers[i].previous_delta.copy()
                     try:
                         proposal = teachers[i].propose(
                             model=model,
@@ -262,6 +267,12 @@ def main():
                             action[i], proposal["target"], proposal["applied_delta"], params
                         )
                         teachers[i].previous_delta = teacher_delta[i].copy()
+                    try:
+                        require_teacher_slew(previous_delta, teacher_delta[i])
+                    except ValueError as error:
+                        raise ValueError(
+                            f"teacher slew conflict at world {i}, control {env.elapsed[i]}"
+                        ) from error
                     teacher_active[i] = proposal["active"]
             result = env.step(action)
             rows.append(

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.providers.g1.velocity_policy import target29
-from rosclaw_soccer.rsi.native_teacher_action import teacher_target_to_action
+from rosclaw_soccer.rsi.native_teacher_action import require_teacher_slew, teacher_target_to_action
 
 
 def test_teacher_conversion_keeps_other_axes_bit_exact_and_memory_actual():
@@ -47,3 +47,13 @@ def test_quantized_target_bound_holds_across_parent_magnitudes():
         changed, actual = teacher_target_to_action(action, nominal + delta, delta, params)
         assert abs(actual[2]) <= 0.16 + 1e-12
         np.testing.assert_array_equal(changed[np.arange(29) != 2], action[np.arange(29) != 2])
+
+
+def test_slew_conflict_is_rejected_instead_of_snapping_to_parent():
+    previous = np.zeros(29)
+    previous[9] = -0.16
+    with pytest.raises(ValueError, match="slew infeasible"):
+        require_teacher_slew(previous, np.zeros(29))
+    next_delta = previous.copy()
+    next_delta[9] += 0.025
+    require_teacher_slew(previous, next_delta)

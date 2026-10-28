@@ -64,3 +64,22 @@ def teacher_target_to_action(
     if not np.allclose(actual, proposed_delta, atol=1e-6, rtol=0):
         raise ValueError("actual target cannot represent bounded proposal")
     return new_action, actual
+
+
+def require_teacher_slew(previous_delta: np.ndarray, actual_delta: np.ndarray) -> None:
+    """Reject an actual transition that cannot meet the declared rate limit.
+
+    This does not itself stop a robot or certify safe recovery. A caller must
+    terminate the SIM experiment on rejection instead of executing the target.
+    """
+    if (
+        not isinstance(previous_delta, np.ndarray)
+        or not isinstance(actual_delta, np.ndarray)
+        or previous_delta.shape != (29,)
+        or actual_delta.shape != (29,)
+        or not np.isfinite(previous_delta).all()
+        or not np.isfinite(actual_delta).all()
+    ):
+        raise ValueError("finite actual teacher target history required")
+    if np.max(np.abs(actual_delta - previous_delta)) > 0.025001:
+        raise ValueError("teacher target slew infeasible; no action may be executed")
