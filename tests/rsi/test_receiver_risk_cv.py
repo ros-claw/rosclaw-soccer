@@ -25,3 +25,23 @@ def test_rejects_nonfinite_and_unseparated_groups():
     flags = np.zeros(4, bool)
     with pytest.raises(ValueError):
         grouped_risk_selection(features, groups, flags, flags, flags)
+
+
+def test_unobserved_predictions_never_train_or_enter_scored_outcomes():
+    features = np.arange(6 * 98, dtype=np.float32).reshape(6, 98) / 1000
+    groups = np.array([0, 0, 1, 1, 2, 2], np.int64)
+    base = np.array([True, False, True, False, False, False])
+    candidate = np.array([False, False, False, False, True, True])
+    observed = np.array([True, True, True, True, False, False])
+    first = grouped_risk_selection(
+        features, groups, base, candidate, observed, steps=5, predict_unobserved=True
+    )
+    changed = candidate.copy()
+    changed[~observed] = False
+    second = grouped_risk_selection(
+        features, groups, base, changed, observed, steps=5, predict_unobserved=True
+    )
+    assert first["predictions"] == second["predictions"]
+    assert first["probabilities"] == second["probabilities"]
+    assert first["selected_counterfactual_failures"] == second["selected_counterfactual_failures"]
+    assert first["unobserved_predictions"] == 2

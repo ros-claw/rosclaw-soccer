@@ -17,11 +17,13 @@ def grouped_risk_selection(
     *,
     steps: int = 200,
     threshold: float = 0.8,
+    predict_unobserved: bool = False,
 ) -> dict:
     """Refit normalization and binary model on each training fold only.
 
     Positive means a measured failure-to-survival change, not football success.
     Ties and regressions are negative; unobserved cases are never fit or scored.
+    Optionally report their predictions separately, without asserting outcomes.
     The higher weight on negative examples penalizes unsafe intervention.
     """
     n = len(features)
@@ -42,6 +44,7 @@ def grouped_risk_selection(
         or type(steps) is not int
         or not 1 <= steps <= 500
         or not 0.5 < threshold < 1.0
+        or type(predict_unobserved) is not bool
     ):
         raise ValueError("aligned causal features, groups and observed paired outcomes required")
     target = base_failed & ~candidate_failed
@@ -50,7 +53,7 @@ def grouped_risk_selection(
     folds = []
     for group in np.unique(groups):
         train = (groups != group) & observed
-        test = (groups == group) & observed
+        test = (groups == group) & (observed | predict_unobserved)
         if not np.any(test):
             folds.append(dict(group=int(group), train=int(train.sum()), test=0, updates=0))
             continue
@@ -108,6 +111,11 @@ def grouped_risk_selection(
             ((predictions == 1) & ~base_failed & candidate_failed & observed).sum()
         ),
         selected_rescues=int(((predictions == 1) & target & observed).sum()),
+        unobserved_predictions=int(((predictions >= 0) & ~observed).sum()),
+        unobserved_interventions=int(((predictions == 1) & ~observed).sum()),
+        unobserved_interventions_with_candidate_failure=int(
+            ((predictions == 1) & ~observed & candidate_failed).sum()
+        ),
         optimizer_updates=sum(f["updates"] for f in folds),
         independent_fresh=False,
         physical_rollout=False,
