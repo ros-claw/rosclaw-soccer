@@ -12,10 +12,11 @@ def main():
     for key in ("source-audit-hash", "experimental-approach-config-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
     p.add_argument("--shard", type=int, choices=range(4), required=True)
+    p.add_argument("--prospective", action="store_true")
     a = p.parse_args()
 
     from rosclaw_soccer.rsi.experimental_velocity_evidence import admit_heading_evidence
-    from rosclaw_soccer.rsi.walk_kick_retrieval import nearest_teacher
+    from rosclaw_soccer.rsi.walk_kick_retrieval import nearest_teacher, prospective_courses
     from rosclaw_soccer.rsi.walk_kick_teacher_plan import search_course_bank
     from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
     from scripts.rsi_atomic_artifacts import write_once
@@ -25,6 +26,10 @@ def main():
     clean(a.expected_head)
     courses = search_course_bank(expanded_public=True)
     bank_hash = preflight_receiving_courses(courses)
+    prospective = prospective_courses() if a.prospective else ()
+    prospective_hash = preflight_receiving_courses(prospective) if prospective else None
+    if prospective and set(c.course for c in prospective) & set(c.course for c in courses):
+        raise ValueError("new courses must not overlap public donor bank")
     if (
         a.output.exists()
         or a.source_audit.is_symlink()
@@ -108,7 +113,9 @@ def main():
             one("/cached-standard/declared-scene.xml").read_text(), prefixes=("a/",)
         )
     )
-    assignments = [i for i in test_indices if test_indices.index(i) % 4 == a.shard]
+    evaluation_courses = prospective if a.prospective else courses
+    evaluation_indices = tuple(range(8)) if a.prospective else test_indices
+    assignments = [i for i in evaluation_indices if evaluation_indices.index(i) % 4 == a.shard]
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
@@ -116,13 +123,15 @@ def main():
             source_head=a.expected_head,
             input_file_hashes=pins,
             course_bank_hash=bank_hash,
+            prospective_course_bank_hash=prospective_hash,
             train_indices=[i for i in range(40) if i not in test_indices],
             test_indices=test_indices,
             assigned_indices=assignments,
             donor_indices=np.flatnonzero(eligible).tolist(),
             frozen_metric_scales=[0.5, 0.3, 0.8],
             training_labels_privileged=True,
-            public_test_previously_consumed=True,
+            public_test_previously_consumed=not a.prospective,
+            prospective_new_course_bank=a.prospective,
             independent_fresh=False,
             no_actor_gradient=True,
             hardware_authorized=False,
@@ -131,7 +140,7 @@ def main():
     )
     rows = []
     for i in assignments:
-        donor = nearest_teacher(features[i], features, eligible)
+        donor = nearest_teacher(evaluation_courses[i].course, features, eligible)
         chosen = selected[donor]
         for arm in ("parent", "retrieval"):
             params = (
@@ -151,7 +160,7 @@ def main():
                 model=model,
                 assets=own_assets,
                 policy_types=types,
-                course=courses[i].course,
+                course=evaluation_courses[i].course,
                 parameters=params,
                 hard_limits=np.asarray(G1_HARD_TORQUE_LIMITS),
             )
@@ -183,6 +192,7 @@ def main():
             status="PUBLIC_RETRIEVED_TEACHER_EXPLORATORY_NOT_SKILL",
             source_head=a.expected_head,
             rows=rows,
+            prospective_new_course_bank=a.prospective,
             independent_fresh=False,
             hardware_authorized=False,
             promotion_authorized=False,

@@ -7,6 +7,21 @@ Only initial observable course features are accepted at inference.
 import numpy as np
 
 
+def prospective_courses():
+    """Fixed new public diagnostic bank: two states in each original class."""
+    from rosclaw_soccer.training.receiving_course_preflight import FirstTouchCourse
+
+    rng = np.random.default_rng(2026102929)
+    courses = []
+    for bucket in range(4):
+        for _ in range(2):
+            x = float(rng.uniform(2.2 if bucket < 2 else 2.6, 2.4 if bucket < 2 else 2.8))
+            y = float(rng.uniform(-0.16, 0.16))
+            vx = float(rng.uniform(0.25, 0.7)) * (1 if bucket % 2 else -1)
+            courses.append(FirstTouchCourse("striker", 2026102929 + len(courses), (x, y, vx)))
+    return tuple(courses)
+
+
 def nearest_teacher(query, courses, eligible):
     query = np.asarray(query, dtype=np.float64)
     courses = np.asarray(courses, dtype=np.float64)
