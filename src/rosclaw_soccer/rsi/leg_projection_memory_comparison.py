@@ -61,6 +61,54 @@ def compare_projection_memory(old: dict, new: dict) -> dict:
             gained=sum(not x and y for x, y in pairs),
             lost=sum(x and not y for x, y in pairs),
         )
+    # Older review receipts predate failure timelines. Never infer equal
+    # exposure from a full-horizon health boolean in those receipts.
+    fields = [
+        (r[arm].get("observed_controls"), r[arm].get("first_body_failure_controls"))
+        for r in rows
+        for arm in ("raw", "executed")
+    ]
+    if all(x is None and y is None for x, y in fields):
+        summary["common_exposure_available"] = False
+    else:
+        for n, failures in fields:
+            if (
+                type(n) is not int
+                or n < 1
+                or not isinstance(failures, list)
+                or len(failures) != 2
+                or any(x is not None and (type(x) is not int or not 0 <= x < n) for x in failures)
+            ):
+                raise ValueError("complete actual first-failure timelines required")
+        pairs = []
+        unequal = 0
+        for row in rows:
+            raw, executed = row["raw"], row["executed"]
+            horizon = min(raw["observed_controls"], executed["observed_controls"])
+            unequal += raw["observed_controls"] != executed["observed_controls"]
+            for arm in (raw, executed):
+                if arm["outcome"]["both_bodies_healthy"] != all(
+                    x is None for x in arm["first_body_failure_controls"]
+                ):
+                    raise ValueError("full health must match actual first-failure timeline")
+
+            def healthy(arm, until):
+                return not any(
+                    x is not None and x < until for x in arm["first_body_failure_controls"]
+                )
+
+            pairs.append((healthy(raw, horizon), healthy(executed, horizon)))
+            row["common_horizon_controls"] = horizon
+            row["raw_healthy_common"] = pairs[-1][0]
+            row["executed_healthy_common"] = pairs[-1][1]
+        summary["common_exposure_available"] = True
+        summary["unequal_exposure_pairs"] = unequal
+        summary["healthy_common"] = dict(
+            raw=sum(x for x, _ in pairs),
+            executed=sum(y for _, y in pairs),
+            gained=sum(not x and y for x, y in pairs),
+            lost=sum(x and not y for x, y in pairs),
+        )
     return dict(
         conditions=8,
         summary=summary,

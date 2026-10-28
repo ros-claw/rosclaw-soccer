@@ -44,7 +44,35 @@ def test_matched_memory_comparison_preserves_losses():
     new["records"][0]["projected"]["outcome"]["both_bodies_healthy"] = False
     result = compare_projection_memory(old, new)
     assert result["conditions"] == 8 and result["summary"]["healthy"]["lost"] == 1
+    assert not result["summary"]["common_exposure_available"]
     assert not result["independent_fresh"] and not result["promotion_authorized"]
+
+
+def test_common_horizon_does_not_count_later_failure_as_a_loss():
+    old, new = review(), review()
+    new["raw_action_memory_preserved"] = False
+    new["candidate_action_memory_reflects_projection"] = True
+    for report in (old, new):
+        for row in report["records"]:
+            row["projected"]["observed_controls"] = 300
+            row["projected"]["first_body_failure_controls"] = [None, None]
+    candidate = new["records"][0]["projected"]
+    candidate["observed_controls"] = 520
+    candidate["first_body_failure_controls"] = [519, None]
+    candidate["outcome"]["both_bodies_healthy"] = False
+    summary = compare_projection_memory(old, new)["summary"]
+    assert summary["healthy"]["lost"] == 1
+    assert summary["unequal_exposure_pairs"] == 1
+    assert summary["healthy_common"]["lost"] == 0
+
+
+def test_partial_timeline_is_rejected():
+    old, new = review(), review()
+    new["raw_action_memory_preserved"] = False
+    new["candidate_action_memory_reflects_projection"] = True
+    old["records"][0]["projected"]["observed_controls"] = 300
+    with pytest.raises(ValueError):
+        compare_projection_memory(old, new)
 
 
 @pytest.mark.parametrize("fault", ["parent", "identity", "baseline", "duplicate", "boolean"])

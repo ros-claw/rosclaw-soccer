@@ -166,6 +166,13 @@ def main() -> None:
                         raw["body_failed"],
                         handoff=r["result"]["handoff_executed"],
                     ),
+                    observed_controls=len(raw["body_failed"]),
+                    first_body_failure_controls=[
+                        int(np.flatnonzero(raw["body_failed"][:, i])[0])
+                        if raw["body_failed"][:, i].any()
+                        else None
+                        for i in range(2)
+                    ],
                     precontact_tracking=precontact_tracking_error(
                         raw["target_b"], raw["qpos"], raw["ball_forces"], joint_indices=layout.qi
                     ),
