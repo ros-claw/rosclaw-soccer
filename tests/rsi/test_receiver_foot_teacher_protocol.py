@@ -98,6 +98,32 @@ def test_axis_local_fallback_requires_predictive_study():
     assert "axis-local fallback requires the predictive foot/shin study" in result.stderr
 
 
+def test_early_intercept_requires_isolated_predictive_axis_study():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
+            "--frontier-root",
+            "/not-read",
+            "--frontier-head",
+            "unused",
+            "--frontier-hash",
+            "unused",
+            "--expected-head",
+            "unused",
+            "--output",
+            "/not-written",
+            "--receiver-early-foot-intercept",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "early intercept requires the predictive axis-local foot teacher" in result.stderr
+
+
 @pytest.mark.parametrize(
     "conflict", ["--receiver-lateral-authority", "--receiver-foot-teacher-pair"]
 )

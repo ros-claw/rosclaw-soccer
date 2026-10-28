@@ -18,9 +18,12 @@ def main() -> None:
     p.add_argument("--new-context-block", type=int, choices=(0, 1, 2), required=True)
     p.add_argument("--predictive-foot-shin", action="store_true")
     p.add_argument("--axis-local-fallback", action="store_true")
+    p.add_argument("--early-intercept", action="store_true")
     a = p.parse_args()
     if a.axis_local_fallback and not a.predictive_foot_shin:
         p.error("axis-local fallback requires predictive-foot-shin")
+    if a.early_intercept and not (a.axis_local_fallback and a.predictive_foot_shin):
+        p.error("early intercept requires predictive-foot-shin and axis-local fallback")
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("unused external evidence root required")
@@ -34,6 +37,7 @@ def main() -> None:
             "--receiver-foot-teacher-pair",
             *(["--receiver-predictive-foot-shin"] if a.predictive_foot_shin else []),
             *(["--receiver-axis-local-fallback"] if a.axis_local_fallback else []),
+            *(["--receiver-early-foot-intercept"] if a.early_intercept else []),
             "--new-context-block",
             str(a.new_context_block),
             "--frontier-root",

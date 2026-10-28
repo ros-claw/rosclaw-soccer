@@ -30,7 +30,11 @@ def main() -> None:
     root, audit = a.source / "source", a.source / "audit/complete.json"
     old, old_audit = a.lateral_source / "source", a.lateral_source / "audit/complete.json"
     declaration = json.loads((root / "declaration.json").read_text())
-    axis_local = (
+    early_intercept = (
+        declaration.get("protocol")
+        == "soccer.neural_relay_receiver_early_intercept.development.v28"
+    )
+    axis_local = early_intercept or (
         declaration.get("protocol")
         == "soccer.neural_relay_receiver_axis_local_fallback.development.v25"
     )
@@ -42,7 +46,9 @@ def main() -> None:
         root,
         audit,
         a.audit_hash,
-        "NEURAL_RELAY_RECEIVER_AXIS_LOCAL_FALLBACK16_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_RECEIVER_EARLY_INTERCEPT16_PENDING_OWN_REPLAY"
+        if early_intercept
+        else "NEURAL_RELAY_RECEIVER_AXIS_LOCAL_FALLBACK16_PENDING_OWN_REPLAY"
         if axis_local
         else "NEURAL_RELAY_RECEIVER_PREDICTIVE_FOOT_SHIN16_PENDING_OWN_REPLAY"
         if predictive
@@ -65,6 +71,8 @@ def main() -> None:
         and declaration.get("receiver_predictive_foot_shin_is_unlearned") is not True
         or axis_local
         and declaration.get("receiver_axis_local_fallback") is not True
+        or early_intercept
+        and declaration.get("receiver_early_foot_intercept_is_unlearned") is not True
     ):
         raise ValueError("exact unlearned development-only foot teacher required")
     index = {
@@ -120,6 +128,9 @@ def main() -> None:
                 fallback = v["FOOT_fallback"]
                 if fallback.shape != (len(delta),) or fallback.dtype != np.bool_:
                     raise ValueError("complete boolean teacher fallback history required")
+                early = v["FOOT_early_active"] if early_intercept and name == "teacher" else None
+                if early is not None and (early.shape != (len(delta),) or early.dtype != np.bool_):
+                    raise ValueError("complete early-activation history required")
                 outcomes[name] = dict(
                     outcome=outcome,
                     precontact_tracking=precontact_tracking_error(
@@ -129,6 +140,7 @@ def main() -> None:
                         joint_indices=layout.qi,
                     ),
                     active_controls=int(v["FOOT_active"].sum()),
+                    early_active_controls=int(early.sum()) if early is not None else 0,
                     changed_controls=len(changes),
                     max_delta_rad=float(np.abs(delta).max()),
                     max_correction_jump_rad=float(jumps.max()),

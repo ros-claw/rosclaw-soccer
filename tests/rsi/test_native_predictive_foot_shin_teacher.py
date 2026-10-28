@@ -47,3 +47,30 @@ def test_far_ball_is_explicitly_censored_not_a_fake_surface():
     assert result["geometry_censored"] and result["foot_index"] == -1
     assert not result["enabled"]
     np.testing.assert_array_equal(result["applied_delta"], np.zeros(29))
+
+
+def test_early_candidate_responds_to_incoming_ball_without_editing_physics():
+    model, data, layout = fixture()
+    model.jnt_range[layout.joints] = [-2.0, 2.0]
+    foot = model.geom("a/left_foot").id
+    mujoco.mj_forward(model, data)
+    data.qpos[layout.bq : layout.bq + 3] = data.geom_xpos[foot] + [1.2, 0.0, 0.0]
+    data.qvel[layout.bv : layout.bv + 3] = [-3.0, 0.0, 0.0]
+    mujoco.mj_forward(model, data)
+    before = [x.copy() for x in (data.qpos, data.qvel, data.ctrl, data.xfrc_applied)]
+    common = dict(
+        model=model, snapshot=data, layout=layout, nominal=np.zeros(29), enabled=True, frame=0
+    )
+    old = NativePredictiveFootShinTeacher(axis_local_fallback=True).propose(**common)
+    new = NativePredictiveFootShinTeacher(axis_local_fallback=True, early_intercept=True).propose(
+        **common
+    )
+    assert old["foot_index"] == -1
+    assert new["early_active"] and new["foot_index"] in (0, 1)
+    assert 0.03 <= new["early_eta_s"] <= 0.6
+    assert new["foot_gap"] > 0.55
+    assert np.max(np.abs(new["applied_delta"])) <= 0.025 + 1e-12
+    for actual, saved in zip(
+        (data.qpos, data.qvel, data.ctrl, data.xfrc_applied), before, strict=True
+    ):
+        np.testing.assert_array_equal(actual, saved)

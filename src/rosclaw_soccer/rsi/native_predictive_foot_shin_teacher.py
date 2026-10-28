@@ -5,6 +5,7 @@ from typing import Any
 import numpy as np
 
 from rosclaw_soccer.rsi.ball_surface_tasks import measure_ball_surfaces
+from rosclaw_soccer.rsi.early_contact_intercept import early_contact_intercept
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.predictive_foot_shin_target import predictive_foot_shin_target
 
@@ -16,10 +17,11 @@ class NativePredictiveFootShinTeacher:
     weights. Physical contact and balance must be independently verified.
     """
 
-    def __init__(self, *, axis_local_fallback: bool = False) -> None:
-        if type(axis_local_fallback) is not bool:
-            raise ValueError("explicit axis-local fallback flag required")
+    def __init__(self, *, axis_local_fallback: bool = False, early_intercept: bool = False) -> None:
+        if type(axis_local_fallback) is not bool or type(early_intercept) is not bool:
+            raise ValueError("explicit axis-local fallback and early-intercept flags required")
         self.axis_local_fallback = axis_local_fallback
+        self.early_intercept = early_intercept
         self.next_frame = 0
         self.foot: int | None = None
         self.previous_delta = np.zeros(29, dtype=np.float64)
@@ -50,9 +52,26 @@ class NativePredictiveFootShinTeacher:
         surfaces = measure_ball_surfaces(model, snapshot, layout)["surfaces"]
         feet = [surfaces[side + "_foot"] for side in ("left", "right")]
         foot_gaps = [x["gap_m"] if x["available"] else 2.0 for x in feet]
+        candidates = [None, None]
+        if self.early_intercept and enabled:
+            ball_pos = snapshot.qpos[layout.bq : layout.bq + 3]
+            ball_vel = snapshot.qvel[layout.bv : layout.bv + 3]
+            for index, surface in enumerate(feet):
+                if surface["available"] and surface["smooth_separated"]:
+                    candidates[index] = early_contact_intercept(
+                        np.asarray(ball_pos - surface["world_point"], dtype=np.float64),
+                        np.asarray(ball_vel - surface["point_velocity"], dtype=np.float64),
+                    )
+        eligible = [i for i, item in enumerate(candidates) if item is not None and item["eligible"]]
+        if self.foot is None and eligible:
+            self.foot = min(
+                eligible, key=lambda i: (candidates[i]["miss_m"], candidates[i]["eta_s"])
+            )
         if self.foot is None and enabled and min(foot_gaps) <= 0.55:
             self.foot = int(np.argmin(foot_gaps))
         foot = self.foot if self.foot is not None else 0
+        prediction = candidates[foot]
+        early_active = bool(prediction is not None and prediction["eligible"])
         foot_surface = feet[foot]
         if not foot_surface["available"]:
             result = predictive_foot_shin_target(
@@ -78,6 +97,9 @@ class NativePredictiveFootShinTeacher:
                 nonsmooth_abstention=False,
                 geometry_censored=True,
                 active=False,
+                early_active=early_active,
+                early_eta_s=prediction["eta_s"] if prediction else 0.0,
+                early_miss_m=prediction["miss_m"] if prediction else 2.0,
             )
             return result
         shins = [surfaces[side + "_shin"] for side in ("left", "right")]
@@ -92,6 +114,10 @@ class NativePredictiveFootShinTeacher:
             0.6 * (ball_velocity - foot_surface["point_velocity"])
             + 2.0 * max(0.0, foot_surface["gap_m"]) * direction
         )
+        if early_active:
+            # Aim at a causal constant-velocity closest point; cap the actual
+            # displacement below, and judge only from subsequent physics.
+            delta = np.asarray(prediction["displacement"], dtype=np.float64).copy()
         norm = float(np.linalg.norm(delta))
         if norm > 0.08:
             delta *= 0.08 / norm
@@ -134,5 +160,8 @@ class NativePredictiveFootShinTeacher:
             nonsmooth_abstention=nonsmooth,
             geometry_censored=False,
             active=active,
+            early_active=early_active,
+            early_eta_s=prediction["eta_s"] if prediction else 0.0,
+            early_miss_m=prediction["miss_m"] if prediction else 2.0,
         )
         return result
