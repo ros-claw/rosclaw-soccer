@@ -7,6 +7,61 @@ the two closed-loop trajectories may already have diverged.
 import numpy as np
 
 
+def precontact_tracking_error(
+    targets: np.ndarray,
+    qpos: np.ndarray,
+    forces: np.ndarray,
+    *,
+    joint_indices: np.ndarray,
+    preceding_controls: int = 5,
+) -> dict:
+    """Measure target/actual error at completed controls strictly before contact.
+
+    This is not a torque-saturation estimate, a prediction, or a real-time
+    feature: first contact is only known retrospectively.
+    """
+    if (
+        not isinstance(targets, np.ndarray)
+        or targets.ndim != 2
+        or targets.shape[1] != 29
+        or not isinstance(qpos, np.ndarray)
+        or qpos.ndim != 3
+        or qpos.shape[1] != 10
+        or not isinstance(forces, np.ndarray)
+        or forces.shape != (len(qpos), 10, 2, 3)
+        or len(targets) != len(qpos)
+        or len(qpos) < 1
+        or any(not np.isfinite(x).all() for x in (targets, qpos, forces))
+        or (forces < 0).any()
+        or not isinstance(joint_indices, np.ndarray)
+        or joint_indices.shape != (29,)
+        or not np.issubdtype(joint_indices.dtype, np.integer)
+        or np.any(joint_indices < 0)
+        or np.any(joint_indices >= qpos.shape[2])
+        or type(preceding_controls) is not int
+        or not 1 <= preceding_controls <= 20
+    ):
+        raise ValueError("finite aligned native target, state and contact histories required")
+    receiver = forces[:, :, 1, :].reshape(-1, 3)
+    contact = np.flatnonzero((np.max(receiver[:, :2], axis=1) > 10) | (receiver[:, 2] > 1))
+    if not len(contact):
+        return dict(
+            first_contact_control=None, controls_observed=0, max_leg_target_tracking_error_rad=None
+        )
+    end = int(contact[0]) // 10
+    begin = max(0, end - preceding_controls)
+    if begin == end:
+        return dict(
+            first_contact_control=end, controls_observed=0, max_leg_target_tracking_error_rad=None
+        )
+    error = targets[begin:end, :12] - qpos[begin:end, -1, joint_indices][:, :12]
+    return dict(
+        first_contact_control=end,
+        controls_observed=end - begin,
+        max_leg_target_tracking_error_rad=float(np.max(np.abs(error))),
+    )
+
+
 def paired_precontact_authority(
     candidate_command: np.ndarray,
     baseline_command: np.ndarray,

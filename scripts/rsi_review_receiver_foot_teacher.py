@@ -4,8 +4,11 @@ import argparse
 import json
 from pathlib import Path
 
+import mujoco
 import numpy as np
 
+from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+from rosclaw_soccer.rsi.paired_precontact_authority import precontact_tracking_error
 from rosclaw_soccer.rsi.passer_curriculum_outcome import strict_pass_receive
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
@@ -79,6 +82,10 @@ def main() -> None:
     }
     if len(index) != 16 or len(old_index) != 8:
         raise ValueError("complete eight-condition paired study required")
+    model = mujoco.MjModel.from_xml_path(str(root / "scene.xml"))
+    layout = NativeVelocityLayout(
+        model, robot_prefix="b/", ball_body_name="soccer_ball", player_count=2
+    )
     rows = []
     for key in sorted(old_index):
         base, teacher = index[(*key, 0.0)], index[(*key, 0.5)]
@@ -115,6 +122,12 @@ def main() -> None:
                     raise ValueError("complete boolean teacher fallback history required")
                 outcomes[name] = dict(
                     outcome=outcome,
+                    precontact_tracking=precontact_tracking_error(
+                        raw["target_b"],
+                        raw["qpos"],
+                        raw["ball_forces"],
+                        joint_indices=layout.qi,
+                    ),
                     active_controls=int(v["FOOT_active"].sum()),
                     changed_controls=len(changes),
                     max_delta_rad=float(np.abs(delta).max()),

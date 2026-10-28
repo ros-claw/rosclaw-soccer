@@ -1,7 +1,10 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.paired_precontact_authority import paired_precontact_authority
+from rosclaw_soccer.rsi.paired_precontact_authority import (
+    paired_precontact_authority,
+    precontact_tracking_error,
+)
 
 
 def sample():
@@ -52,3 +55,27 @@ def test_nonfinite_physics_rejected():
     arrays[2][0, 0, 0] = np.nan
     with pytest.raises(ValueError):
         evaluate(arrays)
+
+
+def test_tracking_error_excludes_the_contact_control():
+    target = np.zeros((8, 29))
+    state = np.zeros((8, 10, 35))
+    forces = np.zeros((8, 10, 2, 3))
+    forces[6, 3, 1, 2] = 2
+    state[3, -1, 0] = 0.7
+    state[6, -1, 0] = 9.0  # Post-event endpoint must never enter precontact window.
+    result = precontact_tracking_error(target, state, forces, joint_indices=np.arange(29))
+    assert result["first_contact_control"] == 6
+    assert result["controls_observed"] == 5
+    assert result["max_leg_target_tracking_error_rad"] == pytest.approx(0.7)
+
+
+def test_tracking_error_marks_missing_contact_unobserved():
+    result = precontact_tracking_error(
+        np.zeros((3, 29)),
+        np.zeros((3, 10, 29)),
+        np.zeros((3, 10, 2, 3)),
+        joint_indices=np.arange(29),
+    )
+    assert result["first_contact_control"] is None
+    assert result["max_leg_target_tracking_error_rad"] is None
