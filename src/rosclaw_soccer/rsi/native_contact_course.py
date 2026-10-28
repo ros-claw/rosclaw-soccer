@@ -17,6 +17,7 @@ from rosclaw_soccer.providers.g1.velocity_policy import target29
 from rosclaw_soccer.rsi.identity_kick_credit import IdentityKickCredit
 from rosclaw_soccer.rsi.native_course_tracking import NativeCourseTracking
 from rosclaw_soccer.rsi.native_physics_batch import NativePhysicsBatch
+from rosclaw_soccer.rsi.native_receive_credit import NativeReceiveCredit
 from rosclaw_soccer.rsi.native_reference_observation import native_reference_observation177
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 
@@ -61,7 +62,11 @@ class NativeContactCourse:
         worlds: int,
         lead: int | None = 10,
         threads: int = 8,
+        receive_reward: bool = False,
     ) -> None:
+        if type(receive_reward) is not bool:
+            raise ValueError("explicit receive reward mode required")
+        self.receive_reward = receive_reward
         self.model, self.params = model, params
         self.bank = {k: v.copy() for k, v in bank.items()}
         self.plans = [{k: v.copy() for k, v in plan.items()} for plan in plans]
@@ -126,6 +131,7 @@ class NativeContactCourse:
         self.elapsed = np.zeros(self.worlds, dtype=np.int64)
         self.control = 0
         self.credit = IdentityKickCredit(self.worlds, "cpu")
+        self.receive_credit = NativeReceiveCredit(self.worlds) if self.receive_reward else None
         self.batch = NativePhysicsBatch(self.model, self.worlds, threads=self.threads)
         previous_ctrl = np.zeros((self.worlds, self.model.nu))
         previous_ctrl[:, self.layout.ai] = np.stack(
@@ -245,18 +251,37 @@ class NativeContactCourse:
                     np.maximum(center - half - position, 0)
                     + np.maximum(position - center - half, 0)
                 ).sum()
-            scores = self.credit.step(
-                step=self.control,
-                forces=torch.from_numpy(forces[:, :, :2]),
-                expected=torch.from_numpy(self.bank["expected_foot"][self.index]),
-                ball_velocity=torch.from_numpy(vs[:, -1, self.layout.bv : self.layout.bv + 3]),
-                goal_delta=torch.from_numpy(
-                    self.bank["goal_world"][self.index]
-                    - qs[:, -1, self.layout.bq : self.layout.bq + 3]
-                ),
-                forbidden_forces=torch.from_numpy(forces[:, :, 2]),
-            )
-            credits = {k: v.numpy().copy() for k, v in scores.items()}
+            if self.receive_reward:
+                assert self.receive_credit is not None
+                credits = self.receive_credit.step(
+                    step=self.control,
+                    forces=forces,
+                    active=active,
+                    ball_root_distance_m=np.linalg.norm(
+                        qs[:, -1, self.layout.bq : self.layout.bq + 3]
+                        - qs[:, -1, self.layout.rq : self.layout.rq + 3],
+                        axis=1,
+                    ),
+                    relative_speed_mps=np.linalg.norm(
+                        vs[:, -1, self.layout.bv : self.layout.bv + 3]
+                        - vs[:, -1, self.layout.rv : self.layout.rv + 3],
+                        axis=1,
+                    ),
+                    healthy=~guards.any(axis=1),
+                )
+            else:
+                scores = self.credit.step(
+                    step=self.control,
+                    forces=torch.from_numpy(forces[:, :, :2]),
+                    expected=torch.from_numpy(self.bank["expected_foot"][self.index]),
+                    ball_velocity=torch.from_numpy(vs[:, -1, self.layout.bv : self.layout.bv + 3]),
+                    goal_delta=torch.from_numpy(
+                        self.bank["goal_world"][self.index]
+                        - qs[:, -1, self.layout.bq : self.layout.bq + 3]
+                    ),
+                    forbidden_forces=torch.from_numpy(forces[:, :, 2]),
+                )
+                credits = {k: v.numpy().copy() for k, v in scores.items()}
             for value in credits.values():
                 value[~active] = 0
             terminated = guards.any(axis=1) & active
@@ -270,18 +295,30 @@ class NativeContactCourse:
             )
             truncated = active & ~terminated & ((self.elapsed >= self.window) | reference_end)
             action_rate = np.square(action - self.last_action).sum(axis=1).clip(max=100)
-            reward = 0.02 * (
-                tracking.sum(axis=1)
-                + proximity
-                - 0.1 * action_rate
-                - 10 * limits
-                + 50 * credits["contact"]
-                - 10 * credits["wrong_contact"]
-                + 30 * credits["alignment"]
-                + 10 * credits["speed"]
-                - 300 * credits["forbidden_contact"]
-                - 400 * terminated
-            )
+            if self.receive_reward:
+                reward = 0.02 * (
+                    tracking.sum(axis=1)
+                    + proximity
+                    - 0.1 * action_rate
+                    - 10 * limits
+                    + 50 * credits["first_clean_foot"]
+                    - 300 * credits["first_nonfoot"]
+                    + 200 * credits["sustained_capture"]
+                    - 400 * terminated
+                )
+            else:
+                reward = 0.02 * (
+                    tracking.sum(axis=1)
+                    + proximity
+                    - 0.1 * action_rate
+                    - 10 * limits
+                    + 50 * credits["contact"]
+                    - 10 * credits["wrong_contact"]
+                    + 30 * credits["alignment"]
+                    + 10 * credits["speed"]
+                    - 300 * credits["forbidden_contact"]
+                    - 400 * terminated
+                )
             reward[~active] = 0
             if not np.isfinite(reward).all():
                 raise ValueError("finite native rewards required")
