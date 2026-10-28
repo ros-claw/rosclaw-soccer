@@ -13,6 +13,13 @@ import sys
 from pathlib import Path
 
 
+def curriculum_episode(episode: int, mixed: bool) -> tuple[bool, int]:
+    """Alternating speeds each traverse every balanced source pool independently."""
+    if type(episode) is not int or episode < 0 or type(mixed) is not bool:
+        raise ValueError("nonnegative episode and explicit curriculum required")
+    return (episode % 2 == 0, episode // 2) if mixed else (False, episode)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for key in ("qualification-root", "incoming-root", "reference-root", "output"):
@@ -31,6 +38,8 @@ def main():
     p.add_argument("--strict-native-capture", action="store_true")
     p.add_argument("--demonstrations-root", type=Path)
     p.add_argument("--demonstrations-hash")
+    p.add_argument("--curriculum-slow-root", type=Path)
+    p.add_argument("--curriculum-slow-hash")
     p.add_argument("--resume-checkpoint", type=Path)
     p.add_argument("--resume-hash")
     p.add_argument("--stop-after-episode", type=int)
@@ -77,6 +86,10 @@ def main():
         raise ValueError("strict native capture requires the expanded receiving protocol")
     if bool(a.demonstrations_root) != bool(a.demonstrations_hash):
         raise ValueError("demonstration root and exact receipt hash required together")
+    if bool(a.curriculum_slow_root) != bool(a.curriculum_slow_hash):
+        raise ValueError("slow course root and exact receipt hash required together")
+    if a.curriculum_slow_root and (not a.demonstrations_root or not a.strict_native_capture):
+        raise ValueError("mixed curriculum requires strict capture and demonstrations")
     if a.demonstrations_root and (
         not expanded or a.ball_only_adaptation or a.train_target_rate_filter or a.dense_shin_risk
     ):
@@ -170,6 +183,24 @@ def main():
         pins[str(a.dev_incoming_root / "incoming-bank.npz")] = dev_incoming["bank_hash"]
         for i, record in enumerate(dev_reference["records"]):
             pins[str(a.dev_reference_root / f"reference-{i:02d}.npz")] = record["reference_hash"]
+    if a.curriculum_slow_root:
+        slow_path = a.curriculum_slow_root / "complete.json"
+        if digest(slow_path) != a.curriculum_slow_hash:
+            raise ValueError("exact slow-course receipt required")
+        slow_incoming = json.loads(slow_path.read_text())
+        if (
+            slow_incoming.get("status") != "MOTIONDECODE_INCOMING_SINGLE_ACTOR_PROBE_NOT_SKILL"
+            or slow_incoming.get("reference_hash") != a.motion_reference_hash
+            or slow_incoming.get("launch_frame") != "heading"
+            or slow_incoming.get("lateral_study") is not True
+            or slow_incoming.get("receive_window") != 60
+            or slow_incoming.get("reference_clip_count") != 8
+            or slow_incoming.get("training") is not False
+            or slow_incoming.get("course_binding") == incoming.get("course_binding")
+        ):
+            raise ValueError("distinct matched slow receiving course required")
+        pins[str(slow_path)] = a.curriculum_slow_hash
+        pins[str(a.curriculum_slow_root / "incoming-bank.npz")] = slow_incoming["bank_hash"]
     demonstration = None
     if a.demonstrations_root:
         demo_path = a.demonstrations_root / "complete.json"
@@ -259,6 +290,13 @@ def main():
     ).cuda()
     model = mujoco.MjModel.from_binary_path(str(model_path))
     layout = NativeVelocityLayout(model, robot_prefix="robot/", ball_body_name="ball/ball")
+    if a.curriculum_slow_root:
+        with np.load(a.curriculum_slow_root / "incoming-bank.npz", allow_pickle=False) as z:
+            slow_bank = {k: z[k].copy() for k in z.files}
+        for candidate, speed in ((slow_bank, 1.25), (bank, 3.0)):
+            velocity = candidate["qvel"][:, layout.bv : layout.bv + 3]
+            if not np.allclose(np.linalg.norm(velocity, axis=1), speed, atol=1e-6, rtol=0):
+                raise ValueError("all native initial ball velocities must match curriculum")
     if motion:
         if pins[str(model_path)] != reference["model_hash"]:
             raise ValueError("actual reference model must match")
@@ -348,11 +386,11 @@ def main():
         ]
     )
 
-    def make_course(*, development=False):
+    def make_course(*, development=False, slow=False):
         return NativeContactCourse(
             model=model,
             params=params,
-            bank=dev_bank if development and expanded else bank,
+            bank=dev_bank if development and expanded else slow_bank if slow else bank,
             plans=dev_plans if development and expanded else plans,
             body_references=dev_refs if development and expanded else refs,
             worlds=32 if expanded else 8,
@@ -395,6 +433,8 @@ def main():
             dense_shin_risk=a.dense_shin_risk,
             strict_native_capture=a.strict_native_capture,
             demonstrations_hash=a.demonstrations_hash,
+            curriculum_slow_hash=a.curriculum_slow_hash,
+            curriculum_schedule="alternate-slow-fast" if a.curriculum_slow_root else None,
             imitation=imitation_metrics,
             dense_shin_risk_weight=0.1 if a.dense_shin_risk else None,
             ball_trainable_columns=[168, 169, 170, 171, 172, 173]
@@ -411,7 +451,8 @@ def main():
             stop_after_episode=a.stop_after_episode,
         ),
     )
-    env = make_course()
+    fast_env = make_course()
+    slow_env = make_course(slow=True) if a.curriculum_slow_root else None
     histories, stats, updates = [], [], 0
     commitment = dict(
         source_head=a.expected_head,
@@ -431,6 +472,8 @@ def main():
         numpy_version=np.__version__,
         python_version=sys.version,
     )
+    if a.curriculum_slow_root:
+        commitment["curriculum_slow_hash"] = a.curriculum_slow_hash
     try:
         first_episode = 0
         if a.resume_checkpoint:
@@ -448,8 +491,10 @@ def main():
                 raise ValueError("resume must advance within declared episode count")
             stats, updates = state["stats"], state["updates"]
             histories = [np.asarray(x, dtype=np.int64) for x in state["histories"]]
-            env.episode = first_episode - 1
         for episode in range(first_episode, episode_count):
+            use_slow, bank_episode = curriculum_episode(episode, slow_env is not None)
+            env = slow_env if use_slow else fast_env
+            env.episode = bank_episode - 1
             env.reset()
             history = []
             while not env.ended.all():
@@ -578,6 +623,8 @@ def main():
             stats.append(
                 dict(
                     episode=episode,
+                    curriculum_bank="slow" if use_slow else "fast",
+                    curriculum_bank_episode=bank_episode,
                     valid=int(mask.sum()),
                     clean_foot=int(raw["credit_first_clean_foot"].sum()),
                     nonfoot=int(raw["credit_first_nonfoot"].sum()),
@@ -715,7 +762,9 @@ def main():
     finally:
         if ball_gradient_handle is not None:
             ball_gradient_handle.remove()
-        env.close()
+        fast_env.close()
+        if slow_env is not None:
+            slow_env.close()
 
 
 if __name__ == "__main__":
