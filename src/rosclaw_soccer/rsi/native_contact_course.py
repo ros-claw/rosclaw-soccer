@@ -63,10 +63,17 @@ class NativeContactCourse:
         lead: int | None = 10,
         threads: int = 8,
         receive_reward: bool = False,
+        receive_window: int = 24,
     ) -> None:
-        if type(receive_reward) is not bool:
-            raise ValueError("explicit receive reward mode required")
+        if (
+            type(receive_reward) is not bool
+            or type(receive_window) is not int
+            or receive_window not in (24, 40)
+            or (not receive_reward and receive_window != 24)
+        ):
+            raise ValueError("explicit bounded experimental receive reward mode required")
         self.receive_reward = receive_reward
+        self.window = receive_window
         self.model, self.params = model, params
         self.bank = {k: v.copy() for k, v in bank.items()}
         self.plans = [{k: v.copy() for k, v in plan.items()} for plan in plans]
@@ -304,7 +311,7 @@ class NativeContactCourse:
                     + 50 * credits["first_clean_foot"]
                     - 300 * credits["first_nonfoot"]
                     + 200 * credits["sustained_capture"]
-                    - 400 * terminated
+                    - 600 * terminated
                 )
             else:
                 reward = 0.02 * (

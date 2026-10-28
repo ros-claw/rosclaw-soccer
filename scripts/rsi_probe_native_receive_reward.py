@@ -17,7 +17,10 @@ def main():
     for key in ("qualification-hash", "expected-head"):
         parser.add_argument("--" + key, required=True)
     parser.add_argument("--incoming", action="store_true")
+    parser.add_argument("--incoming-window", type=int, choices=(24, 40), default=24)
     args = parser.parse_args()
+    if not args.incoming and args.incoming_window != 24:
+        raise ValueError("extended window is limited to incoming receiving experiments")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
 
@@ -107,7 +110,8 @@ def main():
             worlds=8,
             lead=10,
             threads=2,
-            receive_reward=mode,
+            receive_reward=mode or args.incoming_window == 40,
+            receive_window=args.incoming_window if mode or args.incoming_window == 40 else 24,
         )
         for mode in (False, True)
     ]
@@ -121,10 +125,14 @@ def main():
             if args.incoming
             else "receive-credit-physics-identity-v1",
             worlds=8,
-            kick_bank_not_receive_training=not args.incoming,
+            incoming_bank=args.incoming,
+            source_robot_bank_kick_derived=True,
+            comparison="receiving repeat"
+            if args.incoming_window == 40
+            else "kick vs receiving reward",
             kick_derived_motion_reference=True,
             course_binding=course_binding,
-            controls=24,
+            controls=args.incoming_window,
             optimizer_updates=0,
             hardware_authorized=False,
         ),
@@ -188,6 +196,10 @@ def main():
                 else None,
                 course_binding=course_binding,
                 incoming=args.incoming,
+                window=args.incoming_window,
+                comparison="receiving repeat"
+                if args.incoming_window == 40
+                else "kick vs receiving reward",
                 worlds=8,
                 controls=len(rows),
                 native_steps=[course.native_steps for course in courses],

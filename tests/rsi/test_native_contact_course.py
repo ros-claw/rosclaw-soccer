@@ -44,6 +44,9 @@ def test_course_window_reward_dominance_and_observation_abi():
     # Five tracking terms + proximity <=6 per control; maximum once-per-episode
     # contact50 + five*(alignment30+speed10)=250, all other terms nonpositive.
     assert NativeContactCourse.window * 6 + 250 < 400
+    # Experimental receiving has at most 50 foot + 200 capture once per
+    # episode; extending it to 40 controls requires a larger failure penalty.
+    assert 40 * 6 + 250 < 600
     assert (
         NativeContactCourse.actor_observation_dim
         == NativeContactCourse.critic_observation_dim
