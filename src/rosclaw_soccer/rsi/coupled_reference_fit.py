@@ -12,7 +12,9 @@ from scipy.optimize import least_squares
 from rosclaw_soccer.rsi.ball_surface_tasks import measure_ball_surfaces
 
 
-def fit_reference_contact(model: Any, donor: Any, layout: Any, *, foot: str) -> dict[str, Any]:
+def fit_reference_contact(
+    model: Any, donor: Any, layout: Any, *, foot: str, max_evaluations: int = 150
+) -> dict[str, Any]:
     """Fit one 29-DOF reference frame while preserving the other ankle pose.
 
     A 0.35 rad per-joint trust region and native model limits apply to the
@@ -20,7 +22,12 @@ def fit_reference_contact(model: Any, donor: Any, layout: Any, *, foot: str) -> 
     """
     import mujoco
 
-    if layout.model is not model or foot not in ("left", "right"):
+    if (
+        layout.model is not model
+        or foot not in ("left", "right")
+        or type(max_evaluations) is not int
+        or not 1 <= max_evaluations <= 2000
+    ):
         raise ValueError("qualified model and explicit foot required")
     layout.canonical(donor)
     scratch = mujoco.MjData(model)
@@ -87,7 +94,7 @@ def fit_reference_contact(model: Any, donor: Any, layout: Any, *, foot: str) -> 
         lambda x: metrics(x)[1],
         np.zeros(12),
         bounds=(lower, upper),
-        max_nfev=150,
+        max_nfev=max_evaluations,
         ftol=1e-8,
         xtol=1e-8,
         gtol=1e-8,
@@ -109,6 +116,7 @@ def fit_reference_contact(model: Any, donor: Any, layout: Any, *, foot: str) -> 
         optimizer_success=bool(result.success),
         optimizer_message=str(result.message),
         evaluations=int(result.nfev),
+        evaluation_budget=max_evaluations,
         physically_qualified=False,
         new_physical_steps=0,
         hardware_authorized=False,

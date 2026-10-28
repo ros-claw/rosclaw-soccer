@@ -22,6 +22,9 @@ def test_invalid_foot_and_out_of_range_seed_fail_closed():
     model, data, layout = fixture(0.12)
     with pytest.raises(ValueError):
         fit_reference_contact(model, data, layout, foot="auto")
+    for invalid_budget in (0, 2001, True):
+        with pytest.raises(ValueError):
+            fit_reference_contact(model, data, layout, foot="left", max_evaluations=invalid_budget)
     data.qpos[layout.qi[0]] = 3.0
     result = fit_reference_contact(model, data, layout, foot="left")
     assert result["status"] == "SOURCE_OUTSIDE_NATIVE_LIMITS"

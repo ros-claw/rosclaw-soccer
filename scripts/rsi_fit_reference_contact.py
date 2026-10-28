@@ -24,6 +24,7 @@ def main() -> None:
     parser.add_argument("--reference", type=Path, required=True)
     parser.add_argument("--reference-sha256", required=True)
     parser.add_argument("--frame", type=int, required=True)
+    parser.add_argument("--max-evaluations", type=int, default=150)
     parser.add_argument("--foot", choices=("left", "right"), required=True)
     parser.add_argument("--output", type=Path, required=True)
     a = parser.parse_args()
@@ -44,7 +45,9 @@ def main() -> None:
         data.qpos[layout.bq : layout.bq + 3] = ref["object_pos_w"][frame]
         data.qpos[layout.bq + 3 : layout.bq + 7] = ref["object_quat_w"][frame]
     mujoco.mj_forward(model, data)
-    result = fit_reference_contact(model, data, layout, foot=a.foot)
+    result = fit_reference_contact(
+        model, data, layout, foot=a.foot, max_evaluations=a.max_evaluations
+    )
     if digest(a.scene) != a.scene_sha256 or digest(a.reference) != a.reference_sha256:
         raise ValueError("input changed during fit")
     result.update(
