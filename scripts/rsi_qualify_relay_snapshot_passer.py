@@ -1,4 +1,4 @@
-"""Recompute the passer's own recurrent inference at restored SIM boundaries."""
+"""Verify ten live shared SIM controls from audited precontact boundaries."""
 
 import argparse
 import json
@@ -252,6 +252,77 @@ def main() -> None:
             for key in ("qpos", "qvel", "torque", "ball_forces"):
                 if not np.array_equal(resumed[key], physics[key][140]):
                     raise ValueError("restored coupled native substeps differ: " + key)
+            # Continue from each actor's *own newly generated* state. Recorded
+            # future traces are audit targets only, never policy inputs.
+            previous_action = out[0, 0].numpy().copy()
+            previous_receiver_action = receiver_action.copy()
+            previous_receiver_phase = receiver_phase
+            past_ball_vel = np.concatenate((past_ball_vel, receiver_v[None, 35:37]), axis=0)
+            for frame in range(141, 150):
+                mujoco.mj_forward(setup.model, scratch.data)
+                view = PlayerObservationView(scratch, "a/")
+                obs = ep.build_observation(
+                    view,
+                    None,
+                    0,
+                    previous_action,
+                    ep.clip.joint_pos[frame - 1].copy(),
+                    ep.clip.joint_vel[frame - 1].copy(),
+                    ep.clip.body_ang_vel_w[frame - 1, ep.torso_index].copy(),
+                    view.ball_pos,
+                    ep.goal,
+                    ep.offset,
+                    obs_dim=None,
+                )
+                with torch.no_grad():
+                    out, (h, c) = actor(torch.from_numpy(obs).reshape(1, 1, 160), (h, c))
+                current_action = out[0, 0].numpy().copy()
+                receiver_q, receiver_v = receiver_layout.canonical(scratch.data)
+                role = restored_receiving_role(
+                    initial_ball=initial_data["qpos"][layout.bq : layout.bq + 2].copy(),
+                    initial_home=initial_data["qpos"][
+                        receiver_layout.rq : receiver_layout.rq + 2
+                    ].copy(),
+                    pass_goal=ep.goal,
+                    current_q=receiver_q,
+                    current_v=receiver_v,
+                    past_ball_velocities=past_ball_vel,
+                )
+                receiver_obs, receiver_phase = observation98(
+                    receiver_q,
+                    receiver_v,
+                    receiver_layout.angular_velocity_body(scratch.data),
+                    np.asarray(role.command_body, dtype=np.float32),
+                    previous_receiver_action,
+                    previous_receiver_phase,
+                    velocity_policy.params,
+                )
+                receiver_action = velocity_policy.session.run(
+                    ["actions"], {"obs": receiver_obs[None]}
+                )[0][0]
+                if (
+                    not np.array_equal(obs, t["NN_obs"][frame])
+                    or not np.array_equal(current_action, t["NN_action"][frame])
+                    or not np.array_equal(h.numpy(), t["NN_h_after"][frame])
+                    or not np.array_equal(c.numpy(), t["NN_c_after"][frame])
+                    or not np.array_equal(receiver_obs, velocity_data["obs"][frame])
+                    or not np.array_equal(receiver_action, velocity_data["action"][frame])
+                    or receiver_phase != velocity_data["phase"][frame]
+                ):
+                    raise ValueError(f"restored own live policy history differs at {frame}")
+                resumed = scratch.advance(
+                    {
+                        "a/": ep.offset + current_action[ep.order] * ep.scale,
+                        "b/": target29(receiver_action, velocity_policy.params),
+                    }
+                )
+                for key in ("qpos", "qvel", "torque", "ball_forces"):
+                    if not np.array_equal(resumed[key], physics[key][frame]):
+                        raise ValueError(f"restored coupled native {key} differs at {frame}")
+                previous_action = current_action
+                previous_receiver_action = receiver_action.copy()
+                previous_receiver_phase = receiver_phase
+                past_ball_vel = np.concatenate((past_ball_vel, receiver_v[None, 35:37]), axis=0)
         if (
             digest(snap) != item["snapshot_hash"]
             or digest(trace) != row["artifacts"]["passer_nn"]["hash"]
@@ -271,6 +342,7 @@ def main() -> None:
                 receiver_role_command_exact=True,
                 receiver_neural_inference_exact=True,
                 coupled_native_substeps_exact=True,
+                consecutive_controls=10,
             )
         )
     if (
@@ -289,7 +361,7 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="RELAY_RESTORED_OWN_NEURAL_ONE_CONTROL_MATCH_NOT_FOOTBALL_SUCCESS",
+            status="RELAY_RESTORED_OWN_NEURAL_TEN_CONTROLS_MATCH_NOT_FOOTBALL_SUCCESS",
             source_head=a.expected_head,
             source_hash=sh,
             audit_hash=a.audit_hash,
@@ -301,7 +373,7 @@ def main() -> None:
             future_controls_used=False,
             receiver_role_selector_verified_at_boundary=True,
             coupled_physics_continuation_verified=True,
-            native_steps=80,
+            native_steps=800,
             optimizer_updates=0,
             independent_fresh=False,
             promotion_authorized=False,
