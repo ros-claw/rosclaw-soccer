@@ -17,7 +17,10 @@ def main():
     for key in ("qualification-hash", "reference-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
     p.add_argument("--launch-frame", choices=("world", "heading"), default="world")
+    p.add_argument("--lateral-study", action="store_true")
     a = p.parse_args()
+    if a.lateral_study and a.launch_frame != "heading":
+        raise ValueError("lateral study requires an explicit body-heading launch")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
 
@@ -61,8 +64,12 @@ def main():
     import torch
 
     from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
-    from rosclaw_soccer.rsi.native_contact_course import NativeContactCourse
+    from rosclaw_soccer.rsi.native_contact_course import (
+        NativeContactCourse,
+        balanced_course_indices,
+    )
     from rosclaw_soccer.rsi.native_receive_bank import build_incoming_bank
+    from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
     from rosclaw_soccer.training.role_receiving_courses import ROSTER, ReceivingCourse
 
@@ -87,7 +94,7 @@ def main():
             )
     world = np.arange(256, dtype=np.int64)
     source = world % 8
-    frame = 20 + source * 25 + (world // 8) * 5
+    frame = 20 + source * 25 + (0 if a.lateral_study else (world // 8) * 5)
     if any(int(f) + 40 >= len(plans[int(s)]["joint"]) for f, s in zip(frame, source, strict=True)):
         raise ValueError("all declared forty-step references required")
     bank = dict(
@@ -111,7 +118,12 @@ def main():
     )
     courses = tuple(
         ReceivingCourse(
-            ROSTER[i % 8], 930000 + i, (1.25, 2.0)[(i // 8) % 2], (-0.08, 0.08)[(i // 16) % 2]
+            ROSTER[i % 8],
+            930000 + i,
+            1.25 if a.lateral_study else (1.25, 2.0)[(i // 8) % 2],
+            (-0.24, -0.08, 0.08, 0.24)[(i // 32) % 4]
+            if a.lateral_study
+            else (-0.08, 0.08)[(i // 16) % 2],
         )
         for i in range(256)
     )
@@ -123,6 +135,21 @@ def main():
         courses=courses,
         launch_frame=a.launch_frame,
     )
+    if a.lateral_study:
+        layout = NativeVelocityLayout(model, robot_prefix="robot/", ball_body_name="ball/ball")
+        ids = balanced_course_indices(bank, worlds=32, episode=0, lead=10)
+        for i in range(8):
+            group = ids[i::8]
+            robot_q = np.delete(bank["qpos"][group], np.arange(layout.bq, layout.bq + 7), axis=1)
+            robot_v = np.delete(bank["qvel"][group], np.arange(layout.bv, layout.bv + 6), axis=1)
+            if (
+                not np.all(robot_q == robot_q[0])
+                or not np.all(robot_v == robot_v[0])
+                or not np.all(bank["reference_frame"][group] == bank["reference_frame"][group[0]])
+                or [courses[int(j)].lateral_m for j in group] != [-0.24, -0.08, 0.08, 0.24]
+                or any(courses[int(j)].speed_mps != 1.25 for j in group)
+            ):
+                raise ValueError("all four lateral arms must share exact robot start and speed")
     actor = VelocityPriorActor.from_onnx(
         onnx, expected_hash=pins[str(onnx)], reference_features=79
     ).eval()
@@ -145,7 +172,11 @@ def main():
             correlated_reference_frames=True,
             source_fps_assumption=reference["source_fps_assumption"],
             scene="single G1, one free ball",
-            worlds=8,
+            worlds=32 if a.lateral_study else 8,
+            lateral_study=a.lateral_study,
+            lateral_m=[-0.24, -0.08, 0.08, 0.24] if a.lateral_study else None,
+            fixed_speed_mps=1.25 if a.lateral_study else None,
+            robot_initial_state_matched_by_source=a.lateral_study,
             controls=40,
             no_mid_episode_resets=True,
             training=False,
@@ -159,7 +190,7 @@ def main():
         bank=bank,
         plans=plans,
         body_references=refs,
-        worlds=8,
+        worlds=32 if a.lateral_study else 8,
         lead=10,
         threads=2,
         receive_reward=True,
@@ -186,6 +217,8 @@ def main():
                 reference_hash=a.reference_hash,
                 course_binding=binding,
                 launch_frame=a.launch_frame,
+                lateral_study=a.lateral_study,
+                worlds=32 if a.lateral_study else 8,
                 reference_clip_count=8 if multi else 1,
                 bank_hash=digest(a.output / "incoming-bank.npz"),
                 raw_hash=digest(a.output / "physical.npz"),
