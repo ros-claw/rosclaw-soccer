@@ -36,6 +36,7 @@ def main():
     p.add_argument("--ball-only-adaptation", action="store_true")
     p.add_argument("--dense-shin-risk", action="store_true")
     p.add_argument("--strict-native-capture", action="store_true")
+    p.add_argument("--receive-progress-reward", action="store_true")
     p.add_argument("--demonstrations-root", type=Path)
     p.add_argument("--demonstrations-hash")
     p.add_argument("--curriculum-slow-root", type=Path)
@@ -84,6 +85,8 @@ def main():
         raise ValueError("dense shin risk requires the expanded receiving protocol")
     if a.strict_native_capture and not expanded:
         raise ValueError("strict native capture requires the expanded receiving protocol")
+    if a.receive_progress_reward and not a.strict_native_capture:
+        raise ValueError("native progress shaping requires strict capture")
     if bool(a.demonstrations_root) != bool(a.demonstrations_hash):
         raise ValueError("demonstration root and exact receipt hash required together")
     if bool(a.curriculum_slow_root) != bool(a.curriculum_slow_hash):
@@ -400,6 +403,7 @@ def main():
             receive_window=60 if expanded else 40,
             dense_shin_risk=a.dense_shin_risk and not development,
             strict_native_capture=a.strict_native_capture,
+            receive_progress_reward=a.receive_progress_reward and not development,
         )
 
     a.output.mkdir()
@@ -432,6 +436,8 @@ def main():
             ball_only_adaptation=a.ball_only_adaptation,
             dense_shin_risk=a.dense_shin_risk,
             strict_native_capture=a.strict_native_capture,
+            receive_progress_reward=a.receive_progress_reward,
+            receive_progress_weight=0.1 if a.receive_progress_reward else None,
             demonstrations_hash=a.demonstrations_hash,
             curriculum_slow_hash=a.curriculum_slow_hash,
             curriculum_schedule="alternate-slow-fast" if a.curriculum_slow_root else None,
@@ -474,6 +480,8 @@ def main():
     )
     if a.curriculum_slow_root:
         commitment["curriculum_slow_hash"] = a.curriculum_slow_hash
+    if a.receive_progress_reward:
+        commitment["receive_progress_reward"] = True
     try:
         first_episode = 0
         if a.resume_checkpoint:
@@ -634,6 +642,9 @@ def main():
                     optimizer_updates=updates,
                     update_metrics=update_metrics,
                     shin_risk_sum=float(raw["shin_risk"].sum()) if a.dense_shin_risk else None,
+                    control_progress_sum=float(raw["credit_control_progress"].sum())
+                    if a.receive_progress_reward
+                    else None,
                     raw_hash=digest(file),
                     raw_path=str(file.resolve()),
                 )

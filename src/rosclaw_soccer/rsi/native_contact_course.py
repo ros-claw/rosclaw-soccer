@@ -17,7 +17,11 @@ from rosclaw_soccer.providers.g1.velocity_policy import target29
 from rosclaw_soccer.rsi.identity_kick_credit import IdentityKickCredit
 from rosclaw_soccer.rsi.native_course_tracking import NativeCourseTracking
 from rosclaw_soccer.rsi.native_physics_batch import NativePhysicsBatch
-from rosclaw_soccer.rsi.native_receive_credit import NativeReceiveCredit, planar_ball_root_distance
+from rosclaw_soccer.rsi.native_receive_credit import (
+    NativeReceiveCredit,
+    native_control_progress,
+    planar_ball_root_distance,
+)
 from rosclaw_soccer.rsi.native_reference_observation import native_reference_observation177
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 
@@ -73,6 +77,7 @@ class NativeContactCourse:
         receive_window: int = 24,
         dense_shin_risk: bool = False,
         strict_native_capture: bool = False,
+        receive_progress_reward: bool = False,
     ) -> None:
         if (
             type(receive_reward) is not bool
@@ -83,11 +88,14 @@ class NativeContactCourse:
             or (dense_shin_risk and (not receive_reward or receive_window != 60))
             or type(strict_native_capture) is not bool
             or (strict_native_capture and (not receive_reward or receive_window != 60))
+            or type(receive_progress_reward) is not bool
+            or (receive_progress_reward and not strict_native_capture)
         ):
             raise ValueError("explicit bounded experimental receive reward mode required")
         self.receive_reward = receive_reward
         self.dense_shin_risk = dense_shin_risk
         self.strict_native_capture = strict_native_capture
+        self.receive_progress_reward = receive_progress_reward
         self.window = receive_window
         self.receive_failure_penalty = 800 if receive_window == 60 else 600
         self.model, self.params = model, params
@@ -324,6 +332,7 @@ class NativeContactCourse:
                 ).sum()
             if self.receive_reward:
                 assert self.receive_credit is not None
+                foot_seen_before = self.receive_credit.foot_seen.copy()
                 credits = self.receive_credit.step(
                     step=self.control,
                     forces=forces,
@@ -357,6 +366,20 @@ class NativeContactCourse:
                         else None
                     ),
                 )
+                if self.receive_progress_reward:
+                    credits["control_progress"] = native_control_progress(
+                        np.linalg.norm(
+                            qs[:, :, self.layout.bq : self.layout.bq + 2]
+                            - qs[:, :, self.layout.rq : self.layout.rq + 2],
+                            axis=2,
+                        ),
+                        np.linalg.norm(
+                            vs[:, :, self.layout.bv : self.layout.bv + 3]
+                            - vs[:, :, self.layout.rv : self.layout.rv + 3],
+                            axis=2,
+                        ),
+                        active & foot_seen_before & ~credits["contaminated"] & ~guards.any(axis=1),
+                    )
             else:
                 scores = self.credit.step(
                     step=self.control,
@@ -396,6 +419,8 @@ class NativeContactCourse:
                 )
                 if self.dense_shin_risk:
                     reward -= 0.1 * shin_risk
+                if self.receive_progress_reward:
+                    reward += 0.1 * credits["control_progress"]
             else:
                 reward = 0.02 * (
                     tracking.sum(axis=1)

@@ -18,6 +18,24 @@ def planar_ball_root_distance(ball: np.ndarray, root: np.ndarray) -> np.ndarray:
     return np.linalg.norm(ball[:, :2] - root[:, :2], axis=1)
 
 
+def native_control_progress(distance, speed, eligible):
+    """Observed native-step control fraction, shaping only, never success."""
+    distance, speed, eligible = map(np.asarray, (distance, speed, eligible))
+    if (
+        distance.ndim != 2
+        or distance.shape[1] != 10
+        or speed.shape != distance.shape
+        or eligible.shape != (len(distance),)
+        or eligible.dtype != np.bool_
+        or not np.isfinite(distance).all()
+        or not np.isfinite(speed).all()
+        or np.any(distance < 0)
+        or np.any(speed < 0)
+    ):
+        raise ValueError("finite native-step measurements and eligibility required")
+    return (((distance <= 0.65) & (speed <= 0.5)).mean(axis=1) * eligible).astype(np.float32)
+
+
 class NativeReceiveCredit:
     """Count actual native contacts, never turn proximity alone into possession.
 
