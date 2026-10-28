@@ -46,3 +46,13 @@ def test_rejects_torque_before_fixed_start_and_unbounded_delta():
     z["torque"][80, 0, 0] = z["applied_torque_change"][80, 0, 0] = 15
     with pytest.raises(ValueError, match="bounded"):
         summarize(z, m, a, b, True, 10, 10)
+
+
+def test_tempo_measurement_does_not_claim_recorded_torque_composition():
+    m, a, b, z = fixture()
+    del z["parent_torque"]
+    del z["applied_torque_change"]
+    z["torque"][80, :, 0] = 2
+    r = summarize(z, m, a, b, True, 0, 0, tempo=True)
+    assert r["changed_native_commands"] is None
+    assert r["max_abs_delta_nm"] is None

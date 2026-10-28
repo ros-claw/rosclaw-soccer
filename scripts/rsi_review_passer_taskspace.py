@@ -16,8 +16,12 @@ from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_fresh_common import clean
 
 
-def summarize(raw: dict, model, a, b, enabled: bool, commands: int, active: int) -> dict:
-    torque, parent, delta = (raw[k] for k in ("torque", "parent_torque", "applied_torque_change"))
+def summarize(
+    raw: dict, model, a, b, enabled: bool, commands: int, active: int, *, tempo: bool = False
+) -> dict:
+    torque = raw["torque"]
+    parent = raw["parent_torque"] if not tempo else torque
+    delta = raw["applied_torque_change"] if not tempo else np.zeros_like(torque)
     f = raw["ball_forces"].reshape(-1, 2, 3)
     q = raw["qpos"].reshape(-1, model.nq)
     v = raw["qvel"].reshape(-1, model.nv)
@@ -35,7 +39,7 @@ def summarize(raw: dict, model, a, b, enabled: bool, commands: int, active: int)
         or np.any(delta[:, :, b.ai])
         or np.any(delta[:80])
         or (not enabled and np.any(delta))
-        or commands != (max(n - 80, 0) * 10 if enabled else 0)
+        or commands != (max(n - 80, 0) * 10 if enabled and not tempo else 0)
         or not 0 <= active <= commands
     ):
         raise ValueError("complete own-passer-only actual motor accounting required")
@@ -70,8 +74,8 @@ def summarize(raw: dict, model, a, b, enabled: bool, commands: int, active: int)
     return dict(
         controls=n,
         impulse=impact,
-        changed_native_commands=changed,
-        max_abs_delta_nm=float(np.max(np.abs(delta))),
+        changed_native_commands=changed if not tempo else None,
+        max_abs_delta_nm=float(np.max(np.abs(delta))) if not tempo else None,
         receiver_first_foot_step=first_foot,
         receiver_first_nonfoot_step=first_nonfoot,
         receiver_foot_first=foot_first,
@@ -92,7 +96,11 @@ def main() -> None:
     if (
         args.output.exists()
         or args.output.resolve().is_relative_to(Path.cwd())
-        or args.unit != "rosclaw-passer-taskspace-strike-b0-20261029.service"
+        or args.unit
+        not in (
+            "rosclaw-passer-taskspace-strike-b0-20261029.service",
+            "rosclaw-passer-reference-tempo-b0-20261029.service",
+        )
         or not 1 <= args.timeout_sec <= 7200
     ):
         raise ValueError("exact physical unit and unused external output required")
@@ -114,8 +122,14 @@ def main() -> None:
         raise ValueError("exact physical scene required")
     source_hash = digest(receipt)
     source = json.loads(receipt.read_text())
+    tempo = args.unit == "rosclaw-passer-reference-tempo-b0-20261029.service"
     if (
-        source.get("status") != "NEURAL_RELAY_PASSER_STRIKE_TEACHER16_PENDING_OWN_REPLAY"
+        source.get("status")
+        != (
+            "NEURAL_RELAY_PASSER_REFERENCE_TEMPO16_PENDING_OWN_REPLAY"
+            if tempo
+            else "NEURAL_RELAY_PASSER_STRIKE_TEACHER16_PENDING_OWN_REPLAY"
+        )
         or source.get("source_head") != args.physical_head
         or len(source.get("records", [])) != 16
         or any(
@@ -132,7 +146,13 @@ def main() -> None:
     cases = {}
     for record in source["records"]:
         course = record["course"]
-        enabled = course["arm"]["passer_strike_teacher"]
+        if tempo:
+            rate = course["arm"]["passer_reference_rate"]
+            if type(rate) is not float or rate not in (1.0, 0.8):
+                raise ValueError("exact preregistered tempo arms required")
+            enabled = rate == 0.8
+        else:
+            enabled = course["arm"]["passer_strike_teacher"]
         if type(enabled) is not bool:
             raise ValueError("explicit paired strike arm required")
         identity = (course["context"], course["lateral_m"])
@@ -149,14 +169,14 @@ def main() -> None:
                 k: z[k].copy()
                 for k in (
                     "torque",
-                    "parent_torque",
-                    "applied_torque_change",
                     "ball_forces",
                     "qpos",
                     "qvel",
                     "body_failed",
                 )
             }
+            if not tempo:
+                raw.update({k: z[k].copy() for k in ("parent_torque", "applied_torque_change")})
         if digest(path) != item["hash"] or enabled in cases.setdefault(identity, {}):
             raise ValueError("unchanged unique matched trajectory required")
         cases[identity][enabled] = (
@@ -170,6 +190,7 @@ def main() -> None:
                 enabled,
                 record["passer_strike_teacher_commands"],
                 record["passer_strike_teacher_active"],
+                tempo=tempo,
             ),
         )
     if len(cases) != 8 or any(set(pair) != {False, True} for pair in cases.values()):
@@ -194,6 +215,14 @@ def main() -> None:
                 candidate_common_body_healthy=not bool(cand[1]["body_failed"][:common].any()),
                 baseline_handoff=base[0]["result"]["handoff_executed"],
                 candidate_handoff=cand[0]["result"]["handoff_executed"],
+                paired_passer_torque_changed_substeps=int(
+                    np.any(
+                        base[1]["torque"][:common, :, a.ai] != cand[1]["torque"][:common, :, a.ai],
+                        axis=2,
+                    ).sum()
+                )
+                if tempo
+                else None,
             )
         )
     if digest(receipt) != source_hash or digest(scene) != args.scene_hash:
@@ -203,7 +232,12 @@ def main() -> None:
     write_once(
         args.output,
         dict(
-            status="PASSER_STRIKE_PAIRED_PHYSICAL_DIAGNOSIS_NOT_SUCCESS",
+            status=(
+                "PASSER_TEMPO_PAIRED_PHYSICAL_DIAGNOSIS_NOT_SUCCESS"
+                if tempo
+                else "PASSER_STRIKE_PAIRED_PHYSICAL_DIAGNOSIS_NOT_SUCCESS"
+            ),
+            tempo_reference_not_learned=tempo,
             source_hash=source_hash,
             source_head=args.expected_head,
             rows=rows,
