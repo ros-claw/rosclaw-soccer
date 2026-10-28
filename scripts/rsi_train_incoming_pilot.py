@@ -18,6 +18,10 @@ def main():
         p.add_argument("--" + key, required=True)
     p.add_argument("--motion-reference-root", type=Path)
     p.add_argument("--motion-reference-hash")
+    p.add_argument("--dev-reference-root", type=Path)
+    p.add_argument("--dev-reference-hash")
+    p.add_argument("--dev-incoming-root", type=Path)
+    p.add_argument("--dev-incoming-hash")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -34,6 +38,15 @@ def main():
         raise ValueError("exact source receipts required")
     qual, incoming = json.loads(qual_path.read_text()), json.loads(incoming_path.read_text())
     motion = a.motion_reference_root is not None
+    dev_args = (
+        a.dev_reference_root,
+        a.dev_reference_hash,
+        a.dev_incoming_root,
+        a.dev_incoming_hash,
+    )
+    expanded = all(dev_args)
+    if any(dev_args) and not expanded:
+        raise ValueError("all separate development evidence arguments are required together")
     motion_multi = False
     if motion != bool(a.motion_reference_hash):
         raise ValueError("motion reference requires an exact root and hash together")
@@ -70,6 +83,35 @@ def main():
         raise ValueError("completed experimental incoming probe required, not skill qualification")
     else:
         bank_hash = incoming["incoming_bank_hash"]
+    if expanded:
+        if (
+            not motion_multi
+            or incoming.get("lateral_study") is not True
+            or incoming.get("receive_window") != 60
+        ):
+            raise ValueError("expanded course requires 60-control multi-reference lateral source")
+        dev_ref_path = a.dev_reference_root / "complete.json"
+        dev_inc_path = a.dev_incoming_root / "complete.json"
+        if (
+            digest(dev_ref_path) != a.dev_reference_hash
+            or digest(dev_inc_path) != a.dev_incoming_hash
+        ):
+            raise ValueError("exact development receipts required")
+        dev_reference = json.loads(dev_ref_path.read_text())
+        dev_incoming = json.loads(dev_inc_path.read_text())
+        if (
+            dev_reference.get("status") != "MOTIONDECODE_TRAIN8_KINEMATIC_FK_NOT_TRACKED_SKILL"
+            or len(dev_reference.get("records", [])) != 8
+            or dev_reference.get("model_hash") != reference["model_hash"]
+            or dev_incoming.get("reference_hash") != a.dev_reference_hash
+            or dev_incoming.get("status") != "MOTIONDECODE_INCOMING_SINGLE_ACTOR_PROBE_NOT_SKILL"
+            or dev_incoming.get("lateral_study") is not True
+            or dev_incoming.get("receive_window") != 60
+            or dev_incoming.get("course_binding") != incoming.get("course_binding")
+            or {x["source_hash"] for x in dev_reference["records"]}
+            & {x["source_hash"] for x in reference["records"]}
+        ):
+            raise ValueError("same course protocol and distinct development source clips required")
     bank_path = a.incoming_root / "incoming-bank.npz"
     pins = {
         **qual["input_file_hashes"],
@@ -88,6 +130,12 @@ def main():
                 ]
         else:
             pins[str(a.motion_reference_root / "reference.npz")] = reference["raw_hash"]
+    if expanded:
+        pins[str(dev_ref_path)] = a.dev_reference_hash
+        pins[str(dev_inc_path)] = a.dev_incoming_hash
+        pins[str(a.dev_incoming_root / "incoming-bank.npz")] = dev_incoming["bank_hash"]
+        for i, record in enumerate(dev_reference["records"]):
+            pins[str(a.dev_reference_root / f"reference-{i:02d}.npz")] = record["reference_hash"]
     check_pins(pins)
 
     def pinned(suffix):
@@ -161,6 +209,18 @@ def main():
             with np.load(path, allow_pickle=False) as z:
                 plans.append({k: z[k].copy() for k in z.files})
         refs = load_body_references(a.reference_root, model, layout, plans)
+    if expanded:
+        with np.load(a.dev_incoming_root / "incoming-bank.npz", allow_pickle=False) as z:
+            dev_bank = {k: z[k].copy() for k in z.files}
+        dev_plans, dev_refs = [], []
+        for i in range(8):
+            with np.load(a.dev_reference_root / f"reference-{i:02d}.npz", allow_pickle=False) as z:
+                dev_plans.append(
+                    {k.removeprefix("plan_"): z[k].copy() for k in z.files if k.startswith("plan_")}
+                )
+                dev_refs.append(
+                    {k.removeprefix("body_"): z[k].copy() for k in z.files if k.startswith("body_")}
+                )
     actor = VelocityPriorActor.from_onnx(
         onnx, expected_hash=pins[str(onnx)], reference_features=79
     ).cuda()
@@ -179,33 +239,35 @@ def main():
         ]
     )
 
-    def make_course():
+    def make_course(*, development=False):
         return NativeContactCourse(
             model=model,
             params=params,
-            bank=bank,
-            plans=plans,
-            body_references=refs,
-            worlds=8,
+            bank=dev_bank if development and expanded else bank,
+            plans=dev_plans if development and expanded else plans,
+            body_references=dev_refs if development and expanded else refs,
+            worlds=32 if expanded else 8,
             lead=10,
-            threads=2,
+            threads=8 if expanded else 2,
             receive_reward=True,
-            receive_window=40,
+            receive_window=60 if expanded else 40,
         )
 
     a.output.mkdir()
     write_once(
         a.output / "declaration.json",
         dict(
-            protocol="incoming40-ppo-pilot-v1",
+            protocol="incoming60-diverse-ppo-pilot-v1" if expanded else "incoming40-ppo-pilot-v1",
             source_head=a.expected_head,
             source_receipts=[a.qualification_hash, a.incoming_hash],
             input_file_hashes=pins,
             seed=7923,
-            worlds=8,
-            training_episodes=6,
+            worlds=32 if expanded else 8,
+            training_episodes=12 if expanded else 6,
             critic_warmup_episodes=2,
-            eval_episode_index=7,
+            eval_episode_index=0 if expanded else 7,
+            distinct_dev_clip_files=expanded,
+            training_course_repeated_states=expanded,
             kick_derived_motion_reference=not motion,
             motiondecode_reference=motion,
             motion_reference_hash=a.motion_reference_hash,
@@ -226,7 +288,7 @@ def main():
     env = make_course()
     histories, stats, updates = [], [], 0
     try:
-        for episode in range(6):
+        for episode in range(12 if expanded else 6):
             env.reset()
             history = []
             while not env.ended.all():
@@ -258,7 +320,7 @@ def main():
                 raw["terminated"],
                 raw["truncated"],
                 raw["valid"],
-                maximum_controls=40,
+                maximum_controls=60 if expanded else 40,
             )
             mask = raw["valid"].reshape(-1)
             values = dict(
@@ -375,11 +437,11 @@ def main():
         )
         evaluations = {}
         for label, evaluated_actor in (("parent", policy.baseline), ("candidate", policy.actor)):
-            exam = make_course()
+            exam = make_course(development=expanded)
             try:
-                exam.episode = 6
+                exam.episode = -1 if expanded else 6
                 exam.reset()
-                if any(np.intersect1d(exam.index, x).size for x in histories):
+                if not expanded and any(np.intersect1d(exam.index, x).size for x in histories):
                     raise ValueError("development evaluation source indices overlap training")
                 rows = []
                 while not exam.ended.all():
