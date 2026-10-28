@@ -24,6 +24,7 @@ def main() -> None:
     for name in ("continuation-head", "parent-head", "expected-head"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--wait-unit")
+    p.add_argument("--block", type=int, choices=(0, 1, 2), default=0)
     p.add_argument("--timeout-sec", type=int, default=7200)
     a = p.parse_args()
     clean(a.expected_head)
@@ -80,7 +81,7 @@ def main() -> None:
         ah = digest(audit)
         data, _, sh = report(source, audit, ah, status, worlds=16)
         dec = json.loads((source / "declaration.json").read_text())
-        if data["source_head"] != head or dec.get("development_context_block") != 0:
+        if data["source_head"] != head or dec.get("development_context_block") != a.block:
             raise ValueError("exact fixed developmental pilot producers required")
         entries = {
             (
@@ -163,6 +164,7 @@ def main() -> None:
             status="RECEIVER_CONTINUATION_MATCHED_DEVELOPMENT_COMPARISON",
             source_head=a.expected_head,
             conditions=8,
+            development_context_block=a.block,
             summary=summary,
             records=rows,
             independent_fresh_contexts=False,
