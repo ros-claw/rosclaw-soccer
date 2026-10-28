@@ -24,10 +24,13 @@ def main():
     p.add_argument("--motion-reference", type=Path)
     p.add_argument("--motion-reference-receipt", type=Path)
     p.add_argument("--motion-reference-receipt-hash")
+    p.add_argument("--reference-ball-initial-velocity", action="store_true")
     p.add_argument("--ankle-roll-reference", action="store_true")
     p.add_argument("--motor-pilot", type=Path)
     p.add_argument("--motor-pilot-hash")
     a = p.parse_args()
+    if a.reference_ball_initial_velocity and a.motion_reference_receipt is None:
+        p.error("moving-ball research initialisation requires a derived reference receipt")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
@@ -173,7 +176,14 @@ def main():
             ),
             reference_contact_is_not_actual_contact=True,
             reference_joint_positions_are_not_executed_targets=True,
-            initial_velocity="zero_author_reset_convention",
+            initial_velocity="reference_ball_linear_body_and_ball_angular_zero"
+            if a.reference_ball_initial_velocity
+            else "zero_author_reset_convention",
+            initial_ball_linear_velocity_mps=(
+                motion["object_lin_vel_w"][0].tolist()
+                if a.reference_ball_initial_velocity and motion is not None
+                else [0.0, 0.0, 0.0]
+            ),
             direct_approach_reference=a.direct_approach_reference,
             ankle_roll_reference=a.ankle_roll_reference,
             motor_plan=asdict(motor_plan) if motor_plan else None,
@@ -245,6 +255,11 @@ def main():
         data.qpos[lo.bq : lo.bq + 3] = motion["object_pos_w"][0]
         data.qpos[lo.bq + 2] = max(0.11, float(data.qpos[lo.bq + 2]))
         data.qpos[lo.bq + 3 : lo.bq + 7] = motion["object_quat_w"][0]
+        if a.reference_ball_initial_velocity:
+            initial_velocity = motion["object_lin_vel_w"][0]
+            if not np.isfinite(initial_velocity).all() or np.linalg.norm(initial_velocity) > 5:
+                raise ValueError("bounded finite reference ball linear velocity required")
+            data.qvel[lo.bv : lo.bv + 3] = initial_velocity
     mujoco.mj_forward(model, data)
     order = policy.lab2mj
     params = NativePDParameters(
@@ -388,6 +403,7 @@ def main():
             motor_nomination_hash=a.motor_pilot_hash,
             reference_source="CFgen" if motion is None else "NPZmotion",
             motion_source=str(motion_source) if motion_source else None,
+            reference_ball_initial_velocity=a.reference_ball_initial_velocity,
             controls=world.control_steps,
             native_steps=world.native_steps,
             new_neural_calls=len(captured_obs),
