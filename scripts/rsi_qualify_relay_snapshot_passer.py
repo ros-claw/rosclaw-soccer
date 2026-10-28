@@ -50,6 +50,15 @@ def expanded_probe_end_control(handoff: dict | None) -> int:
     return min(178, control)
 
 
+def probe_amplitude(frame: int) -> float:
+    """One smooth finite-duration perturbation; never repeat after control 178."""
+    if type(frame) is not int or frame < 140:
+        raise ValueError("control must be at or after the snapshot")
+    if frame >= 178:
+        return 0.0
+    return float(np.sin(np.pi * (frame - 140) / 38.0) ** 2)
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     for key in ("source", "snapshots", "frontier", "role-proof", "output"):
@@ -68,6 +77,7 @@ def main() -> None:
     p.add_argument("--selector-receipt", type=Path)
     p.add_argument("--selector-receipt-hash")
     p.add_argument("--nondefault", action="store_true")
+    p.add_argument("--long-probe", action="store_true")
     p.add_argument("--dynamic-boundary", action="store_true")
     p.add_argument("--with-shadow", action="store_true")
     p.add_argument("--return-handoff", action="store_true")
@@ -86,9 +96,20 @@ def main() -> None:
         a.nondefault != (a.expanded_velocity_proof is not None)
         or a.nondefault != (a.expanded_velocity_proof_hash is not None)
         or (a.nondefault and a.selector_receipt is not None)
-        or (a.nondefault and probe is not None and a.dynamic_boundary)
+        or (a.nondefault and probe is not None and a.dynamic_boundary and not a.long_probe)
     ):
         raise ValueError("expanded zero-only proof requires exact expanded receiver inference")
+    if a.long_probe and not (
+        a.nondefault
+        and probe is not None
+        and np.any(probe)
+        and a.dynamic_boundary
+        and a.with_shadow
+        and a.return_handoff
+        and a.smooth_transition
+        and not a.passer_follow_return
+    ):
+        raise ValueError("long probe requires bounded intervention and complete causal handoff")
     if a.dynamic_boundary and not a.nondefault:
         raise ValueError("dynamic boundary qualification requires expanded source bank")
     if a.with_shadow and not a.nondefault:
@@ -240,7 +261,7 @@ def main() -> None:
         row = by_index[item["index"]]
         # Expanded physical probes stop before the actual historical role
         # handoff; differing horizons are retained as censored evidence.
-        if a.nondefault and probe is not None:
+        if a.nondefault and probe is not None and not a.long_probe:
             end_control = expanded_probe_end_control(row["handoff"])
         else:
             end_control = 300 if a.dynamic_boundary else 160 if a.nondefault else 178
@@ -471,7 +492,7 @@ def main() -> None:
                 view = PlayerObservationView(scratch, "a/")
                 if shadow is not None:
                     shadow_trace = shadow.observe()
-                    if any(
+                    if validate_original and any(
                         not np.array_equal(shadow_trace[k], shadow_data[k][frame])
                         for k in shadow_trace
                     ):
@@ -535,7 +556,7 @@ def main() -> None:
                 ):
                     raise ValueError(f"restored own live policy history differs at {frame}")
                 if case_probe is not None:
-                    amplitude = float(np.sin(np.pi * (frame - 140) / 38.0) ** 2)
+                    amplitude = probe_amplitude(frame)
                     receiver_action, receiver_target = receiver_counterfactual_residual(
                         receiver_action, case_probe, velocity_policy.params, amplitude=amplitude
                     )
@@ -581,7 +602,7 @@ def main() -> None:
                     if validate_original and not a.dynamic_boundary:
                         raise ValueError("baseline body failure before fixed comparison horizon")
                     break
-            if a.dynamic_boundary:
+            if a.dynamic_boundary and validate_original:
                 source_handoff = None if row["handoff"] is None else row["handoff"]["control"]
                 if (
                     (ready and scratch.control_steps != source_handoff)
@@ -602,11 +623,17 @@ def main() -> None:
             detector_deltas = []
             if a.return_handoff and ready:
                 return_path = bind(root, row, "receiver_return_nn")
-                if return_path is None or shadow is None:
+                if (return_path is None and not a.long_probe) or shadow is None:
                     raise ValueError("own recorded return actor and live shadow required")
-                with np.load(return_path, allow_pickle=False) as return_data:
+                with (
+                    np.load(return_path, allow_pickle=False)
+                    if return_path is not None
+                    else nullcontext(None) as return_data
+                ):
                     goal = receiving_target_for_player(scratch, "a/")
-                    if not np.array_equal(goal, np.asarray(row["handoff"]["return_goal"])):
+                    if validate_original and not np.array_equal(
+                        goal, np.asarray(row["handoff"]["return_goal"])
+                    ):
                         raise ValueError("actual own return goal must match original boundary")
                     scratch.switch_pd_profile("b/", NativePDParameters(ep.kp, ep.kd, ep.effort))
                     receiver = shadow.handoff(goal=goal, carry_memory=True)
@@ -773,7 +800,10 @@ def main() -> None:
                         or scratch.control_steps != len(physics["qpos"])
                     ):
                         raise ValueError("actual return-phase termination differs")
-                if digest(return_path) != row["artifacts"]["receiver_return_nn"]["hash"]:
+                if (
+                    return_path is not None
+                    and digest(return_path) != row["artifacts"]["receiver_return_nn"]["hash"]
+                ):
                     raise ValueError("original return actor trace changed")
         if (
             digest(snap) != item["snapshot_hash"]
@@ -807,7 +837,8 @@ def main() -> None:
                 return_controls=return_controls,
                 receiver_velocity_controls=len(executed_actions),
                 selector_class=selection,
-                own_shadow_verified=a.with_shadow,
+                own_shadow_verified=a.with_shadow and validate_original,
+                own_shadow_initialized_at_snapshot=a.with_shadow,
                 passer_follow_controls=len(follow_controls),
             )
         )
@@ -879,7 +910,9 @@ def main() -> None:
         a.output / "complete.json",
         dict(
             status=(
-                "RELAY_PASSER_FOLLOW_TEACHER_PHYSICAL_CANDIDATE_NOT_SUCCESS"
+                "RELAY_LONG_PROBE_CAUSAL_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS"
+                if a.long_probe
+                else "RELAY_PASSER_FOLLOW_TEACHER_PHYSICAL_CANDIDATE_NOT_SUCCESS"
                 if a.passer_follow_return
                 else "RELAY_NONDEFAULT_SMOOTH_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS"
                 if a.smooth_transition
@@ -915,6 +948,7 @@ def main() -> None:
             causal_receiving_boundary_reconstructed=a.dynamic_boundary,
             own_return_handoff_reconstructed=a.return_handoff and not a.smooth_transition,
             smooth_transition=a.smooth_transition,
+            long_probe=a.long_probe,
             smooth_transition_duration=a.smooth_transition_duration
             if a.smooth_transition
             else None,
@@ -927,7 +961,7 @@ def main() -> None:
                 else None
             ),
             passer_follow_history_initialized_from_target=a.passer_follow_return,
-            own_shadow_recurrence_verified=a.with_shadow,
+            own_shadow_recurrence_verified=a.with_shadow and validate_original,
             coupled_physics_continuation_verified=all(
                 r["coupled_native_substeps_exact"] for r in rows
             ),
