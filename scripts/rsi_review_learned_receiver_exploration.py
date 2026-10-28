@@ -3,6 +3,8 @@
 import argparse
 import json
 import math
+import subprocess
+import time
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +18,7 @@ from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_fresh_common import clean
 from scripts.rsi_review_relay_balance_counterfactual import bind, measured, report
 from scripts.rsi_review_whole_receiver_identity import artifact_equal, handoff_equal
+from scripts.rsi_watch_passer_residual_pair import worker_ready
 
 
 def main() -> None:
@@ -24,10 +27,50 @@ def main() -> None:
         p.add_argument("--" + name, type=Path, required=True)
     for name in ("exploration-head", "parent-head", "expected-head"):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--wait-unit")
+    p.add_argument("--timeout-sec", type=int, default=7200)
     a = p.parse_args()
     clean(a.expected_head)
-    if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
+    if (
+        a.output.exists()
+        or a.output.resolve().is_relative_to(Path.cwd())
+        or not 1 <= a.timeout_sec <= 7200
+        or a.wait_unit is not None
+        and (
+            not a.wait_unit.startswith("rosclaw-receiver-learned-exploration-")
+            or not a.wait_unit.endswith(".service")
+            or "/" in a.wait_unit
+        )
+    ):
         raise ValueError("unused external output required")
+    if a.wait_unit:
+        deadline = time.monotonic() + a.timeout_sec
+        while True:
+            result = subprocess.run(
+                [
+                    "systemctl",
+                    "--user",
+                    "show",
+                    a.wait_unit,
+                    "-p",
+                    "LoadState",
+                    "-p",
+                    "ActiveState",
+                    "-p",
+                    "Result",
+                    "-p",
+                    "ExecMainStatus",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            state = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+            if worker_ready(a.exploration, state):
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError("physical exploration did not complete; do not restart it")
+            time.sleep(15)
     roots = (a.exploration / "source", a.parent / "source")
     audits = (a.exploration / "audit/complete.json", a.parent / "audit/complete.json")
     audit_hashes = tuple(map(digest, audits))
