@@ -3,6 +3,7 @@ import pytest
 
 from rosclaw_soccer.rsi.receiving_progress_reward import (
     decompose_proximity_change,
+    receiver_motion_progress_rewards,
     receiving_progress_rewards,
 )
 
@@ -53,3 +54,17 @@ def test_decomposition_rejects_nonfinite_or_misaligned_history():
         decompose_proximity_change(np.zeros((2, 2)), np.zeros((1, 2)))
     with pytest.raises(ValueError):
         decompose_proximity_change(np.full((2, 2), np.nan), np.zeros((2, 2)))
+
+
+def test_ball_approaching_stationary_receiver_does_not_create_motion_reward():
+    receiver = np.zeros((3, 2))
+    ball = np.array([[3.0, 0.0], [2.0, 0.0], [1.0, 0.0]])
+    forces = np.zeros((3, 10, 3))
+    failed = np.zeros(3, dtype=bool)
+    np.testing.assert_allclose(receiver_motion_progress_rewards(receiver, ball, forces, failed), 0)
+    forces[2, 0, 0] = 11
+    forces[2, 1, 2] = 2
+    failed[2] = True
+    np.testing.assert_allclose(
+        receiver_motion_progress_rewards(receiver, ball, forces, failed), [0, 0, -5]
+    )

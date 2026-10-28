@@ -8,7 +8,10 @@ import mujoco
 import numpy as np
 
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
-from rosclaw_soccer.rsi.receiving_progress_reward import receiving_progress_rewards
+from rosclaw_soccer.rsi.receiving_progress_reward import (
+    receiver_motion_progress_rewards,
+    receiving_progress_rewards,
+)
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_fresh_common import clean
@@ -17,6 +20,7 @@ from scripts.rsi_review_relay_balance_counterfactual import bind, report
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--receiver-motion-only", action="store_true")
     p.add_argument("--pair", nargs=2, action="append", required=True, metavar=("SOURCE", "AUDIT"))
     for name in ("dataset", "dataset-audit", "review", "output"):
         p.add_argument("--" + name, type=Path, required=True)
@@ -136,7 +140,12 @@ def main() -> None:
             )
             forces = raw["ball_forces"][:n, :, 1, :].copy()
             failed = raw["body_failed"][:n, 1].copy()
-            dense = receiving_progress_rewards(receiver, ball, forces, failed)
+            reward_fn = (
+                receiver_motion_progress_rewards
+                if a.receiver_motion_only
+                else receiving_progress_rewards
+            )
+            dense = reward_fn(receiver, ball, forces, failed)
             strict = ep["rewards"].copy()
         target = a.output / f"episode-{i:02d}.npz"
         np.savez_compressed(
@@ -177,7 +186,12 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="RECEIVER_DENSE_PHYSICAL_FEEDBACK_EXPORTED_NOT_TRAINED",
+            status="RECEIVER_MOTION_PHYSICAL_FEEDBACK_EXPORTED_NOT_TRAINED"
+            if a.receiver_motion_only
+            else "RECEIVER_DENSE_PHYSICAL_FEEDBACK_EXPORTED_NOT_TRAINED",
+            reward_profile="receiver-motion-kinematic-v2"
+            if a.receiver_motion_only
+            else "combined-distance-v1",
             source_head=a.expected_head,
             dataset_hash=a.dataset_hash,
             dataset_audit_hash=a.dataset_audit_hash,

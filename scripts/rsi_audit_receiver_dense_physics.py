@@ -16,6 +16,7 @@ from scripts.rsi_review_relay_balance_counterfactual import bind
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--receiver-motion-only", action="store_true")
     p.add_argument("--source", type=Path, action="append", required=True)
     for name in ("dense", "original", "output"):
         p.add_argument("--" + name, type=Path, required=True)
@@ -34,7 +35,12 @@ def main() -> None:
         raise ValueError("three sources, pinned data, unused external output required")
     dense, original = json.loads(dp.read_text()), json.loads(op.read_text())
     if (
-        dense.get("status") != "RECEIVER_DENSE_PHYSICAL_FEEDBACK_EXPORTED_NOT_TRAINED"
+        dense.get("status")
+        != (
+            "RECEIVER_MOTION_PHYSICAL_FEEDBACK_EXPORTED_NOT_TRAINED"
+            if a.receiver_motion_only
+            else "RECEIVER_DENSE_PHYSICAL_FEEDBACK_EXPORTED_NOT_TRAINED"
+        )
         or dense.get("dataset_hash") != a.original_hash
         or dense.get("episodes") != 72
         or original.get("episodes") != 72
@@ -97,7 +103,13 @@ def main() -> None:
                 raise ValueError("native post-control states or strict reward differ")
             distance = np.minimum(np.sqrt(((receiver - ball) ** 2).sum(axis=1)), 4.0)
             expected = np.zeros(n, dtype=np.float64)
-            expected[1:] = distance[:-1] - distance[1:]
+            if a.receiver_motion_only:
+                held_ball_distance = np.minimum(
+                    np.sqrt(((receiver[1:] - ball[:-1]) ** 2).sum(axis=1)), 4.0
+                )
+                expected[1:] = distance[:-1] - held_ball_distance
+            else:
+                expected[1:] = distance[:-1] - distance[1:]
             foot = np.flatnonzero((force[:, :, :2] > 10).any(axis=(1, 2)))
             nonfoot = np.flatnonzero((force[:, :, 2] > 1).any(axis=1))
             falls = np.flatnonzero(failed)
@@ -124,7 +136,12 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="RECEIVER_DENSE_FEEDBACK_INDEPENDENTLY_RECOMPUTED_NOT_TRAINED",
+            status="RECEIVER_MOTION_FEEDBACK_INDEPENDENTLY_RECOMPUTED_NOT_TRAINED"
+            if a.receiver_motion_only
+            else "RECEIVER_DENSE_FEEDBACK_INDEPENDENTLY_RECOMPUTED_NOT_TRAINED",
+            reward_profile="receiver-motion-kinematic-v2"
+            if a.receiver_motion_only
+            else "combined-distance-v1",
             source_head=a.expected_head,
             dense_hash=a.dense_hash,
             original_hash=a.original_hash,

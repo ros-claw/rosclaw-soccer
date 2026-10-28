@@ -85,3 +85,21 @@ def receiving_progress_rewards(
     if len(failures):
         rewards[failures[0]] -= 5.0
     return rewards.astype(np.float32)
+
+
+def receiver_motion_progress_rewards(
+    receiver_xy: np.ndarray,
+    ball_xy: np.ndarray,
+    ball_forces: np.ndarray,
+    body_failed: np.ndarray,
+) -> np.ndarray:
+    """Remove measured ball-motion component from undiscounted dense feedback.
+
+    Foot, nonfoot, and fall events are unchanged. This receiver-first
+    decomposition remains an order-dependent kinematic proxy, not a causal
+    credit assignment or evidence of safe/clean contact. Strict task
+    outcomes must be evaluated independently.
+    """
+    combined = receiving_progress_rewards(receiver_xy, ball_xy, ball_forces, body_failed)
+    parts = decompose_proximity_change(receiver_xy, ball_xy)
+    return (combined.astype(np.float64) - parts["ball_motion"]).astype(np.float32)
