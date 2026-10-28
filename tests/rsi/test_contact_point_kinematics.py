@@ -26,6 +26,17 @@ def test_relative_point_velocity_uses_both_body_twists():
     assert result["normal_speed_abs_mps"] == pytest.approx(2.0)
     assert result["tangent_speed_mps"] == pytest.approx(1.0)
     assert result["force_reconstructed"] is False
+    data.qvel[11] = 1.0
+    mujoco.mj_forward(model, data)
+    spinning = contact_point_relative_velocity(
+        model,
+        data,
+        np.array([0.1, 0, 1.0]),
+        np.array([1.0, 0, 0]),
+        int(model.body("ball").id),
+        int(model.body("player").id),
+    )
+    assert spinning["relative_velocity_world_mps"] == pytest.approx([-2.0, 0.9, 0.0])
     with pytest.raises(ValueError, match="contact point"):
         contact_point_relative_velocity(
             model,
