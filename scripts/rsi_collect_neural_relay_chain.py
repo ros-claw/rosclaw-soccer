@@ -28,6 +28,7 @@ def main():
     p.add_argument("--receiver-center-curriculum", action="store_true")
     p.add_argument("--receiver-learned-pair", action="store_true")
     p.add_argument("--receiver-dense-pair", action="store_true")
+    p.add_argument("--receiver-motion-pair", action="store_true")
     p.add_argument("--passer-residual-pair", action="store_true")
     p.add_argument("--precontact-fullbody-pair", action="store_true")
     p.add_argument("--precontact-smooth", action="store_true")
@@ -52,6 +53,8 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.receiver_motion_pair and not a.receiver_dense_pair:
+        p.error("motion candidate requires explicit dense-pair evaluation")
     if a.receiver_dense_pair and not a.receiver_learned_pair:
         p.error("dense research candidate requires the isolated learned pair")
     if a.precontact_smooth and not a.precontact_fullbody_pair:
@@ -405,6 +408,8 @@ def main():
                 if a.passer_contact_exit
                 else "soccer.neural_relay_passer_residual_pair.development.v11"
                 if a.passer_residual_pair
+                else "soccer.neural_relay_receiver_motion_pair.development.v18"
+                if a.receiver_motion_pair
                 else "soccer.neural_relay_receiver_dense_pair.development.v17"
                 if a.receiver_dense_pair
                 else "soccer.neural_relay_receiver_learned_pair.development.v10"
@@ -560,6 +565,7 @@ def main():
                 a.receiver_dataset,
                 a.receiver_dataset_hash,
                 dense_mode=a.receiver_dense_pair,
+                motion_mode=a.receiver_motion_pair,
             )
             if a.receiver_learned_pair
             else None
@@ -1074,6 +1080,8 @@ def main():
                     if a.passer_contact_exit
                     else "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY"
                     if a.passer_residual_pair
+                    else "NEURAL_RELAY_RECEIVER_MOTION_PAIR16_PENDING_OWN_REPLAY"
+                    if a.receiver_motion_pair
                     else "NEURAL_RELAY_RECEIVER_DENSE_PAIR16_PENDING_OWN_REPLAY"
                     if a.receiver_dense_pair
                     else "NEURAL_RELAY_RECEIVER_LEARNED_PAIR16_PENDING_OWN_REPLAY"

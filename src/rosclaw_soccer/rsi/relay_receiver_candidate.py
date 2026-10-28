@@ -19,8 +19,13 @@ def load_research_receiver(
     dataset_hash: str,
     *,
     dense_mode: bool = False,
+    motion_mode: bool = False,
 ):
-    if type(dense_mode) is not bool:
+    if (
+        type(dense_mode) is not bool
+        or type(motion_mode) is not bool
+        or (motion_mode and not dense_mode)
+    ):
         raise ValueError("explicit simulation research protocol required")
     for path, expected in (
         (checkpoint, checkpoint_hash),
@@ -34,7 +39,9 @@ def load_research_receiver(
     if (
         review.get("status")
         != (
-            "DENSE_RECEIVER_CANDIDATE_READBACK_MATCH"
+            "MOTION_RECEIVER_CANDIDATE_READBACK_MATCH"
+            if motion_mode
+            else "DENSE_RECEIVER_CANDIDATE_READBACK_MATCH"
             if dense_mode
             else "RECEIVER_OFFLINE_CANDIDATE_READBACK_MATCH"
         )
@@ -67,6 +74,13 @@ def load_research_receiver(
         or state.get("hardware_authorized") is not False
         or state.get("physical_retention_proven") is not False
         or (dense_mode and state.get("dense_audit_hash") != review.get("dense_audit_hash"))
+        or (
+            motion_mode
+            and (
+                state.get("feedback_profile") != "receiver-motion-kinematic-v2"
+                or review.get("feedback_profile") != "receiver-motion-kinematic-v2"
+            )
+        )
     ):
         raise ValueError("unpromoted SIM research checkpoint required")
     actor = zero_receiver_actor(setup)
