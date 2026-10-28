@@ -32,6 +32,7 @@ def main() -> None:
     ):
         p.add_argument("--" + name, required=True)
     p.add_argument("--seed", type=int, choices=(92401, 92402, 92403), required=True)
+    p.add_argument("--receiver-motion-only", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     paths = (
@@ -53,9 +54,26 @@ def main() -> None:
         data.get("status") != "RECEIVER_ONPOLICY_PHYSICAL_EPISODES_NOT_TRAINED"
         or data.get("reward_profile") != "center-strict-full-history-v1"
         or data.get("episodes") != 72
-        or dense.get("status") != "RECEIVER_DENSE_PHYSICAL_FEEDBACK_EXPORTED_NOT_TRAINED"
+        or dense.get("status")
+        != (
+            "RECEIVER_MOTION_PHYSICAL_FEEDBACK_EXPORTED_NOT_TRAINED"
+            if a.receiver_motion_only
+            else "RECEIVER_DENSE_PHYSICAL_FEEDBACK_EXPORTED_NOT_TRAINED"
+        )
         or dense.get("dataset_hash") != a.dataset_hash
-        or audit.get("status") != "RECEIVER_DENSE_FEEDBACK_INDEPENDENTLY_RECOMPUTED_NOT_TRAINED"
+        or audit.get("status")
+        != (
+            "RECEIVER_MOTION_FEEDBACK_INDEPENDENTLY_RECOMPUTED_NOT_TRAINED"
+            if a.receiver_motion_only
+            else "RECEIVER_DENSE_FEEDBACK_INDEPENDENTLY_RECOMPUTED_NOT_TRAINED"
+        )
+        or (
+            a.receiver_motion_only
+            and (
+                dense.get("reward_profile") != "receiver-motion-kinematic-v2"
+                or audit.get("reward_profile") != "receiver-motion-kinematic-v2"
+            )
+        )
         or audit.get("dense_hash") != a.dense_hash
         or audit.get("original_hash") != a.dataset_hash
         or audit.get("episodes") != 72
@@ -195,6 +213,9 @@ def main() -> None:
             dataset_hash=a.dataset_hash,
             dense_hash=a.dense_hash,
             dense_audit_hash=a.dense_audit_hash,
+            feedback_profile="receiver-motion-kinematic-v2"
+            if a.receiver_motion_only
+            else "combined-distance-v1",
             physical_retention_proven=False,
             promotion_authorized=False,
             hardware_authorized=False,
@@ -204,13 +225,24 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="DENSE_RECEIVER_OFFLINE_CANDIDATE"
+            status=(
+                "MOTION_RECEIVER_OFFLINE_CANDIDATE"
+                if a.receiver_motion_only
+                else "DENSE_RECEIVER_OFFLINE_CANDIDATE"
+            )
             if result["accepted"]
-            else "DENSE_RECEIVER_OFFLINE_REJECTED",
+            else (
+                "MOTION_RECEIVER_OFFLINE_REJECTED"
+                if a.receiver_motion_only
+                else "DENSE_RECEIVER_OFFLINE_REJECTED"
+            ),
             source_head=a.expected_head,
             dataset_hash=a.dataset_hash,
             dense_hash=a.dense_hash,
             dense_audit_hash=a.dense_audit_hash,
+            feedback_profile="receiver-motion-kinematic-v2"
+            if a.receiver_motion_only
+            else "combined-distance-v1",
             checkpoint_hash=digest(checkpoint),
             seed=a.seed,
             sampled_controls=18903,

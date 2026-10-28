@@ -32,6 +32,7 @@ def main() -> None:
     ):
         p.add_argument("--" + name, required=True)
     p.add_argument("--seed", type=int, choices=(92401, 92402, 92403), required=True)
+    p.add_argument("--receiver-motion-only", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     dp, ap, tp = (x / "complete.json" for x in (a.dataset, a.admission, a.training))
@@ -50,7 +51,12 @@ def main() -> None:
     data, admission, training, audit = [json.loads(p.read_text()) for p, _ in pins]
     checkpoint, anchors = a.training / "research-candidate.pt", a.admission / "healthy-anchors.npz"
     if (
-        training.get("status") != "DENSE_RECEIVER_OFFLINE_CANDIDATE"
+        training.get("status")
+        != (
+            "MOTION_RECEIVER_OFFLINE_CANDIDATE"
+            if a.receiver_motion_only
+            else "DENSE_RECEIVER_OFFLINE_CANDIDATE"
+        )
         or training.get("source_head") != a.producer_head
         or training.get("dataset_hash") != a.dataset_hash
         or training.get("dense_audit_hash") != a.dense_audit_hash
@@ -58,7 +64,19 @@ def main() -> None:
         or training.get("actor_updates") != 1
         or training.get("critic_updates") != 3
         or training.get("strict_positive_conditions") != 0
-        or audit.get("status") != "RECEIVER_DENSE_FEEDBACK_INDEPENDENTLY_RECOMPUTED_NOT_TRAINED"
+        or audit.get("status")
+        != (
+            "RECEIVER_MOTION_FEEDBACK_INDEPENDENTLY_RECOMPUTED_NOT_TRAINED"
+            if a.receiver_motion_only
+            else "RECEIVER_DENSE_FEEDBACK_INDEPENDENTLY_RECOMPUTED_NOT_TRAINED"
+        )
+        or (
+            a.receiver_motion_only
+            and (
+                training.get("feedback_profile") != "receiver-motion-kinematic-v2"
+                or audit.get("reward_profile") != "receiver-motion-kinematic-v2"
+            )
+        )
         or audit.get("original_hash") != a.dataset_hash
         or audit.get("dense_hash") != training.get("dense_hash")
         or data.get("episodes") != 72
@@ -92,6 +110,10 @@ def main() -> None:
         or state.get("dense_hash") != training["dense_hash"]
         or state.get("dense_audit_hash") != a.dense_audit_hash
         or state.get("seed") != a.seed
+        or (
+            a.receiver_motion_only
+            and state.get("feedback_profile") != "receiver-motion-kinematic-v2"
+        )
         or any(
             state.get(k) is not False
             for k in ("physical_retention_proven", "promotion_authorized", "hardware_authorized")
@@ -177,7 +199,12 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="DENSE_RECEIVER_CANDIDATE_READBACK_MATCH",
+            status="MOTION_RECEIVER_CANDIDATE_READBACK_MATCH"
+            if a.receiver_motion_only
+            else "DENSE_RECEIVER_CANDIDATE_READBACK_MATCH",
+            feedback_profile="receiver-motion-kinematic-v2"
+            if a.receiver_motion_only
+            else "combined-distance-v1",
             source_head=a.expected_head,
             producer_head=a.producer_head,
             training_hash=a.training_hash,
