@@ -34,3 +34,15 @@ def test_invalid_history_and_goal_fail_closed():
     args["pass_goal"][:2] = 0
     with pytest.raises(ValueError):
         restored_receiving_role(**args)
+
+
+def test_nondefault_role_offset_is_explicit_but_initial_anchor_stays_fixed():
+    args = state()
+    fixed = restored_receiving_role(**args, lateral_offset_m=-0.35)
+    assert fixed.target_xy == (4.0, 0.12)
+    args["past_ball_velocities"][0, 0] = 1.0
+    left = restored_receiving_role(**args, lateral_offset_m=-0.35)
+    right = restored_receiving_role(**args, lateral_offset_m=0.35)
+    assert left.target_xy[1] == -0.35 and right.target_xy[1] == 0.35
+    with pytest.raises(ValueError):
+        restored_receiving_role(**args, lateral_offset_m=0.41)

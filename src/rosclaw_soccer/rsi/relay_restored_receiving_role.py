@@ -13,6 +13,7 @@ def restored_receiving_role(
     current_q: np.ndarray,
     current_v: np.ndarray,
     past_ball_velocities: np.ndarray,
+    lateral_offset_m: float = 0.12,
 ):
     arrays = (
         (initial_ball, (2,)),
@@ -36,6 +37,9 @@ def restored_receiving_role(
         or past_ball_velocities.dtype != np.float64
         or not np.isfinite(past_ball_velocities).all()
         or abs(np.linalg.norm(current_q[3:7]) - 1) > 1e-5
+        or type(lateral_offset_m) is not float
+        or not np.isfinite(lateral_offset_m)
+        or abs(lateral_offset_m) > 0.4
     ):
         raise ValueError(
             "finite actual own state and completed causal ball-velocity history required"
@@ -46,6 +50,8 @@ def restored_receiving_role(
         raise ValueError("nondegenerate actual pass direction required")
     forward = forward / length
     lateral = np.array([-forward[1], forward[0]])
+    # The recorded shared setup's ready anchor remains fixed at +0.12m;
+    # the course's interception offset is a separate, explicit role input.
     anchor = initial_ball + 4 * forward + 0.12 * lateral
     seen = bool(np.any(past_ball_velocities @ forward > 0.4))
     qw, x, y, z = current_q[3:7]
@@ -59,5 +65,5 @@ def restored_receiving_role(
         pass_direction=forward,
         launch_seen=seen,
         ready_anchor_xy=anchor,
-        lateral_offset_m=0.12,
+        lateral_offset_m=lateral_offset_m,
     )
