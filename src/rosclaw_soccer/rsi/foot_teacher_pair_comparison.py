@@ -49,11 +49,29 @@ def compare_foot_teacher_reviews(old: dict, new: dict) -> dict:
         if a[key]["baseline"] != b[key]["baseline"]:
             raise ValueError("same zero-teacher physical baseline required")
         rows.append(dict(context=key[0], side=key[1], old=a[key]["teacher"], new=b[key]["teacher"]))
+
+    def foot_first_after_pass(row):
+        outcome = row["outcome"]
+        passer = outcome["actual_passer_foot_substep"]
+        foot = outcome["actual_receiver_foot_substep"]
+        nonfoot = outcome["receiver_nonfoot_substep"]
+        for index in (passer, foot, nonfoot):
+            if index is not None and (type(index) is not int or index < 0):
+                raise ValueError("actual nonnegative contact substeps required")
+        return bool(
+            passer is not None
+            and foot is not None
+            and passer < foot
+            and (nonfoot is None or foot < nonfoot)
+        )
+
     metrics = {
         "strict_clean": lambda x: x["outcome"]["strict_both_clean_handoff"],
         "healthy": lambda x: x["outcome"]["both_bodies_healthy"],
         "precise": lambda x: x["precise_healthy_return"],
         "slew_violation": lambda x: x["slew_exceeding_controls"] > 0,
+        "receiver_foot_first_after_pass": foot_first_after_pass,
+        "receiver_nonfoot_contact": lambda x: x["outcome"]["receiver_nonfoot_substep"] is not None,
     }
     summary = {}
     for name, metric in metrics.items():
