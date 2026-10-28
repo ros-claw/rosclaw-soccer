@@ -23,6 +23,9 @@ def main():
     p.add_argument("--dev-incoming-root", type=Path)
     p.add_argument("--dev-incoming-hash")
     p.add_argument("--train-target-rate-filter", action="store_true")
+    p.add_argument("--resume-checkpoint", type=Path)
+    p.add_argument("--resume-hash")
+    p.add_argument("--stop-after-episode", type=int)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -46,6 +49,11 @@ def main():
         a.dev_incoming_hash,
     )
     expanded = all(dev_args)
+    episode_count = 12 if expanded else 6
+    if bool(a.resume_checkpoint) != bool(a.resume_hash):
+        raise ValueError("resume requires a checkpoint and its exact hash")
+    if a.stop_after_episode is not None and not 1 <= a.stop_after_episode < episode_count:
+        raise ValueError("stop-after-episode must be a completed prefix, not a full run")
     if any(dev_args) and not expanded:
         raise ValueError("all separate development evidence arguments are required together")
     if a.train_target_rate_filter and not expanded:
@@ -163,6 +171,7 @@ def main():
     from rosclaw_soccer.rsi.native_target_rate_filter import limit_target_rate
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
+    from scripts.rsi_incoming_checkpoint import restore_checkpoint, save_checkpoint
     from scripts.rsi_native_course_inputs import load_body_references
 
     torch.set_num_threads(1)
@@ -291,12 +300,42 @@ def main():
             independent_fresh_exam=False,
             hardware_authorized=False,
             promotion_authorized=False,
+            resume_checkpoint_hash=a.resume_hash,
+            stop_after_episode=a.stop_after_episode,
         ),
     )
     env = make_course()
     histories, stats, updates = [], [], 0
+    commitment = dict(
+        source_head=a.expected_head,
+        input_file_hashes=pins,
+        train_target_rate_filter=a.train_target_rate_filter,
+        expanded=expanded,
+        seed=7923,
+        torch_version=str(torch.__version__),
+        cuda_version=str(torch.version.cuda),
+        device_name=torch.cuda.get_device_name(0),
+        mujoco_version=mujoco.__version__,
+    )
     try:
-        for episode in range(12 if expanded else 6):
+        first_episode = 0
+        if a.resume_checkpoint:
+            state = restore_checkpoint(
+                a.resume_checkpoint,
+                a.resume_hash,
+                policy=policy,
+                optimizer=optimizer,
+                commitment=commitment,
+            )
+            first_episode = state["next_episode"]
+            if first_episode >= episode_count or (
+                a.stop_after_episode is not None and a.stop_after_episode <= first_episode
+            ):
+                raise ValueError("resume must advance within declared episode count")
+            stats, updates = state["stats"], state["updates"]
+            histories = [np.asarray(x, dtype=np.int64) for x in state["histories"]]
+            env.episode = first_episode - 1
+        for episode in range(first_episode, episode_count):
             env.reset()
             history = []
             while not env.ended.all():
@@ -434,9 +473,36 @@ def main():
                     optimizer_updates=updates,
                     update_metrics=update_metrics,
                     raw_hash=digest(file),
+                    raw_path=str(file.resolve()),
                 )
             )
             histories.append(env.index.copy())
+            check_pins(pins)
+            checkpoint_file = a.output / f"episode-{episode:02d}.pt"
+            checkpoint_hash = save_checkpoint(
+                checkpoint_file,
+                policy=policy,
+                optimizer=optimizer,
+                commitment=commitment,
+                episode=episode,
+                updates=updates,
+                stats=stats,
+                histories=histories,
+            )
+            if a.stop_after_episode == episode + 1:
+                write_once(
+                    a.output / "partial.json",
+                    dict(
+                        status="INCOMING_PPO_EPISODE_BOUNDARY_STOP_NOT_SKILL",
+                        checkpoint_path=str(checkpoint_file.resolve()),
+                        checkpoint_hash=checkpoint_hash,
+                        completed_episodes=episode + 1,
+                        source_head=a.expected_head,
+                        promotion_authorized=False,
+                        hardware_authorized=False,
+                    ),
+                )
+                return
         actor_changed = any(
             not torch.equal(v.detach().cpu(), original[k])
             for k, v in policy.actor.state_dict().items()
