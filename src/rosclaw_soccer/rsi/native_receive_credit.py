@@ -3,11 +3,28 @@
 import numpy as np
 
 
+def planar_ball_root_distance(ball: np.ndarray, root: np.ndarray) -> np.ndarray:
+    """Measured horizontal separation; both positions still must be valid 3-D."""
+    if (
+        not isinstance(ball, np.ndarray)
+        or not isinstance(root, np.ndarray)
+        or ball.ndim != 2
+        or ball.shape[1] != 3
+        or root.shape != ball.shape
+        or not np.isfinite(ball).all()
+        or not np.isfinite(root).all()
+    ):
+        raise ValueError("aligned finite measured 3-D ball and root positions required")
+    return np.linalg.norm(ball[:, :2] - root[:, :2], axis=1)
+
+
 class NativeReceiveCredit:
     """Count actual native contacts, never turn proximity alone into possession.
 
     Each call is one 20ms control with ten 2ms force samples. A capture credit
     requires 10 consecutive *post-contact* controls within the declared bounds.
+    Distance is horizontal ball-center to pelvis, not a 3-D distance that
+    would incorrectly penalize a standing robot for its own pelvis height.
     It is a shaping signal, not a match success or safety certification.
     """
 
@@ -21,9 +38,11 @@ class NativeReceiveCredit:
         self.capture_emitted = np.zeros(worlds, dtype=bool)
         self.stable_controls = np.zeros(worlds, dtype=np.int64)
 
-    def step(self, *, step, forces, active, ball_root_distance_m, relative_speed_mps, healthy):
+    def step(
+        self, *, step, forces, active, ball_root_planar_distance_m, relative_speed_mps, healthy
+    ):
         f, a, dist, speed, good = map(
-            np.asarray, (forces, active, ball_root_distance_m, relative_speed_mps, healthy)
+            np.asarray, (forces, active, ball_root_planar_distance_m, relative_speed_mps, healthy)
         )
         if (
             type(step) is not int

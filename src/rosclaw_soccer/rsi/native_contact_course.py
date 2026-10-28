@@ -17,7 +17,7 @@ from rosclaw_soccer.providers.g1.velocity_policy import target29
 from rosclaw_soccer.rsi.identity_kick_credit import IdentityKickCredit
 from rosclaw_soccer.rsi.native_course_tracking import NativeCourseTracking
 from rosclaw_soccer.rsi.native_physics_batch import NativePhysicsBatch
-from rosclaw_soccer.rsi.native_receive_credit import NativeReceiveCredit
+from rosclaw_soccer.rsi.native_receive_credit import NativeReceiveCredit, planar_ball_root_distance
 from rosclaw_soccer.rsi.native_reference_observation import native_reference_observation177
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 
@@ -264,10 +264,9 @@ class NativeContactCourse:
                     step=self.control,
                     forces=forces,
                     active=active,
-                    ball_root_distance_m=np.linalg.norm(
-                        qs[:, -1, self.layout.bq : self.layout.bq + 3]
-                        - qs[:, -1, self.layout.rq : self.layout.rq + 3],
-                        axis=1,
+                    ball_root_planar_distance_m=planar_ball_root_distance(
+                        qs[:, -1, self.layout.bq : self.layout.bq + 3],
+                        qs[:, -1, self.layout.rq : self.layout.rq + 3],
                     ),
                     relative_speed_mps=np.linalg.norm(
                         vs[:, -1, self.layout.bv : self.layout.bv + 3]

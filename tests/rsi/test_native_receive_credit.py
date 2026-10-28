@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.native_receive_credit import NativeReceiveCredit
+from rosclaw_soccer.rsi.native_receive_credit import NativeReceiveCredit, planar_ball_root_distance
 
 
 def step(credit, t, f, *, active=None, distance=None, speed=None, healthy=None):
@@ -10,7 +10,7 @@ def step(credit, t, f, *, active=None, distance=None, speed=None, healthy=None):
         step=t,
         forces=f,
         active=np.ones(n, bool) if active is None else active,
-        ball_root_distance_m=np.full(n, 0.4) if distance is None else distance,
+        ball_root_planar_distance_m=np.full(n, 0.4) if distance is None else distance,
         relative_speed_mps=np.full(n, 0.2) if speed is None else speed,
         healthy=np.ones(n, bool) if healthy is None else healthy,
     )
@@ -26,6 +26,16 @@ def test_true_foot_then_ten_controls_once_not_proximity_only():
         assert r["sustained_capture"][1] == 0
         assert r["sustained_capture"][0] == (1 if t == 12 else 0)
         f[:] = 0
+
+
+def test_standing_pelvis_height_is_not_added_to_planar_capture_distance():
+    ball = np.array([[0.3, 0.4, 0.11]])
+    root = np.array([[0, 0, 0.78]])
+    assert np.linalg.norm(ball - root) > 0.65
+    assert planar_ball_root_distance(ball, root)[0] == pytest.approx(0.5)
+    ball[0, 2] = np.nan
+    with pytest.raises(ValueError, match="finite measured"):
+        planar_ball_root_distance(ball, root)
 
 
 def test_nonfoot_before_or_simultaneous_invalidates_and_inactive_freezes():
