@@ -94,3 +94,60 @@ def selector_class(observation: np.ndarray, weights: dict[str, np.ndarray]) -> i
     if not np.isfinite(logits).all():
         raise ValueError("finite selector logits required")
     return int(np.argmax(logits))
+
+
+def group_holdout_validation(
+    observations: np.ndarray, labels: np.ndarray, groups: np.ndarray, *, steps: int
+) -> dict:
+    """Refit preprocessing and network on other groups for each held-out group."""
+    if (
+        type(observations) is not np.ndarray
+        or observations.ndim != 2
+        or observations.shape[1] != 98
+        or observations.dtype != np.float32
+        or not np.isfinite(observations).all()
+        or type(labels) is not np.ndarray
+        or labels.dtype != np.int64
+        or labels.shape != (len(observations),)
+        or (labels < 0).any()
+        or (labels > 2).any()
+        or type(groups) is not np.ndarray
+        or groups.dtype != np.int64
+        or groups.ndim != 1
+        or groups.shape != labels.shape
+        or len(np.unique(groups)) < 2
+        or len(np.unique(groups)) > 32
+    ):
+        raise ValueError("explicit multiple held-out context groups required")
+    folds = []
+    for group in np.unique(groups):
+        train, test = groups != group, groups == group
+        if train.sum() < 2 or test.sum() < 1:
+            raise ValueError("nonempty context-separated training and evaluation required")
+        weights, _ = train_context_selector(
+            observations[train], labels[train], seed=1234, steps=steps
+        )
+        prediction = [selector_class(row, weights) for row in observations[test]]
+        truth = labels[test].tolist()
+        folds.append(
+            dict(
+                group=int(group),
+                train_rows=int(train.sum()),
+                test_rows=int(test.sum()),
+                predictions=prediction,
+                labels=truth,
+                correct=sum(a == b for a, b in zip(prediction, truth, strict=True)),
+            )
+        )
+    total = sum(f["test_rows"] for f in folds)
+    return dict(
+        status="GROUPED_SELECTOR_OFFLINE_VALIDATION_NOT_PHYSICAL_SUCCESS",
+        folds=folds,
+        accuracy=sum(f["correct"] for f in folds) / total,
+        always_neutral_accuracy=float(np.mean(labels == 0)),
+        held_out_contexts_excluded_from_fold_training=True,
+        physical_rollout=False,
+        promotion_authorized=False,
+        hardware_authorized=False,
+        goal_complete=False,
+    )
