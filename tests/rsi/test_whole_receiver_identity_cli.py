@@ -102,3 +102,33 @@ def test_exploration_without_identity_proof_fails_before_allocation(tmp_path):
     assert result.returncode != 0
     assert "exact identity review" in result.stderr
     assert not (tmp_path / "out").exists()
+
+
+def test_center_exploration_without_identity_proof_fails_before_allocation(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
+            "--frontier-root",
+            str(tmp_path / "frontier"),
+            "--frontier-head",
+            "head",
+            "--frontier-hash",
+            "hash",
+            "--expected-head",
+            "head",
+            "--output",
+            str(tmp_path / "out"),
+            "--new-context-block",
+            "0",
+            "--receiver-center-curriculum",
+            "--receiver-exploration",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "exact identity review" in result.stderr
+    assert not (tmp_path / "out").exists()

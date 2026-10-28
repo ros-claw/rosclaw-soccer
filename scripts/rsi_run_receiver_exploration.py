@@ -24,6 +24,7 @@ def main() -> None:
     ):
         p.add_argument("--" + name, required=True)
     p.add_argument("--new-context-block", type=int, choices=(0, 1, 2), required=True)
+    p.add_argument("--receiver-center-curriculum", action="store_true")
     p.add_argument("--timeout-sec", type=int, default=43200)
     a = p.parse_args()
     clean(a.expected_head)
@@ -31,7 +32,9 @@ def main() -> None:
         a.output.exists()
         or a.output.resolve().is_relative_to(Path.cwd())
         or not 1 <= a.timeout_sec <= 43200
-        or not a.identity_unit.startswith("rosclaw-team-")
+        or not a.identity_unit.startswith(
+            "rosclaw-receiver-center-" if a.receiver_center_curriculum else "rosclaw-team-"
+        )
         or not a.identity_unit.endswith(".service")
         or "/" in a.identity_unit
     ):
@@ -70,12 +73,24 @@ def main() -> None:
     review_hash = digest(a.identity_review)
     review = json.loads(a.identity_review.read_text())
     if (
-        review.get("status") != "RELAY_WHOLE_RECEIVER_ZERO_IDENTITY_QUALIFIED"
+        review.get("status")
+        != (
+            "CENTER_RECEIVER_IDENTITY_REVIEWED"
+            if a.receiver_center_curriculum
+            else "RELAY_WHOLE_RECEIVER_ZERO_IDENTITY_QUALIFIED"
+        )
         or review.get("source_head") != a.identity_review_head
         or review.get("conditions") != 24
         or len(review.get("records", [])) != 24
         or review.get("identity_passed") is not True
-        or review.get("own_physics_and_neural_replay_complete") is not True
+        or (
+            not a.receiver_center_curriculum
+            and review.get("own_physics_and_neural_replay_complete") is not True
+        )
+        or (
+            a.receiver_center_curriculum
+            and any(r.get("identity_exact") is not True for r in review.get("records", []))
+        )
         or any(
             review.get(k) is not False
             for k in ("trained", "promotion_authorized", "hardware_authorized")
@@ -87,7 +102,8 @@ def main() -> None:
     subprocess.run(
         [
             sys.executable,
-            "scripts/rsi_collect_neural_relay_chain.py",
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
             "--frontier-root",
             str(a.frontier_root),
             "--frontier-head",
@@ -97,6 +113,7 @@ def main() -> None:
             "--new-context-block",
             str(a.new_context_block),
             "--receiver-exploration",
+            *(["--receiver-center-curriculum"] if a.receiver_center_curriculum else []),
             "--identity-review",
             str(a.identity_review),
             "--identity-review-hash",
@@ -114,7 +131,8 @@ def main() -> None:
     subprocess.run(
         [
             sys.executable,
-            "scripts/rsi_audit_neural_relay_chain.py",
+            "-m",
+            "scripts.rsi_audit_neural_relay_chain",
             "--source-root",
             str(source),
             "--source-head",

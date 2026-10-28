@@ -31,7 +31,13 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
-    exploration = dec["protocol"] == "soccer.neural_relay_receiver_exploration.development.v9"
+    center_exploration = (
+        dec["protocol"] == "soccer.neural_relay_receiver_center_exploration.development.v14"
+    )
+    exploration = (
+        center_exploration
+        or dec["protocol"] == "soccer.neural_relay_receiver_exploration.development.v9"
+    )
     learned_pair = dec["protocol"] == "soccer.neural_relay_receiver_learned_pair.development.v10"
     contact_exit = dec["protocol"] == "soccer.neural_relay_passer_contact_exit.development.v12"
     passer_pair = (
@@ -73,7 +79,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_RECEIVER_CENTER_IDENTITY16_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_RECEIVER_CENTER_EXPLORATION32_PENDING_OWN_REPLAY"
+        if center_exploration
+        else "NEURAL_RELAY_RECEIVER_CENTER_IDENTITY16_PENDING_OWN_REPLAY"
         if center_identity
         else "NEURAL_RELAY_PASSER_CONTACT_EXIT16_PENDING_OWN_REPLAY"
         if contact_exit
@@ -118,6 +126,7 @@ def main():
             "soccer.neural_relay_passer_residual_pair.development.v11",
             "soccer.neural_relay_passer_contact_exit.development.v12",
             "soccer.neural_relay_receiver_center_identity.development.v13",
+            "soccer.neural_relay_receiver_center_exploration.development.v14",
         )
         or len(s["records"]) != expected_worlds
         or len(dec["courses"]) != expected_worlds
@@ -207,12 +216,14 @@ def main():
         )
         sides = (
             (-0.2, 0.2)
-            if center_identity
+            if center_identity or center_exploration
             else (-0.75, -0.35, 0.35, 0.75)
             if balance_expanded
             else (-0.55, 0.55)
         )
-        if center_identity and dec.get("receiver_lateral_offsets_m") != list(sides):
+        if (center_identity or center_exploration) and dec.get(
+            "receiver_lateral_offsets_m"
+        ) != list(sides):
             raise ValueError("exact center curriculum offsets required")
         if exploration and (
             dec.get("receiver_exploration_is_stochastic_not_training") is not True
@@ -279,12 +290,24 @@ def main():
             raise ValueError("exact pinned zero identity review required")
         identity = json.loads(review.read_text())
         if (
-            identity.get("status") != "RELAY_WHOLE_RECEIVER_ZERO_IDENTITY_QUALIFIED"
+            identity.get("status")
+            != (
+                "CENTER_RECEIVER_IDENTITY_REVIEWED"
+                if center_exploration
+                else "RELAY_WHOLE_RECEIVER_ZERO_IDENTITY_QUALIFIED"
+            )
             or identity.get("source_head") != dec.get("identity_review_head")
             or identity.get("conditions") != 24
             or len(identity.get("records", [])) != 24
             or identity.get("identity_passed") is not True
-            or identity.get("own_physics_and_neural_replay_complete") is not True
+            or (
+                not center_exploration
+                and identity.get("own_physics_and_neural_replay_complete") is not True
+            )
+            or (
+                center_exploration
+                and any(r.get("identity_exact") is not True for r in identity.get("records", []))
+            )
             or any(
                 identity.get(k) is not False
                 for k in ("trained", "promotion_authorized", "hardware_authorized")

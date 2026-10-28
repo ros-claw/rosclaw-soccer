@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from rosclaw_soccer.rsi.passer_curriculum_outcome import strict_pass_receive
 from rosclaw_soccer.rsi.relay_follow_comparison import pair_metrics
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
@@ -29,6 +30,7 @@ def main() -> None:
     p.add_argument("--identity-producer-head", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--receiver-center-curriculum", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if (
@@ -41,10 +43,25 @@ def main() -> None:
         raise ValueError("three exact paired studies and qualified identity required")
     identity = json.loads(a.identity_review.read_text())
     if (
-        identity.get("status") != "RELAY_WHOLE_RECEIVER_ZERO_IDENTITY_QUALIFIED"
+        identity.get("status")
+        != (
+            "CENTER_RECEIVER_IDENTITY_REVIEWED"
+            if a.receiver_center_curriculum
+            else "RELAY_WHOLE_RECEIVER_ZERO_IDENTITY_QUALIFIED"
+        )
         or identity.get("identity_passed") is not True
+        or (
+            a.receiver_center_curriculum and identity.get("source_head") != a.identity_producer_head
+        )
         or identity.get("conditions") != 24
-        or identity.get("own_physics_and_neural_replay_complete") is not True
+        or (
+            not a.receiver_center_curriculum
+            and identity.get("own_physics_and_neural_replay_complete") is not True
+        )
+        or (
+            a.receiver_center_curriculum
+            and any(r.get("identity_exact") is not True for r in identity.get("records", []))
+        )
         or any(
             identity.get(k) is not False
             for k in ("trained", "promotion_authorized", "hardware_authorized")
@@ -66,10 +83,22 @@ def main() -> None:
         blocks.add(block)
         ah, ih = digest(own), digest(old_own)
         source, _, sh = report(
-            root, own, ah, "NEURAL_RELAY_RECEIVER_EXPLORATION32_PENDING_OWN_REPLAY", worlds=32
+            root,
+            own,
+            ah,
+            "NEURAL_RELAY_RECEIVER_CENTER_EXPLORATION32_PENDING_OWN_REPLAY"
+            if a.receiver_center_curriculum
+            else "NEURAL_RELAY_RECEIVER_EXPLORATION32_PENDING_OWN_REPLAY",
+            worlds=32,
         )
         prior, _, ph = report(
-            old, old_own, ih, "NEURAL_RELAY_WHOLE_RECEIVER_IDENTITY16_PENDING_OWN_REPLAY", worlds=16
+            old,
+            old_own,
+            ih,
+            "NEURAL_RELAY_RECEIVER_CENTER_IDENTITY16_PENDING_OWN_REPLAY"
+            if a.receiver_center_curriculum
+            else "NEURAL_RELAY_WHOLE_RECEIVER_IDENTITY16_PENDING_OWN_REPLAY",
+            worlds=16,
         )
         if (
             source["source_head"] != a.producer_head
@@ -142,6 +171,15 @@ def main() -> None:
                             "every declared stochastic action must be actually sampled"
                         )
                 new_metrics = measured(root, candidate)
+                physical = bind(root, candidate, "physics")
+                if physical is None:
+                    raise ValueError("actual full physical contact history required")
+                with np.load(physical, allow_pickle=False) as f:
+                    clean_outcome = strict_pass_receive(
+                        f["ball_forces"],
+                        f["body_failed"],
+                        handoff=candidate["result"]["handoff_executed"],
+                    )
                 rows.append(
                     dict(
                         block=block,
@@ -153,6 +191,7 @@ def main() -> None:
                         baseline=old_metrics,
                         candidate=new_metrics,
                         changes=pair_metrics(old_metrics, new_metrics),
+                        physical_clean_outcome=clean_outcome,
                     )
                 )
         frozen.extend(
@@ -182,6 +221,9 @@ def main() -> None:
         counts["candidate_handoffs"] = sum(r["candidate"]["handoff"] for r in subset)
         counts["candidate_precise_healthy_returns"] = sum(
             r["candidate"]["return_0p1m_and_healthy"] for r in subset
+        )
+        counts["strict_both_clean_handoffs"] = sum(
+            r["physical_clean_outcome"]["strict_both_clean_handoff"] for r in subset
         )
         summaries[str(seed)] = counts
     clean(a.expected_head)

@@ -43,7 +43,8 @@ def test_failed_sample_replay_cannot_launch_review(monkeypatch, tmp_path):
     def run(cmd, **_kwargs):
         calls.append(cmd)
         return SimpleNamespace(
-            returncode=0, stdout="ActiveState=failed\nResult=exit-code\nExecMainStatus=1\n"
+            returncode=0,
+            stdout="LoadState=loaded\nActiveState=failed\nResult=exit-code\nExecMainStatus=1\n",
         )
 
     monkeypatch.setattr(watch.subprocess, "run", run)

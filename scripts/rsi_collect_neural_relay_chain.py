@@ -51,8 +51,8 @@ def main():
     a = p.parse_args()
     if a.passer_contact_exit and not a.passer_residual_pair:
         p.error("contact-exit is only defined for the isolated passer pair")
-    if a.receiver_center_curriculum and not a.receiver_whole_identity:
-        p.error("center curriculum requires the receiver identity pair")
+    if a.receiver_center_curriculum and not (a.receiver_whole_identity or a.receiver_exploration):
+        p.error("center curriculum requires the receiver identity pair or audited exploration")
     if a.passer_residual_pair and (
         a.new_context_block is None
         or a.balance_teacher_pair is not None
@@ -174,12 +174,24 @@ def main():
             raise ValueError("exact independent whole-receiver identity review required")
         identity = json.loads(a.identity_review.read_text())
         if (
-            identity.get("status") != "RELAY_WHOLE_RECEIVER_ZERO_IDENTITY_QUALIFIED"
+            identity.get("status")
+            != (
+                "CENTER_RECEIVER_IDENTITY_REVIEWED"
+                if a.receiver_center_curriculum
+                else "RELAY_WHOLE_RECEIVER_ZERO_IDENTITY_QUALIFIED"
+            )
             or identity.get("source_head") != a.identity_review_head
             or identity.get("conditions") != 24
             or len(identity.get("records", [])) != 24
             or identity.get("identity_passed") is not True
-            or identity.get("own_physics_and_neural_replay_complete") is not True
+            or (
+                not a.receiver_center_curriculum
+                and identity.get("own_physics_and_neural_replay_complete") is not True
+            )
+            or (
+                a.receiver_center_curriculum
+                and any(r.get("identity_exact") is not True for r in identity.get("records", []))
+            )
             or any(
                 identity.get(k) is not False
                 for k in ("trained", "promotion_authorized", "hardware_authorized")
@@ -349,7 +361,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_receiver_center_identity.development.v13"
+                "soccer.neural_relay_receiver_center_exploration.development.v14"
+                if a.receiver_center_curriculum and a.receiver_exploration
+                else "soccer.neural_relay_receiver_center_identity.development.v13"
                 if a.receiver_center_curriculum
                 else "soccer.neural_relay_passer_contact_exit.development.v12"
                 if a.passer_contact_exit
@@ -958,7 +972,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_RECEIVER_CENTER_IDENTITY16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_RECEIVER_CENTER_EXPLORATION32_PENDING_OWN_REPLAY"
+                    if a.receiver_center_curriculum and a.receiver_exploration
+                    else "NEURAL_RELAY_RECEIVER_CENTER_IDENTITY16_PENDING_OWN_REPLAY"
                     if a.receiver_center_curriculum
                     else "NEURAL_RELAY_PASSER_CONTACT_EXIT16_PENDING_OWN_REPLAY"
                     if a.passer_contact_exit
