@@ -16,6 +16,7 @@ from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_
 from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
+from rosclaw_soccer.rsi.oof_receiver_probe import select_oof_probe
 from rosclaw_soccer.rsi.receiver_contextual_selector import selector_class
 from rosclaw_soccer.rsi.receiver_counterfactual_residual import receiver_counterfactual_residual
 from rosclaw_soccer.rsi.receiver_transition_blend import receiver_transition_action
@@ -77,6 +78,9 @@ def main() -> None:
     p.add_argument("--probe-leg-rad", type=float, nargs=12)
     p.add_argument("--selector-receipt", type=Path)
     p.add_argument("--selector-receipt-hash")
+    p.add_argument("--risk-receipt", type=Path)
+    p.add_argument("--risk-receipt-hash")
+    p.add_argument("--risk-variant", choices=("proprioception_only", "ball_augmented"))
     p.add_argument("--nondefault", action="store_true")
     p.add_argument("--long-probe", action="store_true")
     p.add_argument("--dynamic-boundary", action="store_true")
@@ -111,6 +115,33 @@ def main() -> None:
         and not a.passer_follow_return
     ):
         raise ValueError("long probe requires bounded intervention and complete causal handoff")
+    if (
+        len(
+            {
+                a.risk_receipt is not None,
+                a.risk_receipt_hash is not None,
+                a.risk_variant is not None,
+            }
+        )
+        != 1
+    ):
+        raise ValueError("explicitly bind receipt, hash and research risk variant together")
+    risk = None
+    if a.risk_receipt is not None:
+        if (
+            not a.long_probe
+            or a.selector_receipt is not None
+            or not np.array_equal(
+                probe,
+                np.asarray(
+                    [0, 0.08546, 0, 0.020332, -0.064212, 0, 0, -0.08546, 0, 0.020332, -0.064212, 0]
+                ),
+            )
+            or a.risk_receipt.is_symlink()
+            or digest(a.risk_receipt) != a.risk_receipt_hash
+        ):
+            raise ValueError("exact bounded c3 out-of-fold SIM experiment required")
+        risk = json.loads(a.risk_receipt.read_text())
     if a.dynamic_boundary and not a.nondefault:
         raise ValueError("dynamic boundary qualification requires expanded source bank")
     if a.with_shadow and not a.nondefault:
@@ -411,6 +442,7 @@ def main() -> None:
             ):
                 raise ValueError("receiver own inference differs at restored boundary")
             selection = None
+            risk_probability = None
             case_probe = probe
             if selector_weights is not None:
                 selection = selector_class(receiver_obs, selector_weights)
@@ -418,6 +450,18 @@ def main() -> None:
                 case_probe = np.asarray(
                     [0.0, 0.0, 0.0, knee, -0.5 * knee, 0.0] * 2, dtype=np.float64
                 )
+            if risk is not None:
+                selection, risk_probability = select_oof_probe(
+                    risk,
+                    snapshot_hash=a.snapshot_hash,
+                    index=item["index"],
+                    context=item["context"],
+                    observation=receiver_obs,
+                    q=receiver_q,
+                    v=receiver_v,
+                    variant=a.risk_variant,
+                )
+                case_probe = probe if selection else None
             validate_original = case_probe is None or not np.any(case_probe)
             vp = velocity_policy.params
             scratch = restored_scratch_world(
@@ -845,6 +889,7 @@ def main() -> None:
                 return_controls=return_controls,
                 receiver_velocity_controls=len(executed_actions),
                 selector_class=selection,
+                risk_probability=risk_probability,
                 own_shadow_verified=a.with_shadow and validate_original,
                 own_shadow_initialized_at_snapshot=a.with_shadow,
                 passer_follow_controls=len(follow_controls),
@@ -895,6 +940,7 @@ def main() -> None:
         or digest(audit) != a.audit_hash
         or digest(scene) != snaps["scene_hash"]
         or digest(a.role_proof) != a.role_proof_hash
+        or (risk is not None and digest(a.risk_receipt) != a.risk_receipt_hash)
         or (a.nondefault and digest(a.expanded_velocity_proof) != a.expanded_velocity_proof_hash)
         or (
             a.selector_receipt is not None
@@ -918,7 +964,9 @@ def main() -> None:
         a.output / "complete.json",
         dict(
             status=(
-                "RELAY_LONG_PROBE_CAUSAL_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS"
+                "RELAY_OOF_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS"
+                if risk is not None
+                else "RELAY_LONG_PROBE_CAUSAL_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS"
                 if a.long_probe
                 else "RELAY_PASSER_FOLLOW_TEACHER_PHYSICAL_CANDIDATE_NOT_SUCCESS"
                 if a.passer_follow_return
@@ -976,6 +1024,8 @@ def main() -> None:
             native_steps=sum(row["consecutive_controls"] for row in rows) * 10,
             probe_leg_rad=None if probe is None else probe.tolist(),
             selector_receipt_hash=a.selector_receipt_hash,
+            risk_receipt_hash=a.risk_receipt_hash,
+            risk_variant=a.risk_variant,
             probe_action_is_actual_history=probe is not None or selector_weights is not None,
             optimizer_updates=0,
             independent_fresh=False,

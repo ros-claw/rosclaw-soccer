@@ -20,6 +20,8 @@ def main() -> None:
         parser.add_argument("--" + key, type=Path, required=True)
     for key in ("baseline-hash", "candidate-hash", "snapshot-hash", "expected-head"):
         parser.add_argument("--" + key, required=True)
+    parser.add_argument("--risk-receipt", type=Path)
+    parser.add_argument("--risk-receipt-hash")
     args = parser.parse_args()
     clean(args.expected_head)
     inputs = (
@@ -34,10 +36,28 @@ def main() -> None:
     ):
         raise ValueError("pinned receipts and new external output required")
     baseline, candidate, snapshots = (json.loads(path.read_text()) for path, _ in inputs)
+    risk_mode = candidate.get("status") == "RELAY_OOF_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS"
+    if risk_mode != (args.risk_receipt is not None) or risk_mode != (
+        args.risk_receipt_hash is not None
+    ):
+        raise ValueError("explicit source risk model receipt required for OOF comparison")
+    risk = None
+    if risk_mode:
+        if (
+            args.risk_receipt.is_symlink()
+            or digest(args.risk_receipt) != args.risk_receipt_hash
+            or candidate.get("risk_receipt_hash") != args.risk_receipt_hash
+            or candidate.get("risk_variant") not in ("ball_augmented", "proprioception_only")
+        ):
+            raise ValueError("exact candidate-bound OOF receipt required")
+        risk = json.loads(args.risk_receipt.read_text())
     if (
         baseline.get("status") != "RELAY_NONDEFAULT_SMOOTH_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS"
         or candidate.get("status")
-        != "RELAY_LONG_PROBE_CAUSAL_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS"
+        not in (
+            "RELAY_LONG_PROBE_CAUSAL_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS",
+            "RELAY_OOF_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS",
+        )
         or baseline.get("smooth_transition_duration") != 10
         or candidate.get("smooth_transition_duration") != 10
         or baseline.get("snapshot_hash") != args.snapshot_hash
@@ -84,6 +104,21 @@ def main() -> None:
     layout = dict(ball_q=native.bq, ball_v=native.bv, receiver_q=native.rq, receiver_v=native.rv)
     rows = []
     for index in sorted(b):
+        if risk is not None:
+            identities = risk["identities"]
+            matches = [
+                i
+                for i, item in enumerate(identities)
+                if (item["snapshot_hash"], item["index"], item["context"])
+                == (args.snapshot_hash, index, c[index]["context"])
+            ]
+            scores = risk[candidate["risk_variant"]]
+            if (
+                len(matches) != 1
+                or c[index]["selector_class"] != scores["predictions"][matches[0]]
+                or abs(c[index]["risk_probability"] - scores["probabilities"][matches[0]]) > 1e-6
+            ):
+                raise ValueError("actual causal model decision must match pinned OOF score")
         if any(
             b[index].get(k) != c[index].get(k) or b[index].get(k) != s[index].get(k)
             for k in ("context", "side", "receiver_lateral_offset_m")
@@ -127,6 +162,7 @@ def main() -> None:
                 context=b[index]["context"],
                 baseline_body_failure=b[index]["body_failure"],
                 candidate_body_failure=c[index]["body_failure"],
+                risk_selection=c[index].get("selector_class") if risk_mode else None,
                 baseline_ready=b[index]["receiving_ready"],
                 candidate_ready=c[index]["receiving_ready"],
                 **comparison,
@@ -135,6 +171,7 @@ def main() -> None:
     if (
         any(digest(path) != expected for path, expected in inputs)
         or digest(args.scene) != snapshots["scene_hash"]
+        or (risk_mode and digest(args.risk_receipt) != args.risk_receipt_hash)
     ):
         raise ValueError("pinned inputs changed during audit")
     clean(args.expected_head)
