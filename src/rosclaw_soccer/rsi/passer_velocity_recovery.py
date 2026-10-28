@@ -55,13 +55,22 @@ class PasserVelocityRecovery:
         self.pending = np.asarray(target, dtype=np.float64).copy()
         return self.pending.copy()
 
-    def commit(self) -> dict:
+    def commit(self, *, transition_target: np.ndarray | None = None) -> dict:
         if self.pending is None or self.world.control_steps != self.boundary + 1:
             raise ValueError("one physically advanced shared control required")
         actual = np.asarray(self.world.last_applied_target(self.prefix), dtype=np.float64)
         if actual.shape != (29,) or not np.isfinite(actual).all():
             raise ValueError("actual player target required")
-        if self.active:
+        if transition_target is not None and (
+            not self.active
+            or not isinstance(transition_target, np.ndarray)
+            or transition_target.shape != (29,)
+            or transition_target.dtype != np.float64
+            or not np.isfinite(transition_target).all()
+            or not np.array_equal(actual, transition_target)
+        ):
+            raise ValueError("active transition must match its actual declared applied target")
+        if self.active and transition_target is None:
             if not np.array_equal(actual, self.pending):
                 raise ValueError("active velocity candidate must be the applied target")
         else:

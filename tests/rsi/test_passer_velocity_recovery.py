@@ -82,6 +82,20 @@ def test_active_proposal_must_be_the_real_applied_target():
         recovery.commit()
 
 
+def test_explicit_transition_encodes_the_actual_blended_target():
+    world, stream = World(), Stream()
+    recovery = PasserVelocityRecovery(world, "a/", stream)
+    recovery.activate(motion_complete=True, passer_foot_seen=True)
+    proposed = recovery.observe(np.zeros(3, np.float32))
+    world.actual = np.full(29, 0.1, dtype=np.float64)
+    world.control_steps += 1
+    with pytest.raises(ValueError):
+        recovery.commit(transition_target=proposed)
+    row = recovery.commit(transition_target=world.actual.copy())
+    assert row["active"]
+    np.testing.assert_allclose(stream.last_action, 0.1)
+
+
 def test_shadow_and_handoff_follow_one_real_shared_simulation_clock():
     import mujoco
     from test_shared_native_motor_world import world as fixture_world
@@ -104,6 +118,31 @@ def test_shadow_and_handoff_follow_one_real_shared_simulation_clock():
     world.advance({"a/": target, "b/": np.zeros(29)})
     assert recovery.commit()["active"]
     assert world.native_steps == 20 and stream.neural_calls == 2
+
+
+def test_two_live_candidates_blend_with_actual_memory_on_shared_clock():
+    import mujoco
+    from test_shared_native_motor_world import world as fixture_world
+
+    from rosclaw_soccer.rsi.live_neural_transition import blend_live_targets, quintic_weight
+
+    world, stream = fixture_world(), Stream()
+    recovery = PasserVelocityRecovery(world, "a/", stream)
+    old_pd = world.parameters["a/"].owned_copy()
+    new_pd = old_pd.owned_copy()
+    recovery.activate(motion_complete=True, passer_foot_seen=True)
+    for step in range(3):
+        mujoco.mj_forward(world.model, world.data)
+        incoming = recovery.observe(np.zeros(3, np.float32))
+        outgoing = np.full(29, 0.1 + step * 0.01)
+        target, profile = blend_live_targets(
+            outgoing, incoming, old_pd, new_pd, weight=quintic_weight(step, start=0, duration=2)
+        )
+        world.switch_pd_profile("a/", profile)
+        world.advance({"a/": target, "b/": np.zeros(29)})
+        recovery.commit(transition_target=target)
+        np.testing.assert_allclose(stream.last_action, target, atol=1e-7)
+    assert world.native_steps == 30 and stream.neural_calls == 3
 
 
 def test_physical_recovery_pilot_rejects_mixed_interventions_before_loading_assets():
