@@ -25,6 +25,7 @@ def main():
     p.add_argument("--balance-expanded", action="store_true")
     p.add_argument("--receiver-follow-study", action="store_true")
     p.add_argument("--receiver-lateral-authority", action="store_true")
+    p.add_argument("--receiver-longitudinal-authority", action="store_true")
     p.add_argument("--receiver-foot-teacher-pair", action="store_true")
     p.add_argument("--receiver-predictive-foot-shin", action="store_true")
     p.add_argument("--receiver-axis-local-fallback", action="store_true")
@@ -65,6 +66,8 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.receiver_longitudinal_authority and not a.receiver_lateral_authority:
+        p.error("longitudinal authority requires the isolated approach authority study")
     if a.passer_velocity_blend and not a.passer_velocity_recovery_pair:
         p.error("passer velocity blend requires the paired recovery study")
     if a.passer_velocity_recovery_pair and (
@@ -439,15 +442,28 @@ def main():
             for gain in (0.0, 0.25, 0.5, 0.75)
         ]
     if a.receiver_lateral_authority:
-        arms = [
-            dict(
-                start=80,
-                memory="own_shadow_carry",
-                reference_bridge_controls=0,
-                receiver_lateral_offset_m=offset,
-            )
-            for offset in (-0.35, -0.12, 0.12, 0.35)
-        ]
+        arms = (
+            [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_lateral_offset_m=0.12,
+                    receiver_longitudinal_offset_m=offset,
+                )
+                for offset in (0.1, 0.35, 0.6, 0.8)
+            ]
+            if a.receiver_longitudinal_authority
+            else [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_lateral_offset_m=offset,
+                )
+                for offset in (-0.35, -0.12, 0.12, 0.35)
+            ]
+        )
     if a.receiver_foot_teacher_pair:
         arms = [
             dict(
@@ -580,6 +596,8 @@ def main():
                 if a.passer_contact_exit
                 else "soccer.neural_relay_passer_residual_pair.development.v11"
                 if a.passer_residual_pair
+                else "soccer.neural_relay_receiver_longitudinal_authority.development.v32"
+                if a.receiver_longitudinal_authority
                 else "soccer.neural_relay_receiver_lateral_authority.development.v22"
                 if a.receiver_lateral_authority
                 else "soccer.neural_relay_receiver_continuation_pair.development.v21"
@@ -673,6 +691,7 @@ def main():
             geometry_role_selector_is_teacher=True,
             post_touch_velocity_follow_is_unlearned_teacher=a.receiver_follow_study,
             lateral_intercept_is_unlearned_teacher=a.receiver_lateral_authority,
+            longitudinal_intercept_is_unlearned_teacher=a.receiver_longitudinal_authority,
             whole_receiver_identity_not_trained=a.receiver_whole_identity,
             receiver_exploration_is_stochastic_not_training=(
                 a.receiver_exploration or a.receiver_learned_exploration
@@ -1143,6 +1162,9 @@ def main():
                         launch_seen=launch,
                         ready_anchor_xy=anchor,
                         lateral_offset_m=course["arm"].get("receiver_lateral_offset_m", 0.12),
+                        longitudinal_offset_m=course["arm"].get(
+                            "receiver_longitudinal_offset_m", 0.35
+                        ),
                     )
                     launch = intent.launch_seen
                     command = np.array(intent.command_body, np.float32)
@@ -1493,6 +1515,8 @@ def main():
                     if a.passer_contact_exit
                     else "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY"
                     if a.passer_residual_pair
+                    else "NEURAL_RELAY_RECEIVER_LONGITUDINAL_AUTHORITY32_PENDING_OWN_REPLAY"
+                    if a.receiver_longitudinal_authority
                     else "NEURAL_RELAY_RECEIVER_LATERAL_AUTHORITY32_PENDING_OWN_REPLAY"
                     if a.receiver_lateral_authority
                     else "NEURAL_RELAY_RECEIVER_CONTINUATION_PAIR16_PENDING_OWN_REPLAY"

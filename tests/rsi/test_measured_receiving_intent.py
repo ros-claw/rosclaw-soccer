@@ -53,6 +53,21 @@ def test_bounded_lateral_authority_changes_only_post_launch_intercept():
         receiving_intent(**s, lateral_offset_m=float("nan"))
 
 
+def test_longitudinal_authority_is_bounded_causal_and_preserves_default():
+    s = state()
+    assert receiving_intent(**s, longitudinal_offset_m=0.1) == receiving_intent(**s)
+    s.update(ball_xy=np.array([2.0, 0.0]), ball_velocity_xy=np.array([2.0, 0.0]))
+    old = receiving_intent(**s)
+    assert old == receiving_intent(**s, longitudinal_offset_m=0.35)
+    near = receiving_intent(**s, longitudinal_offset_m=0.1)
+    far = receiving_intent(**s, longitudinal_offset_m=0.7)
+    assert far.target_xy[0] - near.target_xy[0] == pytest.approx(0.6)
+    assert far.target_xy[1] == near.target_xy[1]
+    for invalid in (-0.01, 0.81, float("nan"), True):
+        with pytest.raises(ValueError):
+            receiving_intent(**s, longitudinal_offset_m=invalid)
+
+
 def test_backward_ball_does_not_fabricate_pass_and_nonfinite_rejected():
     s = state()
     s["ball_velocity_xy"] = np.array([-5.0, 0.0])

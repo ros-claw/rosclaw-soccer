@@ -6,6 +6,34 @@ import sys
 import pytest
 
 
+def test_longitudinal_study_requires_isolated_approach_protocol():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
+            "--frontier-root",
+            "/not-read",
+            "--frontier-head",
+            "unused",
+            "--frontier-hash",
+            "unused",
+            "--expected-head",
+            "unused",
+            "--output",
+            "/not-written",
+            "--new-context-block",
+            "0",
+            "--receiver-longitudinal-authority",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "longitudinal authority requires the isolated approach authority study" in result.stderr
+
+
 @pytest.mark.parametrize(
     "conflict",
     [

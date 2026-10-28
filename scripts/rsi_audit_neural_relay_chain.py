@@ -102,7 +102,10 @@ def main():
         or dec["protocol"] == "soccer.neural_relay_whole_receiver_identity.development.v8"
     )
     follow_study = dec["protocol"] == "soccer.neural_relay_post_touch_follow.development.v7"
-    lateral_authority = (
+    longitudinal_authority = (
+        dec["protocol"] == "soccer.neural_relay_receiver_longitudinal_authority.development.v32"
+    )
+    lateral_authority = longitudinal_authority or (
         dec["protocol"] == "soccer.neural_relay_receiver_lateral_authority.development.v22"
     )
     balance_expanded = dec["protocol"] == "soccer.neural_relay_balance_expanded.development.v6"
@@ -177,6 +180,8 @@ def main():
         if contact_exit
         else "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY"
         if passer_pair
+        else "NEURAL_RELAY_RECEIVER_LONGITUDINAL_AUTHORITY32_PENDING_OWN_REPLAY"
+        if longitudinal_authority
         else "NEURAL_RELAY_RECEIVER_LATERAL_AUTHORITY32_PENDING_OWN_REPLAY"
         if lateral_authority
         else "NEURAL_RELAY_RECEIVER_CONTINUATION_PAIR16_PENDING_OWN_REPLAY"
@@ -229,6 +234,7 @@ def main():
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
             "soccer.neural_relay_receiver_continuation_pair.development.v21",
             "soccer.neural_relay_receiver_lateral_authority.development.v22",
+            "soccer.neural_relay_receiver_longitudinal_authority.development.v32",
             "soccer.neural_relay_receiver_foot_teacher.development.v23",
             "soccer.neural_relay_receiver_predictive_foot_shin.development.v24",
             "soccer.neural_relay_receiver_axis_local_fallback.development.v25",
@@ -273,6 +279,17 @@ def main():
                 for enabled in (False, True)
             ]
             if passer_velocity_recovery
+            else [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_lateral_offset_m=0.12,
+                    receiver_longitudinal_offset_m=offset,
+                )
+                for offset in (0.1, 0.35, 0.6, 0.8)
+            ]
+            if longitudinal_authority
             else [
                 dict(
                     start=80,
@@ -446,6 +463,11 @@ def main():
             or dec.get("bounded_teacher_added_after_neural") is not False
         ):
             raise ValueError("explicit unlearned lateral command authority required")
+        if (
+            longitudinal_authority
+            and dec.get("longitudinal_intercept_is_unlearned_teacher") is not True
+        ):
+            raise ValueError("explicit unlearned longitudinal command authority required")
         if foot_teacher_pair and (
             dec.get("receiver_foot_teacher_is_unlearned") is not True
             or dec.get("cartesian_teachers_enabled") is not True
@@ -990,6 +1012,9 @@ def main():
                         launch_seen=launch,
                         ready_anchor_xy=anchor,
                         lateral_offset_m=course["arm"].get("receiver_lateral_offset_m", 0.12),
+                        longitudinal_offset_m=course["arm"].get(
+                            "receiver_longitudinal_offset_m", 0.35
+                        ),
                     )
                     launch = intent.launch_seen
                     command = np.array(intent.command_body, np.float32)

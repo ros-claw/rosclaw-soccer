@@ -31,6 +31,7 @@ def receiving_intent(
     mode: str = "pursuit-v1",
     capture_target_xy: np.ndarray | None = None,
     lateral_offset_m: float = 0.12,
+    longitudinal_offset_m: float = 0.35,
 ) -> ReceivingIntent:
     if (
         type(mode) is not str
@@ -40,6 +41,9 @@ def receiving_intent(
         or type(lateral_offset_m) is not float
         or not np.isfinite(lateral_offset_m)
         or abs(lateral_offset_m) > 0.4
+        or type(longitudinal_offset_m) is not float
+        or not np.isfinite(longitudinal_offset_m)
+        or not 0.0 <= longitudinal_offset_m <= 0.8
     ):
         raise ValueError("explicit receiving mode and communicated anchor for plane mode required")
     for value in (root_xy, ball_xy, ball_velocity_xy, home_xy, pass_direction):
@@ -65,7 +69,10 @@ def receiving_intent(
         eta = float(np.clip((root_xy - ball_xy) @ ball_velocity_xy / max(speed2, 0.01), 0, 0.5))
         lateral = np.array([-pass_direction[1], pass_direction[0]])
         target = (
-            ball_xy + eta * ball_velocity_xy + 0.35 * pass_direction + lateral_offset_m * lateral
+            ball_xy
+            + eta * ball_velocity_xy
+            + longitudinal_offset_m * pass_direction
+            + lateral_offset_m * lateral
         )
         phase = "INTERCEPT" if float((root_xy - ball_xy) @ pass_direction) > 0 else "RECOVER_LOOSE"
         plane_supported = mode == "anchor-plane-v2"
