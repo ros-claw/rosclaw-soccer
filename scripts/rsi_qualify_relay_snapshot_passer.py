@@ -45,6 +45,7 @@ def main() -> None:
     probe = None if a.probe_leg_rad is None else np.asarray(a.probe_leg_rad, dtype=np.float64)
     if probe is not None and (not np.isfinite(probe).all() or np.abs(probe).max() > 0.15):
         raise ValueError("finite bounded 12-leg SIM probe required")
+    validate_original = probe is None or not np.any(probe)
     clean(a.expected_head)
     root, audit, snapshot_receipt = (
         a.source / "source",
@@ -266,6 +267,9 @@ def main() -> None:
             first_groups: list[str] = []
             physical_samples = [resumed]
             executed_actions = [receiver_action.copy()]
+            passer_actions = [out[0, 0].numpy().copy()]
+            receiver_observations = [receiver_obs.copy()]
+            receiver_commands = [np.asarray(role.command_body, dtype=np.float32)]
             # Continue from each actor's *own newly generated* state. Recorded
             # future traces are audit targets only, never policy inputs.
             previous_action = out[0, 0].numpy().copy()
@@ -314,7 +318,7 @@ def main() -> None:
                 receiver_action = velocity_policy.session.run(
                     ["actions"], {"obs": receiver_obs[None]}
                 )[0][0]
-                if probe is None and (
+                if validate_original and (
                     not np.array_equal(obs, t["NN_obs"][frame])
                     or not np.array_equal(current_action, t["NN_action"][frame])
                     or not np.array_equal(h.numpy(), t["NN_h_after"][frame])
@@ -339,8 +343,11 @@ def main() -> None:
                 )
                 physical_samples.append(resumed)
                 executed_actions.append(receiver_action.copy())
+                passer_actions.append(current_action.copy())
+                receiver_observations.append(receiver_obs.copy())
+                receiver_commands.append(np.asarray(role.command_body, dtype=np.float32))
                 for key in ("qpos", "qvel", "torque", "ball_forces"):
-                    if probe is None and not np.array_equal(resumed[key], physics[key][frame]):
+                    if validate_original and not np.array_equal(resumed[key], physics[key][frame]):
                         raise ValueError(f"restored coupled native {key} differs at {frame}")
                 witnesses = resumed["ball_forces"][:, 1, :]
                 hit = np.flatnonzero((witnesses > 1.0).any(axis=1))
@@ -361,7 +368,7 @@ def main() -> None:
                 previous_receiver_phase = receiver_phase
                 past_ball_vel = np.concatenate((past_ball_vel, receiver_v[None, 35:37]), axis=0)
                 if scratch.failed:
-                    if probe is None:
+                    if validate_original:
                         raise ValueError("baseline body failure before fixed comparison horizon")
                     break
         if (
@@ -377,12 +384,12 @@ def main() -> None:
                 index=item["index"],
                 context=item["context"],
                 side=item["side"],
-                observation_exact=probe is None,
-                action_exact=probe is None,
-                recurrent_after_exact=probe is None,
+                observation_exact=validate_original,
+                action_exact=validate_original,
+                recurrent_after_exact=validate_original,
                 receiver_role_command_exact=True,
-                receiver_neural_inference_exact=probe is None,
-                coupled_native_substeps_exact=probe is None,
+                receiver_neural_inference_exact=validate_original,
+                coupled_native_substeps_exact=validate_original,
                 consecutive_controls=len(physical_samples),
                 first_contact_frame_and_substep=first_contact,
                 first_contact_groups=first_groups,
@@ -397,6 +404,9 @@ def main() -> None:
                         for key in ("qpos", "qvel", "torque", "ball_forces")
                     },
                     "executed_receiver_action": np.stack(executed_actions),
+                    "passer_action": np.stack(passer_actions),
+                    "receiver_observation": np.stack(receiver_observations),
+                    "receiver_command": np.stack(receiver_commands),
                 }
             )
     if (
@@ -422,7 +432,9 @@ def main() -> None:
         a.output / "complete.json",
         dict(
             status=(
-                "RELAY_LEG_RESIDUAL_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
+                "RELAY_LEG_RESIDUAL_ZERO_OWN_REPLAY_NOT_FOOTBALL_SUCCESS"
+                if probe is not None and validate_original
+                else "RELAY_LEG_RESIDUAL_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
                 if probe is not None
                 else "RELAY_RESTORED_OWN_NEURAL_THROUGH_CONTACT_MATCH_NOT_FOOTBALL_SUCCESS"
             ),
@@ -436,7 +448,7 @@ def main() -> None:
             prior_own_action_and_recurrent_state_used=True,
             future_controls_used=False,
             receiver_role_selector_verified_at_boundary=True,
-            coupled_physics_continuation_verified=probe is None,
+            coupled_physics_continuation_verified=validate_original,
             native_steps=sum(row["consecutive_controls"] for row in rows) * 10,
             probe_leg_rad=None if probe is None else probe.tolist(),
             probe_action_is_actual_history=probe is not None,
