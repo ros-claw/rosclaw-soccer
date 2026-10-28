@@ -12,9 +12,11 @@ import torch
 from rosclaw_soccer.providers.g1.velocity_policy import observation98, target29
 from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
 from rosclaw_soccer.rsi.receiver_contextual_selector import selector_class
 from rosclaw_soccer.rsi.receiver_counterfactual_residual import receiver_counterfactual_residual
 from rosclaw_soccer.rsi.relay_restored_receiving_role import restored_receiving_role
+from rosclaw_soccer.rsi.restored_motion_reference import restored_motion_reference
 from rosclaw_soccer.rsi.restored_scratch_world import restored_scratch_world
 from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
 from rosclaw_soccer.rsi.shared_native_neural_player import PlayerObservationView
@@ -45,6 +47,7 @@ def main() -> None:
     p.add_argument("--selector-receipt", type=Path)
     p.add_argument("--selector-receipt-hash")
     p.add_argument("--nondefault", action="store_true")
+    p.add_argument("--dynamic-boundary", action="store_true")
     p.add_argument("--expanded-velocity-proof", type=Path)
     p.add_argument("--expanded-velocity-proof-hash")
     a = p.parse_args()
@@ -58,6 +61,8 @@ def main() -> None:
         or (a.nondefault and (probe is not None or a.selector_receipt is not None))
     ):
         raise ValueError("expanded zero-only proof requires exact expanded receiver inference")
+    if a.dynamic_boundary and not a.nondefault:
+        raise ValueError("dynamic boundary qualification requires expanded source bank")
     if a.nondefault:
         if (
             a.expanded_velocity_proof.is_symlink()
@@ -189,7 +194,7 @@ def main() -> None:
     by_index = {r["index"]: r for r in source["records"]}
     rows = []
     probe_trajectories = []
-    end_control = 160 if a.nondefault else 178
+    end_control = 300 if a.dynamic_boundary else 160 if a.nondefault else 178
     for item in snaps["rows"]:
         row = by_index[item["index"]]
         role_offset = row["course"]["arm"]["receiver_lateral_offset_m"]
@@ -224,8 +229,9 @@ def main() -> None:
         mujoco.mj_forward(setup.model, data)
         view = PlayerObservationView(SimpleNamespace(data=data, layouts={"a/": layout}), "a/")
         ep = setup.episodes[item["context"]]
-        if ep.clip.length < end_control or (
-            row["handoff"] is not None and row["handoff"]["control"] < end_control
+        if not a.dynamic_boundary and (
+            ep.clip.length < end_control
+            or (row["handoff"] is not None and row["handoff"]["control"] < end_control)
         ):
             raise ValueError("contact proof must stop before actual motion or receiver handoff")
         with (
@@ -349,6 +355,7 @@ def main() -> None:
                     "b/": physics["target_b"][139].copy(),
                 },
             )
+            readiness = OnlineReceivingBoundary(scratch, "b/") if a.dynamic_boundary else None
             resumed = scratch.advance({"a/": passer_target, "b/": receiver_target})
             for key in ("qpos", "qvel", "torque", "ball_forces"):
                 if not np.array_equal(resumed[key], physics[key][140]):
@@ -357,6 +364,7 @@ def main() -> None:
                 raise ValueError("first restored boundary must precede receiver contact")
             first_contact = None
             first_groups: list[str] = []
+            ready = readiness.update() if readiness is not None else False
             physical_samples = [resumed]
             executed_actions = [receiver_action.copy()]
             passer_actions = [out[0, 0].numpy().copy()]
@@ -369,16 +377,26 @@ def main() -> None:
             previous_receiver_phase = receiver_phase
             past_ball_vel = np.concatenate((past_ball_vel, receiver_v[None, 35:37]), axis=0)
             for frame in range(141, end_control):
+                if ready:
+                    break
                 mujoco.mj_forward(setup.model, scratch.data)
                 view = PlayerObservationView(scratch, "a/")
+                if a.dynamic_boundary:
+                    ref_pos, ref_vel, ref_ang = restored_motion_reference(
+                        ep.clip, ep.torso_index, frame
+                    )
+                else:
+                    ref_pos = ep.clip.joint_pos[frame - 1].copy()
+                    ref_vel = ep.clip.joint_vel[frame - 1].copy()
+                    ref_ang = ep.clip.body_ang_vel_w[frame - 1, ep.torso_index].copy()
                 obs = ep.build_observation(
                     view,
                     None,
                     0,
                     previous_action,
-                    ep.clip.joint_pos[frame - 1].copy(),
-                    ep.clip.joint_vel[frame - 1].copy(),
-                    ep.clip.body_ang_vel_w[frame - 1, ep.torso_index].copy(),
+                    ref_pos,
+                    ref_vel,
+                    ref_ang,
                     view.ball_pos,
                     ep.goal,
                     ep.offset,
@@ -460,10 +478,21 @@ def main() -> None:
                 previous_receiver_action = receiver_action.copy()
                 previous_receiver_phase = receiver_phase
                 past_ball_vel = np.concatenate((past_ball_vel, receiver_v[None, 35:37]), axis=0)
+                if readiness is not None:
+                    ready = readiness.update()
                 if scratch.failed:
-                    if validate_original:
+                    if validate_original and not a.dynamic_boundary:
                         raise ValueError("baseline body failure before fixed comparison horizon")
                     break
+            if a.dynamic_boundary:
+                source_handoff = None if row["handoff"] is None else row["handoff"]["control"]
+                if (
+                    (ready and scratch.control_steps != source_handoff)
+                    or (not ready and source_handoff is not None)
+                    or (not ready and scratch.failed != (row["termination"] == "BODY_FAILURE"))
+                    or (not ready and not scratch.failed and scratch.control_steps != 300)
+                ):
+                    raise ValueError("own causal readiness or source termination differs")
         if (
             digest(snap) != item["snapshot_hash"]
             or digest(trace) != row["artifacts"]["passer_nn"]["hash"]
@@ -488,10 +517,12 @@ def main() -> None:
                 first_contact_frame_and_substep=first_contact,
                 first_contact_groups=first_groups,
                 body_failure=bool(scratch.failed),
+                receiving_ready=bool(ready),
+                last_control=scratch.control_steps,
                 selector_class=selection,
             )
         )
-        if probe is not None or selector_weights is not None:
+        if probe is not None or selector_weights is not None or a.dynamic_boundary:
             probe_trajectories.append(
                 {
                     **{
@@ -526,7 +557,7 @@ def main() -> None:
     clean(a.expected_head)
     check_pins(pins)
     a.output.mkdir(parents=True)
-    if probe is not None or selector_weights is not None:
+    if probe is not None or selector_weights is not None or a.dynamic_boundary:
         for row, trajectory in zip(rows, probe_trajectories, strict=True):
             path = a.output / f"trial-{row['index']}.npz"
             np.savez_compressed(path, **trajectory)
@@ -536,7 +567,9 @@ def main() -> None:
         a.output / "complete.json",
         dict(
             status=(
-                "RELAY_NONDEFAULT_DUAL_NEURAL_20_CONTROLS_MATCH_NOT_FOOTBALL_SUCCESS"
+                "RELAY_NONDEFAULT_CAUSAL_RECEIVING_BOUNDARY_MATCH_NOT_FOOTBALL_SUCCESS"
+                if a.dynamic_boundary
+                else "RELAY_NONDEFAULT_DUAL_NEURAL_20_CONTROLS_MATCH_NOT_FOOTBALL_SUCCESS"
                 if a.nondefault
                 else "RELAY_CONTEXT_SELECTOR_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
                 if selector_weights is not None
@@ -557,6 +590,7 @@ def main() -> None:
             prior_own_action_and_recurrent_state_used=True,
             future_controls_used=False,
             receiver_role_selector_verified_at_boundary=True,
+            causal_receiving_boundary_reconstructed=a.dynamic_boundary,
             coupled_physics_continuation_verified=all(
                 r["coupled_native_substeps_exact"] for r in rows
             ),
