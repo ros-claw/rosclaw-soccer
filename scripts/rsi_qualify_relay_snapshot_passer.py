@@ -87,6 +87,7 @@ def main() -> None:
     p.add_argument("--long-probe", action="store_true")
     p.add_argument("--contact-teacher", action="store_true")
     p.add_argument("--contact-teacher-capture", action="store_true")
+    p.add_argument("--torque-near-ball-gate", action="store_true")
     for key in ("torque-checkpoint", "torque-training", "torque-observation-proof"):
         p.add_argument("--" + key, type=Path)
     for key in ("torque-checkpoint-hash", "torque-training-hash", "torque-observation-proof-hash"):
@@ -144,6 +145,8 @@ def main() -> None:
     if any(torque_args) and not all(torque_args):
         raise ValueError("exact research actor, training and observation proof required")
     torque_model = a.torque_checkpoint is not None
+    if a.torque_near_ball_gate and not torque_model:
+        raise ValueError("near-ball gate requires an explicit learned torque model")
     if torque_model:
         if (
             not a.long_probe
@@ -615,6 +618,7 @@ def main() -> None:
                     checkpoint_hash=a.torque_checkpoint_hash,
                     dataset_hash=train["dataset_hash"],
                     horizon_controls=459,
+                    near_ball_gate=a.torque_near_ball_gate,
                 )
                 if torque_model
                 else None
@@ -1006,6 +1010,9 @@ def main() -> None:
                 neural_torque_changed_commands=neural_torque.active_commands
                 if neural_torque is not None
                 else 0,
+                neural_torque_gate_closed_commands=neural_torque.gate_closed_commands
+                if neural_torque is not None
+                else 0,
             )
         )
         if probe is not None or selector_weights is not None or a.dynamic_boundary:
@@ -1158,6 +1165,7 @@ def main() -> None:
             contact_teacher_assisted=a.contact_teacher,
             contact_teacher_capture=a.contact_teacher_capture,
             neural_torque_actor=torque_model,
+            neural_torque_near_ball_gate=a.torque_near_ball_gate,
             torque_checkpoint_hash=a.torque_checkpoint_hash,
             torque_training_hash=a.torque_training_hash,
             torque_observation_proof_hash=a.torque_observation_proof_hash,

@@ -23,6 +23,7 @@ class SharedNativeReceiverTorqueActor:
         checkpoint_hash: str,
         dataset_hash: str,
         horizon_controls: int,
+        near_ball_gate: bool = False,
     ):
         world._require_current_boundary()
         if (
@@ -32,6 +33,7 @@ class SharedNativeReceiverTorqueActor:
             or prefix in world._torque_layer_owners
             or type(horizon_controls) is not int
             or not 1 <= horizon_controls <= 600
+            or type(near_ball_gate) is not bool
             or checkpoint.is_symlink()
             or digest(checkpoint) != checkpoint_hash
         ):
@@ -69,6 +71,13 @@ class SharedNativeReceiverTorqueActor:
             raise ValueError("finite exact normalization and network required")
         self.world, self.prefix, self.policy = world, prefix, self
         self.layout = world.layouts[prefix]
+        self.near_ball_gate = near_ball_gate
+        self.feet = tuple(
+            int(mujoco.mj_name2id(world.model, mujoco.mjtObj.mjOBJ_BODY, prefix + side))
+            for side in ("left_ankle_roll_link", "right_ankle_roll_link")
+        )
+        if min(self.feet) < 0:
+            raise ValueError("own named left and right ankles required")
         self.teammate = world.layouts[next(p for p in world.layouts if p != prefix)]
         self.previous_torque = world.data.actuator_force[self.layout.ai].copy()
         self.previous_contact = np.zeros(3, dtype=bool)
@@ -77,6 +86,7 @@ class SharedNativeReceiverTorqueActor:
         self.horizon_native_steps = self.next_native_step + horizon_controls * 10
         self.pending = self.failed = False
         self.commands = self.applied = self.active_commands = 0
+        self.gate_closed_commands = 0
         self.last_observation: np.ndarray | None = None
         world._torque_layer_owners[prefix] = self
 
@@ -139,6 +149,17 @@ class SharedNativeReceiverTorqueActor:
                 or np.abs(delta).max() > 20.00001
             ):
                 raise ValueError("bounded finite actor proposal required")
+            if self.near_ball_gate:
+                # Same measured ankle-origin distance and 0.52 m threshold as
+                # the assisted data teacher, not a future-state contact oracle.
+                mujoco.mj_forward(w.model, w.data)
+                ball = w.data.qpos[self.layout.bq : self.layout.bq + 3]
+                distance = min(np.linalg.norm(w.data.xpos[foot] - ball) for foot in self.feet)
+                if not np.isfinite(distance):
+                    raise ValueError("finite actual ankle-ball distance required")
+                if distance > 0.52:
+                    delta = np.zeros(29, dtype=np.float64)
+                    self.gate_closed_commands += 1
             applied = np.clip(
                 parent + delta, -w.parameters[self.prefix].effort, w.parameters[self.prefix].effort
             )

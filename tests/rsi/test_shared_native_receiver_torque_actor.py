@@ -82,3 +82,61 @@ def test_nonzero_actor_actually_controls_only_its_own_torques(tmp_path):
     assert np.all(np.abs(result["torque"][:, w.layouts["b/"].ai]) <= w.parameters["b/"].effort)
     assert np.any(result["applied_torque_change"][:, w.layouts["b/"].ai])
     assert not np.any(result["applied_torque_change"][:, w.layouts["a/"].ai])
+
+
+def test_near_ball_gate_far_field_preserves_actual_parent_physics(tmp_path):
+    w, reference = world(), world()
+    path = tmp_path / "actor.pt"
+    checkpoint(path)
+    state = torch.load(path, map_location="cpu", weights_only=True)
+    state["actor"]["net.4.bias"][:] = 0.2
+    torch.save(state, path)
+    actor = SharedNativeReceiverTorqueActor(
+        w,
+        "b/",
+        checkpoint=path,
+        checkpoint_hash=digest(path),
+        dataset_hash="test-data",
+        horizon_controls=1,
+        near_ball_gate=True,
+    )
+    targets = {p: np.zeros(29) for p in w.layouts}
+    base = reference.advance(targets)
+    result = w.advance(targets, torque_layers={"b/": actor})
+    for key in ("qpos", "qvel", "torque", "ball_forces"):
+        np.testing.assert_array_equal(result[key], base[key])
+    assert actor.gate_closed_commands == actor.commands == actor.applied == 10
+    assert actor.active_commands == 0
+
+
+def test_near_ball_gate_allows_own_model_near_foot(tmp_path):
+    import mujoco
+
+    from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
+
+    old = world()
+    data = mujoco.MjData(old.model)
+    data.qpos[:] = old.data.qpos
+    mujoco.mj_forward(old.model, data)
+    foot = old.model.body("b/left_ankle_roll_link").id
+    data.qpos[old.layouts["b/"].bq : old.layouts["b/"].bq + 3] = data.xpos[foot] + [0.1, 0, 0]
+    mujoco.mj_forward(old.model, data)
+    w = SharedNativeMotorWorld(old.model, data, players=old.parameters, ball_body_name="ball")
+    path = tmp_path / "actor.pt"
+    checkpoint(path)
+    state = torch.load(path, map_location="cpu", weights_only=True)
+    state["actor"]["net.4.bias"][:] = 0.2
+    torch.save(state, path)
+    actor = SharedNativeReceiverTorqueActor(
+        w,
+        "b/",
+        checkpoint=path,
+        checkpoint_hash=digest(path),
+        dataset_hash="test-data",
+        horizon_controls=1,
+        near_ball_gate=True,
+    )
+    result = w.advance({p: np.zeros(29) for p in w.layouts}, torque_layers={"b/": actor})
+    assert actor.active_commands > 0
+    assert np.any(result["applied_torque_change"][:, w.layouts["b/"].ai])
+    assert not np.any(result["applied_torque_change"][:, w.layouts["a/"].ai])
