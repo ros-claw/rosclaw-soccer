@@ -67,3 +67,54 @@ def select_oof_probe(
     if abs(probability - result["probabilities"][i]) > 1e-6 or decision != result["predictions"][i]:
         raise ValueError("computed current-state decision differs from original held-out audit")
     return decision, probability
+
+
+def select_single_probe(
+    receipt: dict,
+    *,
+    snapshot_hash: str,
+    index: int,
+    context: int,
+    observation: np.ndarray,
+    q: np.ndarray,
+    v: np.ndarray,
+) -> tuple[int, float]:
+    """One model across every group, evaluated only on bound development states."""
+    if (
+        type(receipt) is not dict
+        or receipt.get("status") != "SINGLE_RECEIVER_RISK_DEV_MODEL_NOT_PHYSICALLY_VALIDATED"
+        or receipt.get("source_head") != "629258db73ed0511b1e9cb9584bbc149bc07af37"
+        or receipt.get("threshold") != 0.8
+        or any(
+            receipt.get(k) is not False
+            for k in (
+                "independent_fresh",
+                "hardware_authorized",
+                "promotion_authorized",
+                "goal_complete",
+            )
+        )
+    ):
+        raise ValueError("exact unpromoted single research model required")
+    if (
+        type(observation) is not np.ndarray
+        or observation.dtype != np.float32
+        or observation.shape != (98,)
+        or not np.isfinite(observation).all()
+    ):
+        raise ValueError("finite actual own receiver observation required")
+    keys = [(r["snapshot_hash"], r["index"], r["context"]) for r in receipt["identities"]]
+    key = (snapshot_hash, index, context)
+    if len(keys) != 72 or len(set(keys)) != 72 or key not in keys:
+        raise ValueError("unique bound development case required")
+    features = np.concatenate((observation, receiver_ball_observation(q, v).astype(np.float32)))
+    probability = risk_probability(features, receipt["model"])
+    decision = int(probability >= receipt["threshold"])
+    i = keys.index(key)
+    original = receipt["in_sample_rehearsal"]
+    if (
+        abs(probability - original["probabilities"][i]) > 1e-6
+        or decision != original["predictions"][i]
+    ):
+        raise ValueError("computed own current-state decision differs from rehearsal audit")
+    return decision, probability

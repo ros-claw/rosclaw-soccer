@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.oof_receiver_probe import select_oof_probe
+from rosclaw_soccer.rsi.oof_receiver_probe import select_oof_probe, select_single_probe
 
 
 def receipt():
@@ -45,3 +45,16 @@ def test_decision_is_computed_from_current_state_and_audited():
     data["ball_augmented"]["predictions"][0] = 1
     with pytest.raises(ValueError, match="differs"):
         select_oof_probe(data, **kwargs)
+
+
+def test_one_single_model_uses_no_context_feature():
+    data = receipt()
+    data["status"] = "SINGLE_RECEIVER_RISK_DEV_MODEL_NOT_PHYSICALLY_VALIDATED"
+    data["source_head"] = "629258db73ed0511b1e9cb9584bbc149bc07af37"
+    data["model"] = data["ball_augmented"]["fold_models"][0]
+    data["in_sample_rehearsal"] = dict(predictions=[0] * 72, probabilities=[0.5] * 72)
+    q, v = np.zeros(43), np.zeros(41)
+    q[3] = 1
+    kwargs = dict(observation=np.zeros(98, np.float32), q=q, v=v)
+    assert select_single_probe(data, snapshot_hash="s2", index=0, context=2, **kwargs) == (0, 0.5)
+    assert select_single_probe(data, snapshot_hash="s3", index=0, context=3, **kwargs) == (0, 0.5)

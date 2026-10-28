@@ -12,14 +12,27 @@ from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_fresh_common import clean
 
 
-def valid_candidate(data: dict, *, source_head: str, snapshot_hash: str, risk_hash: str) -> bool:
+def valid_candidate(
+    data: dict,
+    *,
+    source_head: str,
+    snapshot_hash: str,
+    risk_hash: str,
+    variant: str = "ball_augmented",
+) -> bool:
     rows = data.get("rows", [])
     return bool(
-        data.get("status") == "RELAY_OOF_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS"
+        variant in ("ball_augmented", "single")
+        and data.get("status")
+        == (
+            "RELAY_SINGLE_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS"
+            if variant == "single"
+            else "RELAY_OOF_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS"
+        )
         and data.get("source_head") == source_head
         and data.get("snapshot_hash") == snapshot_hash
         and data.get("risk_receipt_hash") == risk_hash
-        and data.get("risk_variant") == "ball_augmented"
+        and data.get("risk_variant") == variant
         and len(rows) == 24
         and len({r.get("index") for r in rows}) == 24
         and all(
@@ -61,10 +74,17 @@ def main() -> None:
     ):
         parser.add_argument("--" + key, required=True)
     parser.add_argument("--timeout-sec", type=int, default=3600)
+    parser.add_argument(
+        "--risk-variant", choices=("ball_augmented", "single"), default="ball_augmented"
+    )
     args = parser.parse_args()
     clean(args.expected_head)
     if (
-        re.fullmatch(r"rosclaw-oof-b[012]-physical-b0-20261029\.service", args.unit) is None
+        re.fullmatch(r"rosclaw-(oof|single)-b[012]-physical-b0-20261029\.service", args.unit)
+        is None
+        or not args.unit.startswith(
+            "rosclaw-single-" if args.risk_variant == "single" else "rosclaw-oof-"
+        )
         or not 1 <= args.timeout_sec <= 7200
         or any(
             p.exists() or p.resolve().is_relative_to(Path.cwd())
@@ -102,6 +122,7 @@ def main() -> None:
             source_head=args.physical_head,
             snapshot_hash=args.snapshot_hash,
             risk_hash=args.risk_hash,
+            variant=args.risk_variant,
         )
         or digest(args.candidate) != candidate_hash
     ):

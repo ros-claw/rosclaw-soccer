@@ -36,7 +36,10 @@ def main() -> None:
     ):
         raise ValueError("pinned receipts and new external output required")
     baseline, candidate, snapshots = (json.loads(path.read_text()) for path, _ in inputs)
-    risk_mode = candidate.get("status") == "RELAY_OOF_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS"
+    risk_mode = candidate.get("status") in (
+        "RELAY_OOF_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS",
+        "RELAY_SINGLE_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS",
+    )
     if risk_mode != (args.risk_receipt is not None) or risk_mode != (
         args.risk_receipt_hash is not None
     ):
@@ -47,7 +50,8 @@ def main() -> None:
             args.risk_receipt.is_symlink()
             or digest(args.risk_receipt) != args.risk_receipt_hash
             or candidate.get("risk_receipt_hash") != args.risk_receipt_hash
-            or candidate.get("risk_variant") not in ("ball_augmented", "proprioception_only")
+            or candidate.get("risk_variant")
+            not in ("ball_augmented", "proprioception_only", "single")
         ):
             raise ValueError("exact candidate-bound OOF receipt required")
         risk = json.loads(args.risk_receipt.read_text())
@@ -57,6 +61,7 @@ def main() -> None:
         not in (
             "RELAY_LONG_PROBE_CAUSAL_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS",
             "RELAY_OOF_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS",
+            "RELAY_SINGLE_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS",
         )
         or baseline.get("smooth_transition_duration") != 10
         or candidate.get("smooth_transition_duration") != 10
@@ -112,7 +117,11 @@ def main() -> None:
                 if (item["snapshot_hash"], item["index"], item["context"])
                 == (args.snapshot_hash, index, c[index]["context"])
             ]
-            scores = risk[candidate["risk_variant"]]
+            scores = risk[
+                "in_sample_rehearsal"
+                if candidate["risk_variant"] == "single"
+                else candidate["risk_variant"]
+            ]
             if (
                 len(matches) != 1
                 or c[index]["selector_class"] != scores["predictions"][matches[0]]

@@ -19,3 +19,21 @@ def test_requires_all_24_actual_oof_decisions_and_no_hardware():
     assert valid_candidate(d, **args)
     d["rows"][0]["selector_class"] = None
     assert not valid_candidate(d, **args)
+
+
+def test_single_model_has_distinct_unpromoted_status():
+    d = dict(
+        status="RELAY_SINGLE_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS",
+        source_head="h",
+        snapshot_hash="s",
+        risk_receipt_hash="r",
+        risk_variant="single",
+        rows=[dict(index=i, selector_class=0, risk_probability=0.5) for i in range(24)],
+        future_controls_used=False,
+        independent_fresh=False,
+        hardware_authorized=False,
+        promotion_authorized=False,
+        goal_complete=False,
+    )
+    assert valid_candidate(d, source_head="h", snapshot_hash="s", risk_hash="r", variant="single")
+    assert not valid_candidate(d, source_head="h", snapshot_hash="s", risk_hash="r")

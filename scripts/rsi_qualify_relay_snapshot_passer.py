@@ -16,7 +16,7 @@ from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_
 from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
-from rosclaw_soccer.rsi.oof_receiver_probe import select_oof_probe
+from rosclaw_soccer.rsi.oof_receiver_probe import select_oof_probe, select_single_probe
 from rosclaw_soccer.rsi.receiver_contextual_selector import selector_class
 from rosclaw_soccer.rsi.receiver_counterfactual_residual import receiver_counterfactual_residual
 from rosclaw_soccer.rsi.receiver_transition_blend import receiver_transition_action
@@ -80,7 +80,7 @@ def main() -> None:
     p.add_argument("--selector-receipt-hash")
     p.add_argument("--risk-receipt", type=Path)
     p.add_argument("--risk-receipt-hash")
-    p.add_argument("--risk-variant", choices=("proprioception_only", "ball_augmented"))
+    p.add_argument("--risk-variant", choices=("proprioception_only", "ball_augmented", "single"))
     p.add_argument("--nondefault", action="store_true")
     p.add_argument("--long-probe", action="store_true")
     p.add_argument("--dynamic-boundary", action="store_true")
@@ -451,15 +451,18 @@ def main() -> None:
                     [0.0, 0.0, 0.0, knee, -0.5 * knee, 0.0] * 2, dtype=np.float64
                 )
             if risk is not None:
-                selection, risk_probability = select_oof_probe(
-                    risk,
+                args = dict(
                     snapshot_hash=a.snapshot_hash,
                     index=item["index"],
                     context=item["context"],
                     observation=receiver_obs,
                     q=receiver_q,
                     v=receiver_v,
-                    variant=a.risk_variant,
+                )
+                selection, risk_probability = (
+                    select_single_probe(risk, **args)
+                    if a.risk_variant == "single"
+                    else select_oof_probe(risk, **args, variant=a.risk_variant)
                 )
                 case_probe = probe if selection else None
             validate_original = case_probe is None or not np.any(case_probe)
@@ -964,7 +967,9 @@ def main() -> None:
         a.output / "complete.json",
         dict(
             status=(
-                "RELAY_OOF_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS"
+                "RELAY_SINGLE_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS"
+                if risk is not None and a.risk_variant == "single"
+                else "RELAY_OOF_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS"
                 if risk is not None
                 else "RELAY_LONG_PROBE_CAUSAL_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS"
                 if a.long_probe
