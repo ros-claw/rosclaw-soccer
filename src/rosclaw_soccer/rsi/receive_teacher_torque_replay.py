@@ -7,7 +7,12 @@ from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 
 
 def replay_saved_teacher_torques(
-    model, initial_state: np.ndarray, history: dict, *, ball_body_name: str = "soccer_ball"
+    model,
+    initial_state: np.ndarray,
+    history: dict,
+    *,
+    ball_body_name: str = "soccer_ball",
+    teacher_forward_each_substep: bool = True,
 ) -> int:
     """Require exact shared qpos, qvel and grouped force at every native step."""
     spec = mujoco.mjtState.mjSTATE_INTEGRATION
@@ -17,6 +22,7 @@ def replay_saved_teacher_torques(
         or initial_state.shape != (mujoco.mj_stateSize(model, spec),)
         or not np.isfinite(initial_state).all()
         or set(history) != {"qpos", "qvel", "torque", "ball_forces"}
+        or type(teacher_forward_each_substep) is not bool
     ):
         raise ValueError("complete native integration snapshot and saved physics required")
     q, v, torques, contacts = (history[k] for k in ("qpos", "qvel", "torque", "ball_forces"))
@@ -53,7 +59,7 @@ def replay_saved_teacher_torques(
         if control:
             mujoco.mj_forward(model, data)
         for substep in range(10):
-            if control:
+            if control and teacher_forward_each_substep:
                 # The live teacher evaluates the current Jacobian at each 2ms boundary.
                 mujoco.mj_forward(model, data)
             data.ctrl[:] = torques[control, substep]

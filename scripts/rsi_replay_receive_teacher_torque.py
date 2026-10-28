@@ -27,6 +27,7 @@ def main() -> None:
         choices=(
             "rosclaw-receiver-contact-teacher-b0-20261029.service",
             "rosclaw-receiver-contact-capture-b0-20261029.service",
+            "rosclaw-receiver-neural-torque-b0-20261029.service",
         ),
         default="rosclaw-receiver-contact-teacher-b0-20261029.service",
     )
@@ -64,11 +65,21 @@ def main() -> None:
         raise ValueError("no symlink receipt")
     candidate_hash = digest(a.candidate)
     candidate, snapshots = (json.loads(p.read_text()) for p in (a.candidate, a.snapshots))
+    neural = a.unit == "rosclaw-receiver-neural-torque-b0-20261029.service"
     if (
-        candidate.get("status") != "RELAY_CONTACT_TEACHER_ASSISTED_PHYSICAL_NOT_SUCCESS"
-        or candidate.get("contact_teacher_assisted") is not True
-        or candidate.get("contact_teacher_capture", False)
-        != (a.unit == "rosclaw-receiver-contact-capture-b0-20261029.service")
+        candidate.get("status")
+        != (
+            "RELAY_NEURAL_TORQUE_RESEARCH_PHYSICAL_NOT_SUCCESS"
+            if neural
+            else "RELAY_CONTACT_TEACHER_ASSISTED_PHYSICAL_NOT_SUCCESS"
+        )
+        or candidate.get("contact_teacher_assisted") is not (not neural)
+        or (neural and candidate.get("neural_torque_actor") is not True)
+        or (
+            not neural
+            and candidate.get("contact_teacher_capture", False)
+            != (a.unit == "rosclaw-receiver-contact-capture-b0-20261029.service")
+        )
         or candidate.get("source_head") != a.physical_head
         or candidate.get("snapshot_hash") != a.snapshot_hash
         or any(
@@ -109,6 +120,7 @@ def main() -> None:
                 model,
                 initial["state"].copy(),
                 {k: raw[k].copy() for k in ("qpos", "qvel", "torque", "ball_forces")},
+                teacher_forward_each_substep=not neural,
             )
         if (
             steps != row["consecutive_controls"] * 10
@@ -133,6 +145,7 @@ def main() -> None:
             source_head=a.expected_head,
             candidate_hash=candidate_hash,
             capture_after_contact=candidate.get("contact_teacher_capture", False),
+            neural_torque_actor=neural,
             snapshot_hash=a.snapshot_hash,
             rows=rows,
             native_steps=sum(r["native_steps"] for r in rows),
