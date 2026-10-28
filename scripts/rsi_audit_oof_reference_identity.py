@@ -1,4 +1,4 @@
-"""Compare each actual OOF SIM run to its own separately executed reference arm."""
+"""Compare each actual SIM run to its separately executed reference arm."""
 
 import argparse
 import json
@@ -10,6 +10,19 @@ from rosclaw_soccer.rsi.oof_reference_identity import exact_reference_arrays
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_fresh_common import clean
+
+
+def study_predictions(actual: dict, risk: dict) -> list:
+    """Bind the actual selector to its correctly labelled development study."""
+    variant = actual.get("risk_variant")
+    expected_status = {
+        "ball_augmented": "RELAY_OOF_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS",
+        "single": "RELAY_SINGLE_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS",
+    }
+    if variant not in expected_status or actual.get("status") != expected_status[variant]:
+        raise ValueError("unsupported or mismatched actual risk variant")
+    section = "ball_augmented" if variant == "ball_augmented" else "in_sample_rehearsal"
+    return risk[section]["predictions"]
 
 
 def main() -> None:
@@ -37,9 +50,7 @@ def main() -> None:
         baseline.get("status") != "RELAY_NONDEFAULT_SMOOTH_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS"
         or candidate.get("status")
         != "RELAY_LONG_PROBE_CAUSAL_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS"
-        or actual.get("status") != "RELAY_OOF_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS"
         or actual.get("risk_receipt_hash") != args.risk_hash
-        or actual.get("risk_variant") != "ball_augmented"
         or any(
             baseline.get(k) != candidate.get(k) or baseline.get(k) != actual.get(k)
             for k in (
@@ -63,14 +74,15 @@ def main() -> None:
         )
     ):
         raise ValueError("exact common-source unpromoted actual and reference arms required")
+    predictions = study_predictions(actual, risk)
     banks = [{r["index"]: r for r in d["rows"]} for d in (baseline, candidate, actual)]
     if any(len(d["rows"]) != 24 for d in (baseline, candidate, actual)) or any(
         len(bank) != 24 or set(bank) != set(banks[0]) for bank in banks
     ):
         raise ValueError("all 24 unique matched cases required")
     ids = [(r["snapshot_hash"], r["index"], r["context"]) for r in risk["identities"]]
-    if len(ids) != 72 or len(set(ids)) != 72:
-        raise ValueError("exact cross-fitted development identities required")
+    if len(ids) != 72 or len(set(ids)) != 72 or len(predictions) != 72:
+        raise ValueError("exact development identities and predictions required")
     rows = []
     for index in sorted(banks[0]):
         br, cr, ar = (bank[index] for bank in banks)
@@ -80,11 +92,8 @@ def main() -> None:
         ) or ar["selector_class"] not in (0, 1):
             raise ValueError("same source case and explicit actual model choice required")
         identity = (actual["snapshot_hash"], index, ar["context"])
-        if (
-            identity not in ids
-            or risk["ball_augmented"]["predictions"][ids.index(identity)] != ar["selector_class"]
-        ):
-            raise ValueError("actual model choice differs from bound OOF study")
+        if identity not in ids or predictions[ids.index(identity)] != ar["selector_class"]:
+            raise ValueError("actual model choice differs from bound development study")
         reference_path, reference_row = (
             (args.candidate, cr) if ar["selector_class"] else (args.baseline, br)
         )
@@ -136,7 +145,8 @@ def main() -> None:
     write_once(
         args.output,
         dict(
-            status="OOF_REFERENCE_REPLAY_DEVELOPMENT_NOT_FRESH",
+            status="RISK_REFERENCE_REPLAY_DEVELOPMENT_NOT_FRESH",
+            risk_variant=actual["risk_variant"],
             source_head=args.expected_head,
             baseline_hash=args.baseline_hash,
             candidate_hash=args.candidate_hash,

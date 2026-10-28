@@ -2,6 +2,23 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.rsi.oof_reference_identity import exact_reference_arrays
+from scripts.rsi_audit_oof_reference_identity import study_predictions
+
+
+def test_reference_study_selection_does_not_confuse_in_sample_with_oof():
+    risk = {"ball_augmented": {"predictions": [0]}, "in_sample_rehearsal": {"predictions": [1]}}
+    oof = {
+        "risk_variant": "ball_augmented",
+        "status": "RELAY_OOF_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS",
+    }
+    single = {
+        "risk_variant": "single",
+        "status": "RELAY_SINGLE_RISK_PHYSICAL_DEVELOPMENT_NOT_SUCCESS",
+    }
+    assert study_predictions(oof, risk) == [0]
+    assert study_predictions(single, risk) == [1]
+    with pytest.raises(ValueError):
+        study_predictions({**single, "status": oof["status"]}, risk)
 
 
 def arrays():
