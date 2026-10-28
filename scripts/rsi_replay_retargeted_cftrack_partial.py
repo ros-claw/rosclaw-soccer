@@ -15,6 +15,7 @@ from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
 
 from rosclaw_soccer.rsi.cftrack_motion_reference import load_cftrack_motion
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+from rosclaw_soccer.rsi.omnicontact_initial_velocity import reference_initial_velocities
 from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters, SharedNativeMotorWorld
 from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
 from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
@@ -57,7 +58,14 @@ def main() -> None:
     if (
         original.get("status") != "CFTRACK_NATIVE_BASELINE_RECORDED_NOT_PROMOTED"
         or original.get("runtime_failure") is not None
-        or original.get("reference_ball_initial_velocity") is not True
+        or (
+            original.get("reference_ball_initial_velocity") is not True
+            and original.get("reference_all_initial_velocities") is not True
+        )
+        or (
+            original.get("reference_ball_initial_velocity") is True
+            and original.get("reference_all_initial_velocities") is True
+        )
         or original.get("reference_source") != "NPZmotion"
         or original.get("promotion_authorized") is not False
     ):
@@ -103,7 +111,15 @@ def main() -> None:
     state.qpos[layout.bq : layout.bq + 3] = motion["object_pos_w"][0]
     state.qpos[layout.bq + 2] = max(0.11, float(state.qpos[layout.bq + 2]))
     state.qpos[layout.bq + 3 : layout.bq + 7] = motion["object_quat_w"][0]
-    state.qvel[layout.bv : layout.bv + 3] = motion["object_lin_vel_w"][0]
+    if original.get("reference_all_initial_velocities") is True:
+        initial = reference_initial_velocities(motion, order)
+        state.qvel[layout.rv : layout.rv + 3] = initial["root_linear"]
+        state.qvel[layout.rv + 3 : layout.rv + 6] = initial["root_angular_local"]
+        state.qvel[layout.vi] = initial["joints"]
+        state.qvel[layout.bv : layout.bv + 3] = initial["ball_linear"]
+        state.qvel[layout.bv + 3 : layout.bv + 6] = initial["ball_angular_local"]
+    else:
+        state.qvel[layout.bv : layout.bv + 3] = motion["object_lin_vel_w"][0]
     mujoco.mj_forward(model, state)
     params = NativePDParameters(
         np.array(config_data["kp_lab"], np.float32)[order],
