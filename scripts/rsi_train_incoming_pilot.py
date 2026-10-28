@@ -25,6 +25,7 @@ def main():
     p.add_argument("--dev-incoming-root", type=Path)
     p.add_argument("--dev-incoming-hash")
     p.add_argument("--train-target-rate-filter", action="store_true")
+    p.add_argument("--ball-only-adaptation", action="store_true")
     p.add_argument("--resume-checkpoint", type=Path)
     p.add_argument("--resume-hash")
     p.add_argument("--stop-after-episode", type=int)
@@ -63,6 +64,8 @@ def main():
         raise ValueError("all separate development evidence arguments are required together")
     if a.train_target_rate_filter and not expanded:
         raise ValueError("rate-filter training requires the expanded separate development bank")
+    if a.ball_only_adaptation and (not expanded or a.train_target_rate_filter):
+        raise ValueError("ball-only adaptation requires separate dev bank and no target filter")
     motion_multi = False
     if motion != bool(a.motion_reference_hash):
         raise ValueError("motion reference requires an exact root and hash together")
@@ -169,6 +172,7 @@ def main():
     from rosclaw_soccer.rsi.native_contact_course import NativeContactCourse
     from rosclaw_soccer.rsi.native_contact_ppo import (
         course_gae,
+        enable_ball_only_actor_gradient,
         guarded_ppo_optimizer_step,
         make_contact_actor_critic,
         native_ppo_loss,
@@ -250,11 +254,21 @@ def main():
     )
     policy = make_contact_actor_critic(actor).cuda()
     original = {k: v.detach().cpu().clone() for k, v in policy.actor.state_dict().items()}
+    if a.ball_only_adaptation:
+        ball_weight = policy.actor.mlp[0].weight
+        ball_gradient_handle = enable_ball_only_actor_gradient(policy.actor)
+        actor_groups = [
+            dict(params=[ball_weight], lr=3e-5),
+            dict(params=[p for p in policy.actor.parameters() if p is not ball_weight], lr=0.0),
+        ]
+    else:
+        ball_gradient_handle = None
+        actor_groups = [dict(params=policy.actor.parameters(), lr=3e-6)]
     optimizer = torch.optim.Adam(
         [
-            dict(params=policy.actor.parameters(), lr=3e-6),
+            *actor_groups,
             dict(params=policy.critic.parameters(), lr=3e-4),
-            dict(params=[policy.log_std], lr=1e-5),
+            dict(params=[policy.log_std], lr=0.0 if a.ball_only_adaptation else 1e-5),
         ]
     )
 
@@ -298,7 +312,11 @@ def main():
             latent_action_log_probability=True,
             executed_action_in_policy_history=True,
             parent_filter_ablation_in_development=a.train_target_rate_filter,
-            actor_learning_rate=3e-6,
+            actor_learning_rate=3e-5 if a.ball_only_adaptation else 3e-6,
+            ball_only_adaptation=a.ball_only_adaptation,
+            ball_trainable_columns=[168, 169, 170, 171, 172, 173]
+            if a.ball_only_adaptation
+            else None,
             post_update_rollout_kl_limit=0.02,
             rollback_policy_and_optimizer_on_excess_kl=True,
             cpu_physics=True,
@@ -316,6 +334,7 @@ def main():
         source_head=a.expected_head,
         input_file_hashes=pins,
         train_target_rate_filter=a.train_target_rate_filter,
+        ball_only_adaptation=a.ball_only_adaptation,
         expanded=expanded,
         training_episodes=episode_count,
         seed=7923,
@@ -518,6 +537,17 @@ def main():
         )
         if not actor_changed or updates <= 16:
             raise ValueError("actual PPO actor update required")
+        if a.ball_only_adaptation:
+            for key, value in policy.actor.state_dict().items():
+                current = value.detach().cpu()
+                expected = original[key]
+                if key == "mlp.0.weight":
+                    frozen = torch.ones(current.shape[1], dtype=torch.bool)
+                    frozen[168:174] = False
+                    if not torch.equal(current[:, frozen], expected[:, frozen]):
+                        raise ValueError("non-ball actor columns changed")
+                elif not torch.equal(current, expected):
+                    raise ValueError("non-ball actor parameters changed")
         checkpoint_path = a.output / "candidate.pt"
         torch.save(
             dict(
@@ -588,6 +618,8 @@ def main():
             ),
         )
     finally:
+        if ball_gradient_handle is not None:
+            ball_gradient_handle.remove()
         env.close()
 
 

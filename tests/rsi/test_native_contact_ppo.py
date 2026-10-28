@@ -6,6 +6,37 @@ import pytest
 from rosclaw_soccer.rsi.native_contact_ppo import course_gae
 
 
+def test_ball_only_actor_gradient_updates_only_six_current_ball_columns():
+    import torch
+    from torch import nn
+
+    from rosclaw_soccer.rsi.native_contact_ppo import enable_ball_only_actor_gradient
+
+    class Actor(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.mlp = nn.Sequential(nn.Linear(177, 512), nn.Linear(512, 29))
+
+    actor = Actor()
+    original = {k: v.detach().clone() for k, v in actor.state_dict().items()}
+    handle = enable_ball_only_actor_gradient(actor)
+    weight = actor.mlp[0].weight
+    optimizer = torch.optim.Adam(
+        [
+            {"params": [weight], "lr": 3e-5},
+            {"params": [p for p in actor.parameters() if p is not weight], "lr": 0.0},
+        ]
+    )
+    actor.mlp(torch.ones(2, 177)).square().sum().backward()
+    optimizer.step()
+    handle.remove()
+    state = actor.state_dict()
+    assert not torch.equal(state["mlp.0.weight"][:, 168:174], original["mlp.0.weight"][:, 168:174])
+    assert torch.equal(state["mlp.0.weight"][:, :168], original["mlp.0.weight"][:, :168])
+    assert torch.equal(state["mlp.0.weight"][:, 174:], original["mlp.0.weight"][:, 174:])
+    assert all(torch.equal(state[k], v) for k, v in original.items() if k != "mlp.0.weight")
+
+
 def test_timeout_bootstrap_distinct_from_true_failure_and_invalid_tail():
     reward = np.array([[1, 1], [0, 1]], dtype=np.float32)
     value = np.full((2, 2), 0.5, dtype=np.float32)

@@ -10,6 +10,24 @@ import numpy as np
 from numpy.typing import NDArray
 
 
+def enable_ball_only_actor_gradient(actor: Any) -> Any:
+    """Expose only current ball position/velocity columns to the actor optimizer.
+
+    This is a SIM-only experimental parameterization, not a trained policy or
+    proof the policy actually uses perception. The caller must separately
+    assign zero learning rate to all other actor parameters.
+    """
+    import torch
+    from torch import nn
+
+    layer = actor.mlp[0]
+    if not isinstance(layer, nn.Linear) or layer.weight.shape != (512, 177):
+        raise ValueError("explicit velocity98/reference70/ball9 actor ABI required")
+    mask = torch.zeros_like(layer.weight)
+    mask[:, 168:174] = 1
+    return layer.weight.register_hook(lambda gradient: gradient * mask)
+
+
 def guarded_ppo_optimizer_step(
     policy: Any, optimizer: Any, obs: Any, action: Any, old_logp: Any, *, kl_limit: float = 0.02
 ) -> tuple[bool, float]:
