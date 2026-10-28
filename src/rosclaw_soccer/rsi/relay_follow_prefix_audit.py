@@ -69,3 +69,73 @@ def verify_follow_prefix(
         "follow_controls": len(controls),
         "sim_contact_oracle_used": True,
     }
+
+
+def verify_delta_follow_prefix(
+    baseline: dict[str, np.ndarray],
+    candidate: dict[str, np.ndarray],
+    *,
+    initial_control: int,
+    receiver_velocity_controls: int,
+    ball_velocity_address: int,
+) -> dict[str, object]:
+    """Audit a 50 Hz measured-state trigger and its exact physical prefix."""
+    n = receiver_velocity_controls
+    if type(n) is not int or n < 2 or type(initial_control) is not int or initial_control < 0:
+        raise ValueError("actual previous and current boundaries required")
+    if type(ball_velocity_address) is not int or ball_velocity_address < 0:
+        raise ValueError("valid ball velocity address required")
+    for data in (baseline, candidate):
+        for key in ("qpos", "qvel", "torque", "ball_forces"):
+            if key not in data or data[key].ndim not in (3, 4) or not np.isfinite(data[key]).all():
+                raise ValueError("finite native physics arrays required")
+        if data["ball_forces"].shape[1:] != (10, 2, 3):
+            raise ValueError("native physics witness shape required")
+        if any(len(data[k]) != len(data["qpos"]) for k in ("qvel", "torque", "ball_forces")):
+            raise ValueError("physical array length mismatch")
+    velocities = candidate["qvel"]
+    if len(velocities) < n or ball_velocity_address + 3 > velocities.shape[2]:
+        raise ValueError("complete actual ball velocity history required")
+    logged = candidate.get("passer_follow_detector_delta")
+    if logged is None or logged.shape != (len(velocities) - n,) or not np.isfinite(logged).all():
+        raise ValueError("complete current-boundary detector history required")
+    expected_deltas = np.array(
+        [
+            np.linalg.norm(
+                velocities[i - 1, -1, ball_velocity_address : ball_velocity_address + 3]
+                - velocities[i - 2, -1, ball_velocity_address : ball_velocity_address + 3]
+            )
+            for i in range(n, len(velocities))
+        ]
+    )
+    if not np.array_equal(logged, expected_deltas):
+        raise ValueError("detector history differs from actual consecutive ball velocities")
+    triggers = np.flatnonzero(logged >= 0.3)
+    prefix = n + int(triggers[0]) if triggers.size else len(velocities)
+    controls = candidate.get("passer_follow_control")
+    if controls is None or controls.ndim != 1 or controls.dtype.kind not in "iu":
+        raise ValueError("explicit actual follow controls required")
+    expected = np.arange(initial_control + prefix, initial_control + len(velocities))
+    if not np.array_equal(controls, expected):
+        raise ValueError("follow controls differ from the actual latched trigger")
+    for key, width in (
+        ("passer_follow_action", 29),
+        ("passer_follow_command", 3),
+        ("passer_follow_observation", 98),
+        ("passer_follow_target", 29),
+    ):
+        value = candidate.get(key)
+        if value is None or value.shape != (len(controls), width) or not np.isfinite(value).all():
+            raise ValueError("complete actual follow evidence required")
+    if len(baseline["qpos"]) < prefix:
+        raise ValueError("baseline ends before intervention")
+    for key in ("qpos", "qvel", "torque", "ball_forces"):
+        if not np.array_equal(baseline[key][:prefix], candidate[key][:prefix]):
+            raise ValueError(f"counterfactual pre-follow physics differs: {key}")
+    return {
+        "exact_prefix_controls": prefix,
+        "follow_controls": len(controls),
+        "detector_triggered": bool(triggers.size),
+        "sim_ball_state_used": True,
+        "sim_contact_oracle_used": False,
+    }

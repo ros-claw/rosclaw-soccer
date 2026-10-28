@@ -8,7 +8,10 @@ import mujoco
 import numpy as np
 
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
-from rosclaw_soccer.rsi.relay_follow_prefix_audit import verify_follow_prefix
+from rosclaw_soccer.rsi.relay_follow_prefix_audit import (
+    verify_delta_follow_prefix,
+    verify_follow_prefix,
+)
 from rosclaw_soccer.rsi.relay_return_pair_comparison import compare_return_pair
 from rosclaw_soccer.rsi.relay_snapshot_cases import select_relay_snapshot_cases
 from rosclaw_soccer.rsi.relay_teammate_successor import teammate_successor
@@ -25,6 +28,7 @@ def main() -> None:
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("source-hash", "audit-hash", "baseline-hash", "candidate-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--ball-delta", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
@@ -56,11 +60,12 @@ def main() -> None:
             )
         ):
             raise ValueError("matching unpromoted 10-control development receipts required")
+    expected_trigger = "causal_ball_velocity_delta_0.3mps" if a.ball_delta else "sim_contact_oracle"
     if (
         trial.get("passer_follow_return") is not True
-        or trial.get("passer_follow_trigger") != "sim_contact_oracle"
+        or trial.get("passer_follow_trigger") != expected_trigger
     ):
-        raise ValueError("explicit privileged teacher trigger required")
+        raise ValueError("explicit declared teacher trigger required")
     for key in (
         "snapshot_hash",
         "frontier_hash",
@@ -131,11 +136,19 @@ def main() -> None:
                 arrays.append({k: data[k] for k in data.files})
             if digest(path) != row["physical_trajectory_hash"]:
                 raise ValueError("trajectory changed during analysis")
-        prefix = verify_follow_prefix(
-            *arrays,
-            initial_control=140,
-            receiver_velocity_controls=br["receiver_velocity_controls"],
-        )
+        if a.ball_delta:
+            prefix = verify_delta_follow_prefix(
+                *arrays,
+                initial_control=140,
+                receiver_velocity_controls=br["receiver_velocity_controls"],
+                ball_velocity_address=teammate.bv,
+            )
+        else:
+            prefix = verify_follow_prefix(
+                *arrays,
+                initial_control=140,
+                receiver_velocity_controls=br["receiver_velocity_controls"],
+            )
         handoff = original[index]["handoff"]
         if bool(handoff) != br["receiving_ready"]:
             raise ValueError("original handoff mismatch")
@@ -191,7 +204,8 @@ def main() -> None:
             candidate_hash=a.candidate_hash,
             scene_hash=scene_hash,
             rows=rows,
-            sim_contact_oracle_used=True,
+            sim_contact_oracle_used=not a.ball_delta,
+            sim_ball_state_used=True,
             independent_fresh=False,
             independent_replay=False,
             optimizer_updates=0,
