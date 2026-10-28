@@ -19,12 +19,31 @@ from scripts.rsi_review_relay_balance_counterfactual import bind, report
 from scripts.rsi_review_whole_receiver_identity import artifact_equal
 
 
+def baseline_contract(declaration: dict, prior_declaration: dict, leg_prior: bool) -> None:
+    """Require a matching development block and an explicitly unmodified baseline."""
+    block = declaration.get("development_context_block")
+    if type(block) is not int or block not in (0, 1, 2):
+        raise ValueError("declared development context block required")
+    if leg_prior:
+        if (
+            prior_declaration.get("protocol")
+            != "soccer.neural_relay_receiver_leg_target_projection.development.v26"
+            or prior_declaration.get("development_context_block") != block
+            or prior_declaration.get("receiver_leg_projection_is_unlearned") is not True
+            or prior_declaration.get("receiver_actor_previous_action_remains_raw") is not True
+        ):
+            raise ValueError("matching raw-memory projection baseline required")
+    elif block != 0:
+        raise ValueError("lateral reference is qualified for development block 0 only")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     for key in ("source", "prior", "output"):
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("source-hash", "audit-hash", "prior-hash", "prior-audit-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--prior-leg-projection", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
@@ -32,6 +51,8 @@ def main() -> None:
     root, audit = a.source / "source", a.source / "audit/complete.json"
     old, old_audit = a.prior / "source", a.prior / "audit/complete.json"
     declaration = json.loads((root / "declaration.json").read_text())
+    prior_declaration = json.loads((old / "declaration.json").read_text())
+    baseline_contract(declaration, prior_declaration, a.prior_leg_projection)
     projected_memory = (
         declaration.get("protocol")
         == "soccer.neural_relay_receiver_projected_action_memory.development.v27"
@@ -49,8 +70,10 @@ def main() -> None:
         old,
         old_audit,
         a.prior_audit_hash,
-        "NEURAL_RELAY_RECEIVER_LATERAL_AUTHORITY32_PENDING_OWN_REPLAY",
-        worlds=32,
+        "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY"
+        if a.prior_leg_projection
+        else "NEURAL_RELAY_RECEIVER_LATERAL_AUTHORITY32_PENDING_OWN_REPLAY",
+        worlds=16 if a.prior_leg_projection else 32,
     )
     if sh != a.source_hash or ph != a.prior_hash:
         raise ValueError("exact pinned source and previous independent replay required")
@@ -60,7 +83,6 @@ def main() -> None:
         is not (not projected_memory)
         or projected_memory
         and declaration.get("receiver_actor_previous_action_reflects_projection") is not True
-        or declaration.get("development_context_block") != 0
     ):
         raise ValueError("exact explicit projection and action-memory contract required")
     model = mujoco.MjModel.from_xml_path(str(root / "scene.xml"))
@@ -92,7 +114,11 @@ def main() -> None:
     baseline = {
         (r["course"]["context"], r["course"]["lateral_m"]): r
         for r in prior["records"]
-        if r["course"]["arm"]["receiver_lateral_offset_m"] == 0.12
+        if (
+            r["course"]["arm"].get("receiver_leg_projection") is False
+            if a.prior_leg_projection
+            else r["course"]["arm"].get("receiver_lateral_offset_m") == 0.12
+        )
     }
     if len(rows) != 16 or len(baseline) != 8:
         raise ValueError("complete unique paired conditions required")
@@ -183,6 +209,8 @@ def main() -> None:
         dict(
             status="RECEIVER_LEG_PROJECTION_REPLAY_REVIEWED",
             source_head=a.expected_head,
+            development_context_block=declaration["development_context_block"],
+            prior_is_raw_leg_projection=a.prior_leg_projection,
             source_hash=sh,
             audit_hash=a.audit_hash,
             prior_hash=ph,
