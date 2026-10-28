@@ -38,7 +38,8 @@ def test_two_body_teacher_saved_torque_reintegration_and_tamper(monkeypatch):
         replay_saved_teacher_torques(w.model, initial, history, ball_body_name="ball")
 
 
-def test_neural_torque_replay_uses_its_actual_forward_schedule(tmp_path):
+@pytest.mark.parametrize("gate", [False, True])
+def test_neural_torque_replay_uses_its_actual_forward_schedule(tmp_path, gate):
     import torch
 
     actor = ResidualActor()
@@ -72,6 +73,7 @@ def test_neural_torque_replay_uses_its_actual_forward_schedule(tmp_path):
         checkpoint_hash=digest(path),
         dataset_hash="fixture",
         horizon_controls=1,
+        near_ball_gate=gate,
     )
     mujoco.mj_forward(w.model, w.data)
     second = w.advance(targets, torque_layers={"b/": layer})
@@ -80,7 +82,7 @@ def test_neural_torque_replay_uses_its_actual_forward_schedule(tmp_path):
     }
     assert (
         replay_saved_teacher_torques(
-            w.model, initial, history, ball_body_name="ball", teacher_forward_each_substep=False
+            w.model, initial, history, ball_body_name="ball", teacher_forward_each_substep=gate
         )
         == 20
     )
