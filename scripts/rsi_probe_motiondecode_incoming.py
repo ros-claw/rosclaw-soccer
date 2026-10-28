@@ -22,6 +22,15 @@ def require_unpromoted_imitation(receipt):
         raise ValueError("unpromoted actual imitation training receipt required")
 
 
+def imitation_reference_bound(declaration, reference_path, reference_hash):
+    """Allow the training reference or an exact path pinned at training time."""
+    inputs = declaration.get("input_file_hashes")
+    return bool(
+        declaration.get("motion_reference_hash") == reference_hash
+        or (isinstance(inputs, dict) and inputs.get(str(reference_path)) == reference_hash)
+    )
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for key in ("qualification-root", "reference-root", "output"):
@@ -125,7 +134,7 @@ def main():
         imitation_declaration = json.loads(imitation_declaration_path.read_text())
         if (
             imitation_declaration.get("source_head") != imitation.get("source_head")
-            or imitation_declaration.get("motion_reference_hash") != a.reference_hash
+            or not imitation_reference_bound(imitation_declaration, ref_path, a.reference_hash)
             or not isinstance(imitation_declaration.get("source_receipts"), list)
             or len(imitation_declaration["source_receipts"]) != 2
             or imitation_declaration["source_receipts"][0] != a.qualification_hash

@@ -1,6 +1,9 @@
 import pytest
 
-from scripts.rsi_probe_motiondecode_incoming import require_unpromoted_imitation
+from scripts.rsi_probe_motiondecode_incoming import (
+    imitation_reference_bound,
+    require_unpromoted_imitation,
+)
 
 
 def test_imitation_receipt_requires_exact_training_fresh_exam_field():
@@ -18,3 +21,11 @@ def test_imitation_receipt_requires_exact_training_fresh_exam_field():
         missing = {k: v for k, v in receipt.items() if k != field}
         with pytest.raises(ValueError):
             require_unpromoted_imitation(missing)
+
+
+def test_imitation_reference_requires_exact_declared_training_or_dev_binding():
+    declaration = {"motion_reference_hash": "train", "input_file_hashes": {"/dev": "dev"}}
+    assert imitation_reference_bound(declaration, "/train", "train")
+    assert imitation_reference_bound(declaration, "/dev", "dev")
+    assert not imitation_reference_bound(declaration, "/other", "dev")
+    assert not imitation_reference_bound(declaration, "/dev", "wrong")
