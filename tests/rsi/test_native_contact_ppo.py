@@ -31,6 +31,23 @@ def test_consecutive_timeouts_stop_gae_recursion():
         course_gae(r, v, v, mask, mask, mask)
 
 
+def test_40_control_course_requires_explicit_opt_in():
+    reward = np.ones((40, 1), dtype=np.float32)
+    value = np.zeros_like(reward)
+    valid = np.ones_like(reward, dtype=bool)
+    terminal = np.zeros_like(valid)
+    timeout = terminal.copy()
+    timeout[-1] = True
+    with pytest.raises(ValueError, match="bounded"):
+        course_gae(reward, value, value, terminal, timeout, valid)
+    advantage, returns = course_gae(
+        reward, value, value, terminal, timeout, valid, maximum_controls=40
+    )
+    assert advantage[-1, 0] == 1
+    assert advantage[0, 0] > advantage[-1, 0]
+    assert np.array_equal(advantage, returns)
+
+
 def test_value_warmup_cannot_touch_actor_or_exploration():
     import torch
     from torch import nn

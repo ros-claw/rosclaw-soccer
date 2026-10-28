@@ -17,9 +17,17 @@ def course_gae(
     terminated: NDArray[np.bool_],
     truncated: NDArray[np.bool_],
     valid: NDArray[np.bool_],
+    *,
+    maximum_controls: int = 24,
 ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     shape = reward.shape
-    if len(shape) != 2 or not 1 <= shape[0] <= 24 or shape[1] < 1:
+    if (
+        type(maximum_controls) is not int
+        or maximum_controls not in (24, 40)
+        or len(shape) != 2
+        or not 1 <= shape[0] <= maximum_controls
+        or shape[1] < 1
+    ):
         raise ValueError("explicit bounded time-major course required")
     for x in (reward, value, next_value):
         if x.shape != shape or x.dtype != np.float32 or not np.isfinite(x).all():
