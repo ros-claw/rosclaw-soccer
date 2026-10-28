@@ -31,7 +31,10 @@ def main() -> None:
     p.add_argument("--new-context-block", type=int, choices=(0, 1, 2), required=True)
     p.add_argument("--receiver-dense-pair", action="store_true")
     p.add_argument("--receiver-motion-pair", action="store_true")
+    p.add_argument("--receiver-learned-exploration", action="store_true")
     a = p.parse_args()
+    if a.receiver_learned_exploration and not a.receiver_dense_pair:
+        p.error("learned exploration requires the pinned dense learned candidate")
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("unused external evidence root required")
@@ -44,6 +47,7 @@ def main() -> None:
         "--receiver-learned-pair",
         *(["--receiver-dense-pair"] if a.receiver_dense_pair else []),
         *(["--receiver-motion-pair"] if a.receiver_motion_pair else []),
+        *(["--receiver-learned-exploration"] if a.receiver_learned_exploration else []),
         "--new-context-block",
         str(a.new_context_block),
         "--output",
