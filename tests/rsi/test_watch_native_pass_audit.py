@@ -184,3 +184,27 @@ def test_expanded_balance_requires_all_64_worlds(monkeypatch, tmp_path):
     source.write_text(json.dumps(report))
     watch.main()
     assert calls[-1][1] == "scripts/rsi_audit_neural_relay_chain.py"
+
+
+def test_lateral_development_requires_exact_unit_and_replay(monkeypatch, tmp_path):
+    calls = setup(
+        monkeypatch,
+        tmp_path,
+        state="ActiveState=inactive\nResult=success\nExecMainStatus=0\n",
+        complete=True,
+    )
+    source = tmp_path / "source" / "complete.json"
+    report = json.loads(source.read_text())
+    report["status"] = "NEURAL_RELAY_RECEIVER_LATERAL_AUTHORITY32_PENDING_OWN_REPLAY"
+    source.write_text(json.dumps(report))
+    watch.sys.argv[watch.sys.argv.index("--unit") + 1] = (
+        "rosclaw-relay-lateral-dev-b1-20261028.service"
+    )
+    watch.sys.argv.append("--relay-lateral-development")
+    watch.main()
+    assert calls[-1][1] == "scripts/rsi_audit_neural_relay_chain.py"
+    watch.sys.argv[watch.sys.argv.index("--unit") + 1] = (
+        "rosclaw-relay-lateral-dev-b3-20261028.service"
+    )
+    with pytest.raises(ValueError, match="bounded"):
+        watch.main()

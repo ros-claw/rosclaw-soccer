@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -25,11 +26,19 @@ def main():
     modes.add_argument("--relay-development", action="store_true")
     modes.add_argument("--relay-balance", action="store_true")
     modes.add_argument("--relay-balance-expanded", action="store_true")
+    modes.add_argument("--relay-lateral-development", action="store_true")
     args = parser.parse_args()
     clean(args.expected_head)
     if (
         not 1 <= args.timeout_sec <= 43200
-        or not args.unit.startswith("rosclaw-team-")
+        or not (
+            args.unit.startswith("rosclaw-team-")
+            or (
+                args.relay_lateral_development
+                and re.fullmatch(r"rosclaw-relay-lateral-dev-b[12]-[0-9]{8}\.service", args.unit)
+                is not None
+            )
+        )
         or not args.unit.endswith(".service")
         or "/" in args.unit
     ):
@@ -69,6 +78,8 @@ def main():
                 != (
                     "NEURAL_RELAY_BALANCE_EXPANDED64_COLLECTED_PENDING_OWN_REPLAY"
                     if args.relay_balance_expanded
+                    else "NEURAL_RELAY_RECEIVER_LATERAL_AUTHORITY32_PENDING_OWN_REPLAY"
+                    if args.relay_lateral_development
                     else "NEURAL_RELAY_BALANCE_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
                     if args.relay_balance
                     else "NEURAL_RELAY_DEVELOPMENT32_COLLECTED_PENDING_OWN_REPLAY"
@@ -96,7 +107,10 @@ def main():
         [
             sys.executable,
             "scripts/rsi_audit_neural_relay_chain.py"
-            if args.relay_development or args.relay_balance or args.relay_balance_expanded
+            if args.relay_development
+            or args.relay_balance
+            or args.relay_balance_expanded
+            or args.relay_lateral_development
             else "scripts/rsi_audit_native_receiving_roles.py",
             "--source-root",
             str(args.source),
