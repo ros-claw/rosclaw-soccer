@@ -36,6 +36,8 @@ def compare_return_pair(
             raise ValueError("physical trajectory lengths differ")
         if ball_qpos + 3 > data["qpos"].shape[2]:
             raise ValueError("ball address outside qpos")
+        if data["ball_forces"].shape[2:] != (2, 3):
+            raise ValueError("two bodies and three contact groups required")
     for key in ("qpos", "qvel", "torque", "ball_forces"):
         if not np.array_equal(baseline[key][:prefix_controls], candidate[key][:prefix_controls]):
             raise ValueError("matched physical prefix differs before intervention")
@@ -46,6 +48,14 @@ def compare_return_pair(
             return None
         return float(np.linalg.norm(ball - goal, axis=-1).min())
 
+    def contact_counts(data: dict[str, np.ndarray]) -> dict[str, int]:
+        # Count native substeps with >1 N contact, not distinct kicks or passes.
+        forces = data["ball_forces"][prefix_controls:, :, 1, :]
+        return {
+            label: int(np.count_nonzero(forces[:, :, i] > 1.0))
+            for i, label in enumerate(("left_foot", "right_foot", "nonfoot"))
+        }
+
     first, second = minimum(baseline), minimum(candidate)
     return {
         "pre_intervention_controls_exact": prefix_controls,
@@ -54,5 +64,8 @@ def compare_return_pair(
         "baseline_min_ball_goal_distance_m": first,
         "candidate_min_ball_goal_distance_m": second,
         "distance_delta_m": None if first is None or second is None else second - first,
+        "baseline_receiver_contact_substeps": contact_counts(baseline),
+        "candidate_receiver_contact_substeps": contact_counts(candidate),
+        "contact_force_threshold_n": 1.0,
         "goal_proximity_is_not_pass_success": True,
     }

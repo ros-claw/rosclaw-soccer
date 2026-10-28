@@ -43,6 +43,23 @@ def test_no_handoff_has_no_goal_distance():
     assert result["distance_delta_m"] is None
 
 
+def test_post_handoff_receiver_contact_substeps_are_not_counted_as_kicks():
+    a, b = trajectory(), trajectory()
+    a["ball_forces"][2, 0, 1, 0] = 2.0
+    b["ball_forces"][2, 1:3, 1, 2] = 3.0
+    result = compare(a, b)
+    assert result["baseline_receiver_contact_substeps"] == {
+        "left_foot": 1,
+        "right_foot": 0,
+        "nonfoot": 0,
+    }
+    assert result["candidate_receiver_contact_substeps"] == {
+        "left_foot": 0,
+        "right_foot": 0,
+        "nonfoot": 2,
+    }
+
+
 def test_rejects_nonfinite_or_incomplete_trajectory():
     a, b = trajectory(), trajectory()
     b["qpos"][3, 0, 0] = np.nan
