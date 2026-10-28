@@ -97,6 +97,46 @@ def main() -> None:
     category_counts = Counter(
         c["category"] for r in rows for c in r["contact"]["reconstructed_contacts"]
     )
+    first_contact_groups = {}
+    for group in ("foot_only", "other_only", "mixed"):
+        subset = []
+        for row in rows:
+            contacts = row["contact"]["reconstructed_contacts"]
+            has_foot = any(c["category"] in ("left_foot", "right_foot") for c in contacts)
+            has_other = any(c["category"] == "other_body" for c in contacts)
+            if (
+                (has_foot and has_other and group == "mixed")
+                or (has_foot and not has_other and group == "foot_only")
+                or (has_other and not has_foot and group == "other_only")
+            ):
+                subset.append(row)
+        first_contact_groups[group] = dict(
+            episodes=len(subset),
+            subsequent_or_same_step_nonfoot=sum(
+                r["strict_outcome"]["receiver_nonfoot_substep"] is not None for r in subset
+            ),
+            either_body_failure=sum(not r["strict_outcome"]["both_bodies_healthy"] for r in subset),
+            median_first_reconstructed_contact_point_z_m=float(
+                np.median(
+                    [
+                        r["contact"]["reconstructed_contacts"][0]["contact_point_world_m"][2]
+                        for r in subset
+                    ]
+                )
+            )
+            if subset
+            else None,
+            median_first_reconstructed_contact_relative_speed_mps=float(
+                np.median(
+                    [
+                        r["contact"]["reconstructed_contacts"][0]["relative_speed_mps"]
+                        for r in subset
+                    ]
+                )
+            )
+            if subset
+            else None,
+        )
     summary = dict(
         episodes=len(rows),
         observed_first_contact=sum(r["contact"]["observed_receiver_contact"] for r in rows),
@@ -107,6 +147,7 @@ def main() -> None:
         ),
         body_contacts=dict(body_counts),
         category_contacts=dict(category_counts),
+        first_contact_groups=first_contact_groups,
     )
     clean(a.expected_head)
     a.output.mkdir(parents=True)
