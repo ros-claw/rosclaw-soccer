@@ -27,6 +27,7 @@ class SharedNativeReceiveTeacher:
         *,
         horizon_controls: int,
         capture_after_contact: bool = False,
+        strike_foot_speed_mps: float | None = None,
     ):
         world._require_current_boundary()
         if (
@@ -37,6 +38,15 @@ class SharedNativeReceiveTeacher:
             or not 1 <= horizon_controls <= 600
             or len(world.layouts) != 2
             or type(capture_after_contact) is not bool
+            or (
+                strike_foot_speed_mps is not None
+                and (
+                    type(strike_foot_speed_mps) not in (int, float)
+                    or not np.isfinite(strike_foot_speed_mps)
+                    or not 0.3 <= strike_foot_speed_mps <= 2.5
+                    or capture_after_contact
+                )
+            )
         ):
             raise ValueError("own unmodified two-player SIM boundary required")
         self.world, self.prefix = world, prefix
@@ -59,6 +69,9 @@ class SharedNativeReceiveTeacher:
             maximum_joint_residual_nm=base.committed_receive_maximum_joint_residual_nm,
             aim_yaw_bias_rad=base.committed_receive_aim_yaw_bias_rad,
         )
+        self.contact_mode = "receive" if strike_foot_speed_mps is None else "strike"
+        if strike_foot_speed_mps is not None:
+            self.config = replace(base, strike_foot_speed_mps=float(strike_foot_speed_mps))
         self.next_native_step = world.native_steps
         self.horizon_native_steps = self.next_native_step + 10 * horizon_controls
         self.pending = self.failed = False
@@ -116,7 +129,11 @@ class SharedNativeReceiveTeacher:
                 if self._capture_start_step is None
                 else self.next_native_step - self._capture_start_step
             )
-            if self.capture_after_contact and capture_age is not None and capture_age > 150:
+            if (
+                (self.capture_after_contact or self.contact_mode == "strike")
+                and capture_age is not None
+                and capture_age > 150
+            ):
                 self.pending = True
                 self.commands += 1
                 return parent.copy()
@@ -133,7 +150,7 @@ class SharedNativeReceiveTeacher:
                 ball_position_m=ball,
                 ball_velocity_mps=ball_velocity,
                 desired_ball_direction_xy=direction.copy(),
-                contact_mode="receive",
+                contact_mode=self.contact_mode,
                 local_lateral_sign=left_sign if use_left else -left_sign,
                 contact_recent=recent,
                 config=self.config,

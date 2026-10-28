@@ -83,3 +83,34 @@ def test_capture_uses_observed_contact_foot_then_releases_after_300ms(monkeypatc
     out = w.advance(targets, torque_layers={"b/": teacher})
     assert len(received) == calls
     assert not out["applied_torque_change"].any()
+
+
+def test_strike_teacher_owns_passer_torque_and_releases(monkeypatch):
+    import rosclaw_soccer.rsi.shared_native_receive_teacher as module
+
+    calls = []
+
+    def effect(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(torque_nm=np.full(29, 1.0), active=True)
+
+    monkeypatch.setattr(module, "locomotion_contact_teacher_effect", effect)
+    w = world()
+    teacher = SharedNativeReceiveTeacher(w, "a/", horizon_controls=2, strike_foot_speed_mps=0.8)
+    targets = {p: np.zeros(29) for p in w.layouts}
+    output = w.advance(targets, torque_layers={"a/": teacher})
+    assert calls[0]["contact_mode"] == "strike"
+    assert calls[0]["config"].strike_foot_speed_mps == 0.8
+    assert np.any(output["applied_torque_change"][:, w.layouts["a/"].ai])
+    assert not np.any(output["applied_torque_change"][:, w.layouts["b/"].ai])
+    teacher._capture_start_step = teacher.next_native_step - 151
+    count = len(calls)
+    released = w.advance(targets, torque_layers={"a/": teacher})
+    assert len(calls) == count
+    assert not released["applied_torque_change"].any()
+
+
+@pytest.mark.parametrize("speed", [float("nan"), -1, 3, True])
+def test_strike_teacher_rejects_invalid_speed(speed):
+    with pytest.raises(ValueError):
+        SharedNativeReceiveTeacher(world(), "a/", horizon_controls=1, strike_foot_speed_mps=speed)

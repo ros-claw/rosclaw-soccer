@@ -41,6 +41,7 @@ def main():
     p.add_argument("--receiver-motion-pair", action="store_true")
     p.add_argument("--receiver-continuation-pair", action="store_true")
     p.add_argument("--passer-residual-pair", action="store_true")
+    p.add_argument("--passer-strike-teacher-pair", action="store_true")
     p.add_argument("--passer-velocity-recovery-pair", action="store_true")
     p.add_argument("--passer-velocity-blend", action="store_true")
     p.add_argument("--precontact-fullbody-pair", action="store_true")
@@ -67,6 +68,35 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.passer_strike_teacher_pair and (
+        a.new_context_block is None
+        or a.reference_bridge_controls != [0]
+        or any(
+            getattr(a, name)
+            for name in (
+                "successor_alignment_study",
+                "balance_teacher_pair",
+                "balance_expanded",
+                "receiver_follow_study",
+                "receiver_lateral_authority",
+                "receiver_foot_teacher_pair",
+                "receiver_leg_limit_pair",
+                "receiver_whole_identity",
+                "receiver_center_curriculum",
+                "receiver_learned_pair",
+                "receiver_dense_pair",
+                "receiver_motion_pair",
+                "receiver_continuation_pair",
+                "passer_residual_pair",
+                "passer_velocity_recovery_pair",
+                "precontact_fullbody_pair",
+                "passer_contact_exit",
+                "receiver_exploration",
+                "receiver_learned_exploration",
+            )
+        )
+    ):
+        p.error("passer strike teacher requires one isolated development block")
     if a.receiver_adaptive_intercept and (
         not a.receiver_lateral_authority or a.receiver_longitudinal_authority
     ):
@@ -279,6 +309,7 @@ def main():
         )
     ):
         p.error("expanded study requires exact closed pilot review and all three teachers")
+    from rosclaw_soccer.rsi.shared_native_receive_teacher import SharedNativeReceiveTeacher
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import admit_frontier, clean, receipt, source_pins
@@ -425,6 +456,16 @@ def main():
                 passer_residual_fraction=fraction,
             )
             for fraction in (1.0, 0.5)
+        ]
+    if a.passer_strike_teacher_pair:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                passer_strike_teacher=enabled,
+            )
+            for enabled in (False, True)
         ]
     if a.precontact_fullbody_pair:
         arms = [
@@ -583,7 +624,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_passer_velocity_blend.development.v31"
+                "soccer.neural_relay_passer_strike_torque.development.v1"
+                if a.passer_strike_teacher_pair
+                else "soccer.neural_relay_passer_velocity_blend.development.v31"
                 if a.passer_velocity_blend
                 else "soccer.neural_relay_passer_velocity_recovery.development.v30"
                 if a.passer_velocity_recovery_pair
@@ -692,11 +735,13 @@ def main():
             # the velocity actor's observation retains its original raw action.
             bounded_teacher_added_after_neural=a.balance_teacher_pair is not None
             or a.receiver_foot_teacher_pair
-            or a.receiver_leg_limit_pair,
+            or a.receiver_leg_limit_pair
+            or a.passer_strike_teacher_pair,
             all_bodies_initialized_once=True,
             no_ball_reposition=True,
             no_future_readiness=True,
-            cartesian_teachers_enabled=a.receiver_foot_teacher_pair,
+            cartesian_teachers_enabled=a.receiver_foot_teacher_pair or a.passer_strike_teacher_pair,
+            passer_strike_teacher_is_unlearned=a.passer_strike_teacher_pair,
             receiver_foot_teacher_is_unlearned=a.receiver_foot_teacher_pair,
             receiver_predictive_foot_shin_is_unlearned=a.receiver_predictive_foot_shin,
             receiver_axis_local_fallback=a.receiver_axis_local_fallback,
@@ -1016,6 +1061,7 @@ def main():
             launch = False
             passer_foot_seen = False
             passer_exit_gate = PasserContactExitGate()
+            passer_strike_teacher = None
             folder = a.output / f"trial{index}"
             folder.mkdir()
             physical, nn_a, nn_b, nn_v, nn_shadow, nn_passer_velocity = [], [], [], [], [], []
@@ -1330,7 +1376,16 @@ def main():
                         trace_b.update(balance_trace)
                     trace_b["control"] = np.array(step)
                 counts["actual_actor_calls"] += 1
-                row = w.advance({"a/": target_a, "b/": target_b})
+                if course["arm"].get("passer_strike_teacher", False) and step == 80:
+                    passer_strike_teacher = SharedNativeReceiveTeacher(
+                        w, "a/", horizon_controls=520, strike_foot_speed_mps=0.8
+                    )
+                row = w.advance(
+                    {"a/": target_a, "b/": target_b},
+                    torque_layers={"a/": passer_strike_teacher}
+                    if passer_strike_teacher is not None
+                    else None,
+                )
                 counts["native_steps"] += 10
                 if trace_a is not None:
                     if blend_active:
@@ -1407,6 +1462,16 @@ def main():
                         body_failed=np.array([row["body_failed"][p] for p in ("a/", "b/")]),
                         time_before=np.array(row["time_before"]),
                         target_b=np.asarray(target_b, np.float64),
+                    )
+                    | (
+                        dict(
+                            parent_torque=row.get("parent_torque", row["torque"]),
+                            applied_torque_change=row.get(
+                                "applied_torque_change", np.zeros_like(row["torque"])
+                            ),
+                        )
+                        if a.passer_strike_teacher_pair
+                        else {}
                     )
                 )
                 if w.failed:
@@ -1486,6 +1551,12 @@ def main():
                 original_clean_foot_grade_not_changed=True,
                 whole_game_verified=False,
                 passer_velocity_recovery_boundary=passer_recovery_boundary,
+                passer_strike_teacher_commands=passer_strike_teacher.commands
+                if passer_strike_teacher is not None
+                else 0,
+                passer_strike_teacher_active=passer_strike_teacher.active_commands
+                if passer_strike_teacher is not None
+                else 0,
             )
             if a.precontact_fullbody_pair:
                 record["motor_transition_executed"] = handoff is not None
@@ -1510,7 +1581,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_PASSER_VELOCITY_BLEND16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_PASSER_STRIKE_TEACHER16_PENDING_OWN_REPLAY"
+                    if a.passer_strike_teacher_pair
+                    else "NEURAL_RELAY_PASSER_VELOCITY_BLEND16_PENDING_OWN_REPLAY"
                     if a.passer_velocity_blend
                     else "NEURAL_RELAY_PASSER_VELOCITY_RECOVERY16_PENDING_OWN_REPLAY"
                     if a.passer_velocity_recovery_pair
