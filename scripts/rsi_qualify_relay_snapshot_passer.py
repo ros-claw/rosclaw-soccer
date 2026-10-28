@@ -58,6 +58,7 @@ def main() -> None:
     p.add_argument("--with-shadow", action="store_true")
     p.add_argument("--return-handoff", action="store_true")
     p.add_argument("--smooth-transition", action="store_true")
+    p.add_argument("--smooth-transition-duration", type=int, default=20)
     p.add_argument("--expanded-velocity-proof", type=Path)
     p.add_argument("--expanded-velocity-proof-hash")
     a = p.parse_args()
@@ -79,6 +80,10 @@ def main() -> None:
         raise ValueError("return replay requires actual dynamic readiness and own shadow history")
     if a.smooth_transition and not a.return_handoff:
         raise ValueError("smooth candidate requires the full own return handoff")
+    if not 1 <= a.smooth_transition_duration <= 100 or (
+        not a.smooth_transition and a.smooth_transition_duration != 20
+    ):
+        raise ValueError("explicit bounded transition duration requires smooth candidate")
     if a.nondefault:
         if (
             a.expanded_velocity_proof.is_symlink()
@@ -609,7 +614,7 @@ def main() -> None:
                         if receiver.phase == "MOTION_COMPLETE":
                             receiver.begin_standing()
                         relative = frame - start
-                        smoothing = a.smooth_transition and relative < 20
+                        smoothing = a.smooth_transition and relative < a.smooth_transition_duration
                         target_b, trace_b = receiver.propose(with_reference_evidence=smoothing)
                         executed_b = trace_b["NN_action"]
                         if smoothing:
@@ -620,7 +625,7 @@ def main() -> None:
                                 ep.scale,
                                 ep.order,
                                 control_index=relative,
-                                duration=20,
+                                duration=a.smooth_transition_duration,
                             )
                             target_b = ep.offset + executed_b[ep.order] * ep.scale
                         if not a.smooth_transition and (
@@ -774,6 +779,9 @@ def main() -> None:
             causal_receiving_boundary_reconstructed=a.dynamic_boundary,
             own_return_handoff_reconstructed=a.return_handoff and not a.smooth_transition,
             smooth_transition=a.smooth_transition,
+            smooth_transition_duration=a.smooth_transition_duration
+            if a.smooth_transition
+            else None,
             own_shadow_recurrence_verified=a.with_shadow,
             coupled_physics_continuation_verified=all(
                 r["coupled_native_substeps_exact"] for r in rows
