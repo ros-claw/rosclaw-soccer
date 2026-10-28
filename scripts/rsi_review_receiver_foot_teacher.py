@@ -9,7 +9,10 @@ import numpy as np
 
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.paired_precontact_authority import precontact_tracking_error
-from rosclaw_soccer.rsi.passer_curriculum_outcome import strict_pass_receive
+from rosclaw_soccer.rsi.passer_curriculum_outcome import (
+    receiver_first_foot_velocity_change,
+    strict_pass_receive,
+)
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_fresh_common import clean
@@ -133,6 +136,9 @@ def main() -> None:
                     raise ValueError("complete early-activation history required")
                 outcomes[name] = dict(
                     outcome=outcome,
+                    first_foot_ball_velocity=receiver_first_foot_velocity_change(
+                        raw["ball_forces"], raw["qvel"][:, :, layout.bv : layout.bv + 3]
+                    ),
                     precontact_tracking=precontact_tracking_error(
                         raw["target_b"],
                         raw["qpos"],

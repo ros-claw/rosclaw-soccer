@@ -3,6 +3,51 @@
 import numpy as np
 
 
+def receiver_first_foot_velocity_change(ball_forces: np.ndarray, ball_velocity: np.ndarray) -> dict:
+    """Measure first receiver-foot event from sampled native substeps.
+
+    The one-substep velocity change includes gravity and any simultaneous
+    contacts; it is not an isolated foot impulse or contact-point velocity.
+    """
+    if (
+        not isinstance(ball_forces, np.ndarray)
+        or ball_forces.ndim != 4
+        or ball_forces.shape[1:] != (10, 2, 3)
+        or not len(ball_forces)
+        or not np.isfinite(ball_forces).all()
+        or (ball_forces < 0).any()
+        or not isinstance(ball_velocity, np.ndarray)
+        or ball_velocity.shape != (len(ball_forces), 10, 3)
+        or not np.isfinite(ball_velocity).all()
+    ):
+        raise ValueError("aligned finite native force and ball velocity substeps required")
+    forces = ball_forces.reshape(-1, 2, 3)
+    velocities = ball_velocity.reshape(-1, 3)
+    events = np.flatnonzero(np.max(forces[:, 1, :2], axis=1) > 10)
+    if not len(events):
+        return dict(
+            first_foot_substep=None,
+            pre_speed_mps=None,
+            post_speed_mps=None,
+            velocity_change_mps=None,
+            concurrent_nonfoot=None,
+            pre_sample_available=False,
+            isolated_foot_impulse=False,
+        )
+    index = int(events[0])
+    return dict(
+        first_foot_substep=index,
+        pre_speed_mps=float(np.linalg.norm(velocities[index - 1])) if index else None,
+        post_speed_mps=float(np.linalg.norm(velocities[index])),
+        velocity_change_mps=float(np.linalg.norm(velocities[index] - velocities[index - 1]))
+        if index
+        else None,
+        concurrent_nonfoot=bool(forces[index, 1, 2] > 1),
+        pre_sample_available=bool(index),
+        isolated_foot_impulse=False,
+    )
+
+
 def delivery_center_speeds(
     ball_qvel: np.ndarray, *, passer_substep: int | None, receiver_substep: int | None
 ) -> dict:
