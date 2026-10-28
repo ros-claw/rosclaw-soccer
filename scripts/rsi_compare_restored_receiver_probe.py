@@ -32,6 +32,10 @@ def main() -> None:
     base = json.loads(a.baseline.read_text())
     cand = json.loads(a.candidate.read_text())
     snapshot = json.loads(a.snapshots.read_text())
+    expanded = (
+        snapshot.get("status")
+        == "RELAY_NONDEFAULT_PRECONTACT_NATIVE_STATE_RECONSTRUCTION_NOT_POLICY"
+    )
     selector_mode = (
         cand.get("status") == "RELAY_CONTEXT_SELECTOR_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
     )
@@ -43,10 +47,21 @@ def main() -> None:
         and any(residual)
     )
     if (
-        base.get("status") != "RELAY_LEG_RESIDUAL_ZERO_OWN_REPLAY_NOT_FOOTBALL_SUCCESS"
+        (expanded and selector_mode)
+        or base.get("status")
+        != (
+            "RELAY_NONDEFAULT_LEG_ZERO_OWN_REPLAY_NOT_FOOTBALL_SUCCESS"
+            if expanded
+            else "RELAY_LEG_RESIDUAL_ZERO_OWN_REPLAY_NOT_FOOTBALL_SUCCESS"
+        )
         or (
             not selector_mode
-            and cand.get("status") != "RELAY_LEG_RESIDUAL_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
+            and cand.get("status")
+            != (
+                "RELAY_NONDEFAULT_LEG_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
+                if expanded
+                else "RELAY_LEG_RESIDUAL_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
+            )
         )
         or base.get("probe_leg_rad") != [0.0] * 12
         or (not selector_mode and not valid_residual)
@@ -65,6 +80,7 @@ def main() -> None:
                 "snapshot_hash",
                 "frontier_hash",
                 "role_proof_hash",
+                "expanded_velocity_proof_hash",
             )
         )
         or base.get("snapshot_hash") != a.snapshot_hash
@@ -85,11 +101,12 @@ def main() -> None:
     b = {r["index"]: r for r in base["rows"]}
     c = {r["index"]: r for r in cand["rows"]}
     if (
-        len(base["rows"]) != 8
-        or len(cand["rows"]) != 8
-        or len(b) != 8
-        or len(c) != 8
+        len(base["rows"]) != (24 if expanded else 8)
+        or len(cand["rows"]) != (24 if expanded else 8)
+        or len(b) != (24 if expanded else 8)
+        or len(c) != (24 if expanded else 8)
         or set(b) != set(c)
+        or set(b) != {r["index"] for r in snapshot["rows"]}
     ):
         raise ValueError("all eight exactly matched development cases required")
     model = mujoco.MjModel.from_xml_path(str(a.scene))
@@ -98,7 +115,10 @@ def main() -> None:
     )
     rows = []
     for index in sorted(b):
-        if any(b[index].get(k) != c[index].get(k) for k in ("context", "side")):
+        if any(
+            b[index].get(k) != c[index].get(k)
+            for k in ("context", "side", "receiver_lateral_offset_m")
+        ):
             raise ValueError("paired source context required")
         if selector_mode and (
             type(c[index].get("selector_class")) is not int

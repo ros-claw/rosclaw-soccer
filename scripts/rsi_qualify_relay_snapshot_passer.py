@@ -38,6 +38,18 @@ from scripts.rsi_review_relay_balance_counterfactual import bind, report
 from scripts.rsi_stroke_search_common import open_motor
 
 
+def expanded_probe_end_control(handoff: dict | None) -> int:
+    """Never extrapolate an intervened velocity policy through a recorded handoff."""
+    if handoff is None:
+        return 178
+    if type(handoff) is not dict or type(handoff.get("control")) is not int:
+        raise ValueError("explicit historical handoff control required")
+    control = handoff["control"]
+    if not 141 <= control <= 300:
+        raise ValueError("handoff must be after restored initial control")
+    return min(178, control)
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     for key in ("source", "snapshots", "frontier", "role-proof", "output"):
@@ -73,7 +85,8 @@ def main() -> None:
     if (
         a.nondefault != (a.expanded_velocity_proof is not None)
         or a.nondefault != (a.expanded_velocity_proof_hash is not None)
-        or (a.nondefault and (probe is not None or a.selector_receipt is not None))
+        or (a.nondefault and a.selector_receipt is not None)
+        or (a.nondefault and probe is not None and a.dynamic_boundary)
     ):
         raise ValueError("expanded zero-only proof requires exact expanded receiver inference")
     if a.dynamic_boundary and not a.nondefault:
@@ -223,9 +236,14 @@ def main() -> None:
     by_index = {r["index"]: r for r in source["records"]}
     rows = []
     probe_trajectories = []
-    end_control = 300 if a.dynamic_boundary else 160 if a.nondefault else 178
     for item in snaps["rows"]:
         row = by_index[item["index"]]
+        # Expanded physical probes stop before the actual historical role
+        # handoff; differing horizons are retained as censored evidence.
+        if a.nondefault and probe is not None:
+            end_control = expanded_probe_end_control(row["handoff"])
+        else:
+            end_control = 300 if a.dynamic_boundary else 160 if a.nondefault else 178
         role_offset = row["course"]["arm"]["receiver_lateral_offset_m"]
         if (
             role_offset not in ((-0.35, -0.12, 0.35) if a.nondefault else (0.12,))
@@ -869,6 +887,10 @@ def main() -> None:
                 if a.return_handoff
                 else "RELAY_NONDEFAULT_CAUSAL_RECEIVING_BOUNDARY_MATCH_NOT_FOOTBALL_SUCCESS"
                 if a.dynamic_boundary
+                else "RELAY_NONDEFAULT_LEG_ZERO_OWN_REPLAY_NOT_FOOTBALL_SUCCESS"
+                if a.nondefault and probe is not None and not np.any(probe)
+                else "RELAY_NONDEFAULT_LEG_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
+                if a.nondefault and probe is not None
                 else "RELAY_NONDEFAULT_DUAL_NEURAL_20_CONTROLS_MATCH_NOT_FOOTBALL_SUCCESS"
                 if a.nondefault
                 else "RELAY_CONTEXT_SELECTOR_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
