@@ -36,3 +36,45 @@ def receiver_target_limit_projection(
     return dict(
         target=target, nominal=nominal.copy(), delta=delta, changed_axes=delta != 0, enabled=enabled
     )
+
+
+def projected_action_memory(
+    raw_action: np.ndarray,
+    executed_target: np.ndarray,
+    action_offset: np.ndarray,
+    action_scale: np.ndarray,
+    changed_axes: np.ndarray,
+) -> np.ndarray:
+    """Encode projected targets in changed axes; retain original others bitwise.
+
+    This is a different explicit research policy observation contract, not a
+    claim that a network trained on raw actions will perform better with it.
+    """
+    if (
+        not isinstance(raw_action, np.ndarray)
+        or raw_action.shape != (29,)
+        or raw_action.dtype != np.float32
+        or not np.isfinite(raw_action).all()
+        or any(
+            not isinstance(x, np.ndarray)
+            or x.shape != (29,)
+            or x.dtype != np.float64
+            or not np.isfinite(x).all()
+            for x in (executed_target, action_offset, action_scale)
+        )
+        or (action_scale <= 0).any()
+        or not isinstance(changed_axes, np.ndarray)
+        or changed_axes.shape != (29,)
+        or changed_axes.dtype != np.bool_
+        or changed_axes[12:].any()
+    ):
+        raise ValueError(
+            "finite typed action, executed target and explicit leg projection required"
+        )
+    out = raw_action.copy()
+    out[changed_axes] = (
+        (executed_target[changed_axes] - action_offset[changed_axes]) / action_scale[changed_axes]
+    ).astype(np.float32)
+    if not np.isfinite(out).all():
+        raise ValueError("finite encoded executed action required")
+    return out

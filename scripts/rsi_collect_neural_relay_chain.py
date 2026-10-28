@@ -29,6 +29,7 @@ def main():
     p.add_argument("--receiver-predictive-foot-shin", action="store_true")
     p.add_argument("--receiver-axis-local-fallback", action="store_true")
     p.add_argument("--receiver-leg-limit-pair", action="store_true")
+    p.add_argument("--receiver-projection-executed-memory", action="store_true")
     p.add_argument("--receiver-whole-identity", action="store_true")
     p.add_argument("--receiver-center-curriculum", action="store_true")
     p.add_argument("--receiver-learned-pair", action="store_true")
@@ -60,6 +61,8 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.receiver_projection_executed_memory and not a.receiver_leg_limit_pair:
+        p.error("projected executed-action memory requires the isolated leg-limit pair")
     if a.receiver_leg_limit_pair and (
         a.new_context_block is None
         or a.receiver_foot_teacher_pair
@@ -506,7 +509,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_receiver_leg_target_projection.development.v26"
+                "soccer.neural_relay_receiver_projected_action_memory.development.v27"
+                if a.receiver_projection_executed_memory
+                else "soccer.neural_relay_receiver_leg_target_projection.development.v26"
                 if a.receiver_leg_limit_pair
                 else "soccer.neural_relay_receiver_axis_local_fallback.development.v25"
                 if a.receiver_axis_local_fallback
@@ -610,7 +615,10 @@ def main():
             receiver_predictive_foot_shin_is_unlearned=a.receiver_predictive_foot_shin,
             receiver_axis_local_fallback=a.receiver_axis_local_fallback,
             receiver_leg_projection_is_unlearned=a.receiver_leg_limit_pair,
-            receiver_actor_previous_action_remains_raw=a.receiver_leg_limit_pair,
+            receiver_actor_previous_action_remains_raw=(
+                a.receiver_leg_limit_pair and not a.receiver_projection_executed_memory
+            ),
+            receiver_actor_previous_action_reflects_projection=a.receiver_projection_executed_memory,
             geometry_role_selector_is_teacher=True,
             post_touch_velocity_follow_is_unlearned_teacher=a.receiver_follow_study,
             lateral_intercept_is_unlearned_teacher=a.receiver_lateral_authority,
@@ -668,6 +676,7 @@ def main():
         from rosclaw_soccer.rsi.precontact_fullbody_gate import precontact_fullbody_gate
         from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
         from rosclaw_soccer.rsi.receiver_target_limit_projection import (
+            projected_action_memory,
             receiver_target_limit_projection,
         )
         from rosclaw_soccer.rsi.receiving_handoff_opportunity import body_contact_kind
@@ -1067,6 +1076,19 @@ def main():
                         )
                         target_b = projection["target"]
                         trace_v.update({"LIMIT_" + k: np.asarray(v) for k, v in projection.items()})
+                        if (
+                            a.receiver_projection_executed_memory
+                            and course["arm"]["receiver_leg_projection"]
+                        ):
+                            velocity.last_action = projected_action_memory(
+                                velocity.last_action,
+                                target_b,
+                                np.asarray(velocity.params.action_offset, np.float64),
+                                np.asarray(velocity.params.action_scale, np.float64),
+                                projection["changed_axes"],
+                            )
+                        if a.receiver_projection_executed_memory:
+                            trace_v["LIMIT_memory_after"] = velocity.last_action.copy()
                     if (
                         a.receiver_whole_identity
                         or a.receiver_exploration
@@ -1282,7 +1304,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_RECEIVER_PROJECTED_ACTION_MEMORY16_PENDING_OWN_REPLAY"
+                    if a.receiver_projection_executed_memory
+                    else "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY"
                     if a.receiver_leg_limit_pair
                     else "NEURAL_RELAY_RECEIVER_AXIS_LOCAL_FALLBACK16_PENDING_OWN_REPLAY"
                     if a.receiver_axis_local_fallback

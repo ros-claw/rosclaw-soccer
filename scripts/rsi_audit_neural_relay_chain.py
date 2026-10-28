@@ -31,7 +31,10 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
-    leg_limit_pair = (
+    projected_memory = (
+        dec["protocol"] == "soccer.neural_relay_receiver_projected_action_memory.development.v27"
+    )
+    leg_limit_pair = projected_memory or (
         dec["protocol"] == "soccer.neural_relay_receiver_leg_target_projection.development.v26"
     )
     axis_local_fallback = (
@@ -134,7 +137,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_RECEIVER_PROJECTED_ACTION_MEMORY16_PENDING_OWN_REPLAY"
+        if projected_memory
+        else "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY"
         if leg_limit_pair
         else "NEURAL_RELAY_RECEIVER_AXIS_LOCAL_FALLBACK16_PENDING_OWN_REPLAY"
         if axis_local_fallback
@@ -208,6 +213,7 @@ def main():
             "soccer.neural_relay_receiver_predictive_foot_shin.development.v24",
             "soccer.neural_relay_receiver_axis_local_fallback.development.v25",
             "soccer.neural_relay_receiver_leg_target_projection.development.v26",
+            "soccer.neural_relay_receiver_projected_action_memory.development.v27",
             "soccer.neural_relay_passer_residual_pair.development.v11",
             "soccer.neural_relay_passer_contact_exit.development.v12",
             "soccer.neural_relay_receiver_center_identity.development.v13",
@@ -418,11 +424,16 @@ def main():
             raise ValueError("explicit axis-local fallback research contract required")
         if leg_limit_pair and (
             dec.get("receiver_leg_projection_is_unlearned") is not True
-            or dec.get("receiver_actor_previous_action_remains_raw") is not True
+            or dec.get("receiver_actor_previous_action_remains_raw") is not (not projected_memory)
             or dec.get("joint_targets_remain_actual_neural_outputs") is not False
             or dec.get("bounded_teacher_added_after_neural") is not True
         ):
             raise ValueError("explicit unlearned target projection and raw action memory required")
+        if (
+            projected_memory
+            and dec.get("receiver_actor_previous_action_reflects_projection") is not True
+        ):
+            raise ValueError("explicit executed-action memory ablation required")
         if balance_expanded and (
             dec.get("receiver_lateral_offsets_m") != list(sides)
             or dec.get("joint_targets_remain_actual_neural_outputs") is not False
@@ -578,6 +589,7 @@ def main():
         from rosclaw_soccer.rsi.precontact_fullbody_gate import precontact_fullbody_gate
         from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
         from rosclaw_soccer.rsi.receiver_target_limit_projection import (
+            projected_action_memory,
             receiver_target_limit_projection,
         )
         from rosclaw_soccer.rsi.receiving_handoff_opportunity import body_contact_kind
@@ -917,6 +929,16 @@ def main():
                         )
                         target_b = projection["target"]
                         trace_v.update({"LIMIT_" + k: np.asarray(v) for k, v in projection.items()})
+                        if projected_memory and course["arm"]["receiver_leg_projection"]:
+                            velocity.last_action = projected_action_memory(
+                                velocity.last_action,
+                                target_b,
+                                np.asarray(velocity.params.action_offset, np.float64),
+                                np.asarray(velocity.params.action_scale, np.float64),
+                                projection["changed_axes"],
+                            )
+                        if projected_memory:
+                            trace_v["LIMIT_memory_after"] = velocity.last_action.copy()
                     if whole_identity or exploration or learned_pair:
                         counts["receiver_onnx_calls"] += 1
                         if whole_receiver is not None:

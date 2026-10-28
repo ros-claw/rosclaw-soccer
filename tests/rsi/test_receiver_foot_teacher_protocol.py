@@ -128,3 +128,29 @@ def test_leg_projection_rejects_mixed_interventions(conflict):
     )
     assert result.returncode != 0
     assert "leg-limit projection requires an isolated development block" in result.stderr
+
+
+def test_projected_memory_requires_explicit_projection_pair():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
+            "--frontier-root",
+            "/not-read",
+            "--frontier-head",
+            "unused",
+            "--frontier-hash",
+            "unused",
+            "--expected-head",
+            "unused",
+            "--output",
+            "/not-written",
+            "--receiver-projection-executed-memory",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "projected executed-action memory requires the isolated leg-limit pair" in result.stderr

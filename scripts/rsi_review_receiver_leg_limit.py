@@ -29,11 +29,18 @@ def main() -> None:
         raise ValueError("unused external output required")
     root, audit = a.source / "source", a.source / "audit/complete.json"
     old, old_audit = a.prior / "source", a.prior / "audit/complete.json"
+    declaration = json.loads((root / "declaration.json").read_text())
+    projected_memory = (
+        declaration.get("protocol")
+        == "soccer.neural_relay_receiver_projected_action_memory.development.v27"
+    )
     source, _, sh = report(
         root,
         audit,
         a.audit_hash,
-        "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY",
+        "NEURAL_RELAY_RECEIVER_PROJECTED_ACTION_MEMORY16_PENDING_OWN_REPLAY"
+        if projected_memory
+        else "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY",
         worlds=16,
     )
     prior, _, ph = report(
@@ -45,10 +52,12 @@ def main() -> None:
     )
     if sh != a.source_hash or ph != a.prior_hash:
         raise ValueError("exact pinned source and previous independent replay required")
-    declaration = json.loads((root / "declaration.json").read_text())
     if (
         declaration.get("receiver_leg_projection_is_unlearned") is not True
-        or declaration.get("receiver_actor_previous_action_remains_raw") is not True
+        or declaration.get("receiver_actor_previous_action_remains_raw")
+        is not (not projected_memory)
+        or projected_memory
+        and declaration.get("receiver_actor_previous_action_reflects_projection") is not True
         or declaration.get("development_context_block") != 0
     ):
         raise ValueError("exact explicit projection and action-memory contract required")
@@ -153,7 +162,8 @@ def main() -> None:
             summary=summary,
             records=records,
             projection_unlearned=True,
-            raw_action_memory_preserved=True,
+            raw_action_memory_preserved=not projected_memory,
+            candidate_action_memory_reflects_projection=projected_memory,
             independent_fresh=False,
             hardware_authorized=False,
             promotion_authorized=False,
