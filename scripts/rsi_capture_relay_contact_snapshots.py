@@ -11,6 +11,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
+from rosclaw_soccer.rsi.relay_snapshot_cases import select_relay_snapshot_cases
 from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
@@ -24,6 +25,7 @@ def main() -> None:
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("source-hash", "audit-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--nondefault", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     root, audit = a.source / "source", a.source / "audit/complete.json"
@@ -55,14 +57,7 @@ def main() -> None:
     model = mujoco.MjModel.from_xml_path(str(scene))
     if model.nq != 79 or model.nv != 76 or model.nu != 58 or model.opt.timestep != 0.002:
         raise ValueError("expected native two-player standard-ball world required")
-    candidates = [
-        r for r in source["records"] if r["course"]["arm"]["receiver_lateral_offset_m"] == 0.12
-    ]
-    if (
-        len(candidates) != 8
-        or len({(r["course"]["context"], r["course"]["lateral_m"]) for r in candidates}) != 8
-    ):
-        raise ValueError("all eight distinct baseline development cases required")
+    candidates = select_relay_snapshot_cases(source["records"], nondefault=a.nondefault)
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
@@ -74,6 +69,7 @@ def main() -> None:
             capture_control=140,
             verification_controls=1,
             retrospective_development_selection=True,
+            nondefault_development_expansion=a.nondefault,
             saved_torque_is_not_policy=True,
             independent_fresh=False,
             promotion_authorized=False,
@@ -137,6 +133,7 @@ def main() -> None:
                         index=r["index"],
                         context=r["course"]["context"],
                         side=r["course"]["lateral_m"],
+                        receiver_lateral_offset_m=r["course"]["arm"]["receiver_lateral_offset_m"],
                         original_physics_hash=digest(path),
                         snapshot=out.name,
                         snapshot_hash=digest(out),
@@ -155,7 +152,11 @@ def main() -> None:
         write_once(
             a.output / "complete.json",
             dict(
-                status="RELAY_PRECONTACT_NATIVE_STATE_RECONSTRUCTION_NOT_POLICY",
+                status=(
+                    "RELAY_NONDEFAULT_PRECONTACT_NATIVE_STATE_RECONSTRUCTION_NOT_POLICY"
+                    if a.nondefault
+                    else "RELAY_PRECONTACT_NATIVE_STATE_RECONSTRUCTION_NOT_POLICY"
+                ),
                 source_head=a.expected_head,
                 source_hash=a.source_hash,
                 audit_hash=a.audit_hash,
