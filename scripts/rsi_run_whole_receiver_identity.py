@@ -35,7 +35,8 @@ def main() -> None:
     subprocess.run(
         [
             sys.executable,
-            "scripts/rsi_collect_neural_relay_chain.py",
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
             "--frontier-root",
             str(a.frontier_root),
             "--frontier-head",
@@ -57,7 +58,8 @@ def main() -> None:
     subprocess.run(
         [
             sys.executable,
-            "scripts/rsi_audit_neural_relay_chain.py",
+            "-m",
+            "scripts.rsi_audit_neural_relay_chain",
             "--source-root",
             str(source),
             "--source-head",

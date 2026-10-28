@@ -1,5 +1,22 @@
+import os
 import subprocess
 import sys
+
+
+def test_collector_and_auditor_are_module_launchable_without_pythonpath_dot():
+    env = dict(os.environ, PYTHONPATH="src")
+    for module in (
+        "scripts.rsi_collect_neural_relay_chain",
+        "scripts.rsi_audit_neural_relay_chain",
+    ):
+        result = subprocess.run(
+            [sys.executable, "-m", module, "--help"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
 
 
 def test_center_curriculum_rejects_missing_identity_before_allocation(tmp_path):
