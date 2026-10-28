@@ -10,6 +10,11 @@ import torch
 
 from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
 from rosclaw_soccer.rsi.motor_sampling_law import history_motor_logp
+from rosclaw_soccer.rsi.passer_curriculum_outcome import strict_pass_receive
+from rosclaw_soccer.rsi.receiver_strict_terminal_reward import (
+    admit_strict_training,
+    strict_terminal_reward,
+)
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_fresh_common import clean
@@ -24,6 +29,7 @@ def main() -> None:
     p.add_argument("--output", type=Path, required=True)
     for name in ("review-hash", "dataset-hash", "producer-head", "expected-head"):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--receiver-center-strict", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     dp = a.dataset / "complete.json"
@@ -54,6 +60,12 @@ def main() -> None:
         )
     ):
         raise ValueError("complete untrained own physical dataset required")
+    if a.receiver_center_strict and (
+        receipt.get("reward_profile") != "center-strict-full-history-v1"
+        or receipt.get("optimizer_authorized") is not False
+        or receipt.get("research_data_sufficiency") != admit_strict_training(receipt["records"])
+    ):
+        raise ValueError("exact strict reward and distinct-condition admission required")
     pins = {r["block"]: r for r in review["source_pins"]}
     rows = {(r["context"], r["side"], r["seed"]): r for r in receipt["records"]}
     if len(pins) != 3 or len(rows) != 72:
@@ -71,7 +83,9 @@ def main() -> None:
             root,
             audit,
             pins[block]["own_audit_hash"],
-            "NEURAL_RELAY_RECEIVER_EXPLORATION32_PENDING_OWN_REPLAY",
+            "NEURAL_RELAY_RECEIVER_CENTER_EXPLORATION32_PENDING_OWN_REPLAY"
+            if a.receiver_center_strict
+            else "NEURAL_RELAY_RECEIVER_EXPLORATION32_PENDING_OWN_REPLAY",
             worlds=32,
         )
         if sh != pins[block]["source_hash"]:
@@ -137,12 +151,22 @@ def main() -> None:
                         "actual exported own observations, actions or probabilities differ"
                     )
                 actual = row["actual"]
-                score = (
-                    2.0 * actual["return_0p1m_and_healthy"]
-                    + actual["handoff"]
-                    + 0.25 * actual["outgoing_foot_strike"]
-                    - 2.0 * actual["body_failure"]
-                )
+                if a.receiver_center_strict:
+                    physical = strict_pass_receive(
+                        raw["ball_forces"],
+                        raw["body_failed"],
+                        handoff=trial["result"]["handoff_executed"],
+                    )
+                    if physical != row.get("physical_clean_outcome"):
+                        raise ValueError("full physical contact outcome differs")
+                    score = strict_terminal_reward(physical)
+                else:
+                    score = (
+                        2.0 * actual["return_0p1m_and_healthy"]
+                        + actual["handoff"]
+                        + 0.25 * actual["outgoing_foot_strike"]
+                        - 2.0 * actual["body_failure"]
+                    )
                 reward = np.zeros(n, np.float32)
                 reward[-1] = score
                 if row["terminal_reward"] != score or not np.array_equal(e["rewards"], reward):
@@ -192,6 +216,8 @@ def main() -> None:
             episodes=72,
             sampled_controls=controls,
             max_density_error=maximum_density_error,
+            reward_profile=receipt.get("reward_profile"),
+            research_data_sufficiency=receipt.get("research_data_sufficiency"),
             exact_inputs_actions_rewards_and_source_replayed=True,
             independent_new_physics=False,
             actor_updates=0,
