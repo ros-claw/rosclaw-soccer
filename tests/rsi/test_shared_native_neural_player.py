@@ -300,6 +300,8 @@ def test_sim_transition_records_exact_actual_target_without_weakening_teacher_ga
         a.commit(executed_action=action)
     with pytest.raises(ValueError, match="ACTUAL"):
         a.commit_sim_transition(executed_action=action, target=target + 1)
+    with pytest.raises(ValueError, match="reconstruct"):
+        a.commit_sim_transition(executed_action=action + np.float32(0.1), target=target)
     a.commit_sim_transition(executed_action=action, target=target)
     b.commit()
     np.testing.assert_array_equal(a.last_action, action)
