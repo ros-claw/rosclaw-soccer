@@ -28,6 +28,7 @@ def main():
     p.add_argument("--resume-checkpoint", type=Path)
     p.add_argument("--resume-hash")
     p.add_argument("--stop-after-episode", type=int)
+    p.add_argument("--training-episodes", type=int, choices=(4, 6, 12))
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -51,7 +52,9 @@ def main():
         a.dev_incoming_hash,
     )
     expanded = all(dev_args)
-    episode_count = 12 if expanded else 6
+    episode_count = a.training_episodes or (12 if expanded else 6)
+    if not expanded and episode_count != 6:
+        raise ValueError("non-expanded historical protocol requires six episodes")
     if bool(a.resume_checkpoint) != bool(a.resume_hash):
         raise ValueError("resume requires a checkpoint and its exact hash")
     if a.stop_after_episode is not None and not 1 <= a.stop_after_episode < episode_count:
@@ -279,7 +282,7 @@ def main():
             input_file_hashes=pins,
             seed=7923,
             worlds=32 if expanded else 8,
-            training_episodes=12 if expanded else 6,
+            training_episodes=episode_count,
             critic_warmup_episodes=2,
             eval_episode_index=0 if expanded else 7,
             distinct_dev_clip_files=expanded,
@@ -314,6 +317,7 @@ def main():
         input_file_hashes=pins,
         train_target_rate_filter=a.train_target_rate_filter,
         expanded=expanded,
+        training_episodes=episode_count,
         seed=7923,
         torch_version=str(torch.__version__),
         cuda_version=str(torch.version.cuda),
