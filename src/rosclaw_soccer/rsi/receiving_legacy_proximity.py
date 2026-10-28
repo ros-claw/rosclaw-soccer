@@ -9,8 +9,9 @@ def legacy_proximity(
     """Search actual precontact states with a hypothetical old local frame=19.
 
     Absolute historical frame and body/action semantics differ across worlds.
-    The phase override is a relaxed offline compatibility bound, not an event
-    clock, controller or physical intervention.
+    The phase override relaxes the old clock, but the search is restricted to
+    states preceding any observed foot or nonfoot contact. It is neither an
+    overall upper bound nor an event clock, controller or intervention.
     """
     n = len(qpos)
     if (
