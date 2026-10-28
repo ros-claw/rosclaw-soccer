@@ -26,11 +26,18 @@ def main() -> None:
         raise ValueError("unused external evidence output required")
     root, audit = a.source / "source", a.source / "audit/complete.json"
     old, old_audit = a.lateral_source / "source", a.lateral_source / "audit/complete.json"
+    declaration = json.loads((root / "declaration.json").read_text())
+    predictive = (
+        declaration.get("protocol")
+        == "soccer.neural_relay_receiver_predictive_foot_shin.development.v24"
+    )
     source, _, sh = report(
         root,
         audit,
         a.audit_hash,
-        "NEURAL_RELAY_RECEIVER_FOOT_TEACHER16_PENDING_OWN_REPLAY",
+        "NEURAL_RELAY_RECEIVER_PREDICTIVE_FOOT_SHIN16_PENDING_OWN_REPLAY"
+        if predictive
+        else "NEURAL_RELAY_RECEIVER_FOOT_TEACHER16_PENDING_OWN_REPLAY",
         worlds=16,
     )
     prior, _, oh = report(
@@ -42,10 +49,11 @@ def main() -> None:
     )
     if sh != a.source_hash or oh != a.lateral_hash:
         raise ValueError("exact source and prior independently replayed studies required")
-    declaration = json.loads((root / "declaration.json").read_text())
     if (
         declaration.get("receiver_foot_teacher_is_unlearned") is not True
         or declaration.get("development_context_block") != 0
+        or predictive
+        and declaration.get("receiver_predictive_foot_shin_is_unlearned") is not True
     ):
         raise ValueError("exact unlearned development-only foot teacher required")
     index = {

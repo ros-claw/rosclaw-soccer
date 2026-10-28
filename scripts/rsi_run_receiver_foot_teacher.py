@@ -16,6 +16,7 @@ def main() -> None:
     for key in ("frontier-head", "frontier-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
     p.add_argument("--new-context-block", type=int, choices=(0, 1, 2), required=True)
+    p.add_argument("--predictive-foot-shin", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
@@ -28,6 +29,7 @@ def main() -> None:
             "-m",
             "scripts.rsi_collect_neural_relay_chain",
             "--receiver-foot-teacher-pair",
+            *(["--receiver-predictive-foot-shin"] if a.predictive_foot_shin else []),
             "--new-context-block",
             str(a.new_context_block),
             "--frontier-root",

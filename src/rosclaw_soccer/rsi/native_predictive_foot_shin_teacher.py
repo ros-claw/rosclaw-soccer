@@ -73,6 +73,7 @@ class NativePredictiveFootShinTeacher:
                 shin_gap_rate=np.zeros(2),
                 nonsmooth_abstention=False,
                 geometry_censored=True,
+                active=False,
             )
             return result
         shins = [surfaces[side + "_shin"] for side in ("left", "right")]
@@ -127,5 +128,6 @@ class NativePredictiveFootShinTeacher:
             shin_gap_rate=rates,
             nonsmooth_abstention=nonsmooth,
             geometry_censored=False,
+            active=active,
         )
         return result
