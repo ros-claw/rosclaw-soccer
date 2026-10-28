@@ -30,6 +30,7 @@ def main() -> None:
             "rosclaw-receiver-contact-teacher-b0-20261029.service",
             "rosclaw-receiver-contact-capture-b0-20261029.service",
             "rosclaw-receiver-neural-torque-b0-20261029.service",
+            "rosclaw-receiver-neural-neargate-b0-20261029.service",
         ),
         default="rosclaw-receiver-contact-teacher-b0-20261029.service",
     )
@@ -64,7 +65,11 @@ def main() -> None:
     candidate_hash = digest(a.candidate)
     data = json.loads(a.candidate.read_text())
     snapshot_data = json.loads(a.snapshots.read_text())
-    neural = unit == "rosclaw-receiver-neural-torque-b0-20261029.service"
+    neural = unit in (
+        "rosclaw-receiver-neural-torque-b0-20261029.service",
+        "rosclaw-receiver-neural-neargate-b0-20261029.service",
+    )
+    gated = unit == "rosclaw-receiver-neural-neargate-b0-20261029.service"
     if (
         data.get("status")
         != (
@@ -74,6 +79,7 @@ def main() -> None:
         )
         or data.get("contact_teacher_assisted") is not (not neural)
         or (neural and data.get("neural_torque_actor") is not True)
+        or (neural and data.get("neural_torque_near_ball_gate", False) is not gated)
         or (
             not neural
             and data.get("contact_teacher_capture", False)
@@ -104,6 +110,13 @@ def main() -> None:
     )
     rows = []
     for row in data["rows"]:
+        if gated and (
+            type(row.get("neural_torque_gate_closed_commands")) is not int
+            or not 0
+            <= row["neural_torque_gate_closed_commands"]
+            <= row["neural_torque_native_commands"] - row["neural_torque_changed_commands"]
+        ):
+            raise ValueError("closed gate commands must have preserved parent torque")
         path = a.candidate.parent / row["physical_trajectory"]
         if (
             path.is_symlink()
