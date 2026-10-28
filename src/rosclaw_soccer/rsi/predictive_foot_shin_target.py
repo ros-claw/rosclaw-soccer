@@ -106,13 +106,17 @@ def predictive_foot_shin_target(
         leg_delta = delta[leg]
         leg_delta[free] = np.clip(requested[leg][free], lower[free], upper[free])
     target = nominal.copy() if not np.any(delta) else nominal + delta
+    applied = target - nominal
+    delta_jump = float(np.max(np.abs(applied - previous_delta)))
     return dict(
         target=target,
-        applied_delta=target - nominal,
+        applied_delta=applied,
         requested_delta=requested,
         predicted_shin_gap=predicted_gap,
         desired_shin_clearance=desired_gap,
         fallback=fallback,
         frozen_parent_axes=frozen,
+        delta_jump_rad=delta_jump,
+        slew_limit_respected=bool(delta_jump <= slew_rad + 1e-12),
         enabled=enabled,
     )

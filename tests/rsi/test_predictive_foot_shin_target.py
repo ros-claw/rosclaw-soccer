@@ -67,6 +67,15 @@ def test_nonzero_prior_correction_with_infeasible_bounds_falls_back():
     np.testing.assert_array_equal(out["target"], args["nominal"])
 
 
+def test_fallback_reports_jump_when_slew_and_joint_limits_conflict():
+    args = inputs()
+    args["nominal"][0] = 3
+    args["previous_delta"][0] = 0.08
+    out = predictive_foot_shin_target(**args)
+    assert out["fallback"] and not out["slew_limit_respected"]
+    assert out["delta_jump_rad"] == pytest.approx(0.08)
+
+
 @pytest.mark.parametrize("fault", ["nan", "wrong_leg", "unbounded_foot"])
 def test_bad_inputs_fail_closed(fault):
     args = inputs()
