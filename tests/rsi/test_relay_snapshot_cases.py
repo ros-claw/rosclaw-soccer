@@ -26,3 +26,13 @@ def test_missing_or_duplicated_case_fails_entire_declaration():
     bank.append(bank[0])
     with pytest.raises(ValueError, match="complete unique balanced"):
         select_relay_snapshot_cases(bank, nondefault=True)
+
+
+def test_other_declared_development_block_and_unknown_block():
+    bank = records()
+    mapping = {2: 8, 3: 9, 5: 11, 7: 13}
+    for row in bank:
+        row["course"]["context"] = mapping[row["course"]["context"]]
+    assert len(select_relay_snapshot_cases(bank, nondefault=True, contexts=(8, 9, 11, 13))) == 24
+    with pytest.raises(ValueError, match="declared development"):
+        select_relay_snapshot_cases(bank, nondefault=True, contexts=(0, 1, 2, 3))

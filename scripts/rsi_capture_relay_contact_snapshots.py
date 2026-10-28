@@ -26,6 +26,7 @@ def main() -> None:
     for key in ("source-hash", "audit-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
     p.add_argument("--nondefault", action="store_true")
+    p.add_argument("--contexts", type=int, nargs=4, default=(2, 3, 5, 7))
     a = p.parse_args()
     clean(a.expected_head)
     root, audit = a.source / "source", a.source / "audit/complete.json"
@@ -57,7 +58,9 @@ def main() -> None:
     model = mujoco.MjModel.from_xml_path(str(scene))
     if model.nq != 79 or model.nv != 76 or model.nu != 58 or model.opt.timestep != 0.002:
         raise ValueError("expected native two-player standard-ball world required")
-    candidates = select_relay_snapshot_cases(source["records"], nondefault=a.nondefault)
+    candidates = select_relay_snapshot_cases(
+        source["records"], nondefault=a.nondefault, contexts=tuple(a.contexts)
+    )
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
@@ -67,6 +70,7 @@ def main() -> None:
             audit_hash=a.audit_hash,
             scene_hash=scene_hash,
             capture_control=140,
+            contexts=list(a.contexts),
             verification_controls=1,
             retrospective_development_selection=True,
             nondefault_development_expansion=a.nondefault,
@@ -161,6 +165,7 @@ def main() -> None:
                 source_hash=a.source_hash,
                 audit_hash=a.audit_hash,
                 scene_hash=scene_hash,
+                contexts=list(a.contexts),
                 rows=rows,
                 independent_fresh=False,
                 saved_torque_is_not_policy=True,
