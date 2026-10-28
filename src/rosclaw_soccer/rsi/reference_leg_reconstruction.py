@@ -16,6 +16,25 @@ RIGHT_LEG = (
 )
 
 
+def shifted_reference_frames(frames: np.ndarray, shift: int, length: int) -> np.ndarray:
+    """Shift a reference correction only; does not shift the ball or simulator."""
+    if (
+        type(frames) is not np.ndarray
+        or frames.ndim != 1
+        or frames.dtype.kind not in "iu"
+        or len(frames) < 3
+        or np.any(np.diff(frames) != 1)
+        or type(shift) is not int
+        or not -20 <= shift <= 20
+        or type(length) is not int
+    ):
+        raise ValueError("bounded integer reference phase shift required")
+    shifted = frames + shift
+    if shifted[0] < 1 or shifted[-1] >= length - 1:
+        raise ValueError("shifted window must remain inside the reference")
+    return shifted
+
+
 def reconstruct_right_leg(
     model: Any, layout: Any, motion: dict[str, np.ndarray], frames: np.ndarray, offsets: np.ndarray
 ) -> tuple[dict[str, np.ndarray], dict[str, float]]:

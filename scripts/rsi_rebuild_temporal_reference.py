@@ -10,7 +10,10 @@ import numpy as np
 
 from rosclaw_soccer.rsi.cftrack_motion_reference import load_cftrack_motion
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
-from rosclaw_soccer.rsi.reference_leg_reconstruction import reconstruct_right_leg
+from rosclaw_soccer.rsi.reference_leg_reconstruction import (
+    reconstruct_right_leg,
+    shifted_reference_frames,
+)
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_native_context_recovery_common import digest
 from scripts.rsi_native_fresh_common import clean
@@ -33,6 +36,7 @@ def main() -> None:
         "expected-head",
     ):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--frame-shift", type=int, default=0)
     a = p.parse_args()
     clean(a.expected_head)
     paths = (
@@ -64,11 +68,14 @@ def main() -> None:
         model, robot_prefix="b/", ball_body_name="soccer_ball", player_count=2
     )
     motion = load_cftrack_motion(a.reference)
+    frames = shifted_reference_frames(
+        np.asarray(fit["frames"], dtype=int), a.frame_shift, len(motion["joint_pos"])
+    )
     result, checks = reconstruct_right_leg(
         model,
         layout,
         motion,
-        np.asarray(fit["frames"], dtype=int),
+        frames,
         np.asarray(projection["offsets_rad"], dtype=np.float64),
     )
     # CFtrack cold-start state includes frame-zero qpos, qvel, root, and ball.
@@ -113,6 +120,8 @@ def main() -> None:
             physics_steps=0,
             reference_only_not_actual_state=True,
             partial_retarget=True,
+            reference_correction_frame_shift=a.frame_shift,
+            shifted_reference_geometry_checked=a.frame_shift == 0,
             unchanged_unverified_virtual_markers=True,
             frame_zero_all_tracker_initial_fields_bit_exact=True,
             source_optimizer_converged=False,
