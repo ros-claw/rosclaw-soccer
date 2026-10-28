@@ -14,6 +14,7 @@ from rosclaw_soccer.providers.g1.velocity_policy import observation98, phase_del
 from rosclaw_soccer.rsi.causal_ball_delta_trigger import CausalBallDeltaTrigger
 from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
 from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
+from rosclaw_soccer.rsi.native_target_rate_filter import limit_ankle_target_rate
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
 from rosclaw_soccer.rsi.oof_receiver_probe import select_oof_probe, select_single_probe
@@ -85,6 +86,7 @@ def main() -> None:
     p.add_argument("--risk-variant", choices=("proprioception_only", "ball_augmented", "single"))
     p.add_argument("--nondefault", action="store_true")
     p.add_argument("--long-probe", action="store_true")
+    p.add_argument("--ankle-rate-filter", action="store_true")
     p.add_argument("--contact-teacher", action="store_true")
     p.add_argument("--contact-teacher-capture", action="store_true")
     p.add_argument("--torque-near-ball-gate", action="store_true")
@@ -116,7 +118,12 @@ def main() -> None:
     if a.long_probe and not (
         a.nondefault
         and probe is not None
-        and (np.any(probe) or a.contact_teacher or a.torque_checkpoint is not None)
+        and (
+            np.any(probe)
+            or a.contact_teacher
+            or a.torque_checkpoint is not None
+            or a.ankle_rate_filter
+        )
         and a.dynamic_boundary
         and a.with_shadow
         and a.return_handoff
@@ -124,6 +131,16 @@ def main() -> None:
         and not a.passer_follow_return
     ):
         raise ValueError("long probe requires bounded intervention and complete causal handoff")
+    if a.ankle_rate_filter and (
+        not a.long_probe
+        or probe is None
+        or np.any(probe)
+        or a.contact_teacher
+        or a.torque_checkpoint is not None
+        or a.risk_receipt is not None
+        or a.selector_receipt is not None
+    ):
+        raise ValueError("ankle filter requires isolated zero-residual long probe")
     if a.contact_teacher and (
         not a.long_probe
         or probe is None
@@ -541,6 +558,7 @@ def main() -> None:
                 (case_probe is None or not np.any(case_probe))
                 and not a.contact_teacher
                 and not torque_model
+                and not a.ankle_rate_filter
             )
             vp = velocity_policy.params
             scratch = restored_scratch_world(
@@ -632,6 +650,7 @@ def main() -> None:
             ready = readiness.update() if readiness is not None else False
             physical_samples = [resumed]
             executed_actions = [receiver_action.copy()]
+            nominal_receiver_actions = [receiver_action.copy()]
             passer_actions = [out[0, 0].numpy().copy()]
             receiver_observations = [receiver_obs.copy()]
             receiver_commands = [np.asarray(role.command_body, dtype=np.float32)]
@@ -701,6 +720,7 @@ def main() -> None:
                 receiver_action = velocity_policy.session.run(
                     ["actions"], {"obs": receiver_obs[None]}
                 )[0][0]
+                nominal_receiver_action = receiver_action.copy()
                 if validate_original and (
                     not np.array_equal(obs, t["NN_obs"][frame])
                     or not np.array_equal(current_action, t["NN_action"][frame])
@@ -718,6 +738,13 @@ def main() -> None:
                     )
                 else:
                     receiver_target = target29(receiver_action, velocity_policy.params)
+                if a.ankle_rate_filter:
+                    receiver_action, _ = limit_ankle_target_rate(
+                        action=receiver_action,
+                        previous_action=previous_receiver_action,
+                        params=velocity_policy.params,
+                    )
+                    receiver_target = target29(receiver_action, velocity_policy.params)
                 resumed = scratch.advance(
                     {
                         "a/": ep.offset + current_action[ep.order] * ep.scale,
@@ -729,6 +756,7 @@ def main() -> None:
                     shadow.commit_actual()
                 physical_samples.append(resumed)
                 executed_actions.append(receiver_action.copy())
+                nominal_receiver_actions.append(nominal_receiver_action)
                 passer_actions.append(current_action.copy())
                 receiver_observations.append(receiver_obs.copy())
                 receiver_commands.append(np.asarray(role.command_body, dtype=np.float32))
@@ -1043,6 +1071,7 @@ def main() -> None:
                         else {}
                     ),
                     "executed_receiver_action": np.stack(executed_actions),
+                    "nominal_receiver_action": np.stack(nominal_receiver_actions),
                     "passer_action": np.stack(passer_actions),
                     "receiver_observation": np.stack(receiver_observations),
                     "receiver_command": np.stack(receiver_commands),
@@ -1162,6 +1191,8 @@ def main() -> None:
             own_return_handoff_reconstructed=a.return_handoff and not a.smooth_transition,
             smooth_transition=a.smooth_transition,
             long_probe=a.long_probe,
+            ankle_rate_filter=a.ankle_rate_filter,
+            ankle_filter_starts_at_control=141 if a.ankle_rate_filter else None,
             contact_teacher_assisted=a.contact_teacher,
             contact_teacher_capture=a.contact_teacher_capture,
             neural_torque_actor=torque_model,
