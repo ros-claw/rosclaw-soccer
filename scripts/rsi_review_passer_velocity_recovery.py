@@ -30,18 +30,28 @@ def main() -> None:
     root, audit = a.source / "source", a.source / "audit/complete.json"
     old, old_audit = a.prior / "source", a.prior / "audit/complete.json"
     declaration = json.loads((root / "declaration.json").read_text())
+    blended = (
+        declaration.get("protocol") == "soccer.neural_relay_passer_velocity_blend.development.v31"
+    )
     if (
-        declaration.get("protocol")
-        != "soccer.neural_relay_passer_velocity_recovery.development.v30"
+        (
+            not blended
+            and declaration.get("protocol")
+            != "soccer.neural_relay_passer_velocity_recovery.development.v30"
+        )
         or declaration.get("development_context_block") != 0
         or declaration.get("passer_velocity_recovery_pair") is not True
+        or blended
+        and declaration.get("passer_velocity_blend_controls") != 20
     ):
         raise ValueError("exact preregistered passer recovery study required")
     source, _, sh = report(
         root,
         audit,
         a.audit_hash,
-        "NEURAL_RELAY_PASSER_VELOCITY_RECOVERY16_PENDING_OWN_REPLAY",
+        "NEURAL_RELAY_PASSER_VELOCITY_BLEND16_PENDING_OWN_REPLAY"
+        if blended
+        else "NEURAL_RELAY_PASSER_VELOCITY_RECOVERY16_PENDING_OWN_REPLAY",
         worlds=16,
     )
     prior, _, ph = report(
@@ -100,6 +110,22 @@ def main() -> None:
             np.load(trace_path, allow_pickle=False) as v,
         ):
             boundary = candidate["passer_velocity_recovery_boundary"]
+            transition = None
+            if blended:
+                indices = v["blend_index"]
+                if indices.shape != v["active"].shape or indices.dtype.kind not in "iu":
+                    raise ValueError("actual blend control indices required")
+                start = None if boundary is None else boundary["control"]
+                expected = (
+                    np.arange(len(indices)) - start
+                    if start is not None
+                    else np.full(len(indices), -1)
+                )
+                if start is not None:
+                    expected[:start] = -1
+                if not np.array_equal(indices, expected):
+                    raise ValueError("consecutive actual blend schedule required")
+                transition = (indices >= 0) & (indices < 20)
             memory = validate_passer_velocity_history(
                 observations=v["obs"],
                 proposed=v["proposed_action"],
@@ -108,6 +134,7 @@ def main() -> None:
                 active=v["active"],
                 offset=offset,
                 scale=scale,
+                transition=transition,
             )
             if (boundary is None) != (memory["first_active_control"] is None) or (
                 boundary is not None and boundary["control"] != memory["first_active_control"]
@@ -139,6 +166,12 @@ def main() -> None:
                     )
                 )
             )
+            window_jump = None
+            if boundary is not None and boundary["control"] > 0:
+                start = boundary["control"]
+                window = v["actual_target"][start - 1 : min(len(v["actual_target"]), start + 21)]
+                if len(window) >= 2:
+                    window_jump = float(np.max(np.abs(np.diff(window, axis=0))))
             records.append(
                 dict(
                     context=key[0],
@@ -149,6 +182,7 @@ def main() -> None:
                     full_prefix_available=boundary is not None and common >= boundary["control"],
                     boundary_control=None if boundary is None else boundary["control"],
                     boundary_target_jump_rad=jump,
+                    transition_window_max_target_jump_rad=window_jump,
                     memory=memory,
                     health=paired_health_at_common_horizon(aa["body_failed"], bb["body_failed"]),
                     baseline_outcome=strict_pass_receive(

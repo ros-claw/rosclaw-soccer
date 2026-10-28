@@ -40,6 +40,7 @@ def main():
     p.add_argument("--receiver-continuation-pair", action="store_true")
     p.add_argument("--passer-residual-pair", action="store_true")
     p.add_argument("--passer-velocity-recovery-pair", action="store_true")
+    p.add_argument("--passer-velocity-blend", action="store_true")
     p.add_argument("--precontact-fullbody-pair", action="store_true")
     p.add_argument("--precontact-smooth", action="store_true")
     p.add_argument("--passer-contact-exit", action="store_true")
@@ -64,6 +65,8 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.passer_velocity_blend and not a.passer_velocity_recovery_pair:
+        p.error("passer velocity blend requires the paired recovery study")
     if a.passer_velocity_recovery_pair and (
         a.new_context_block is None
         or a.receiver_foot_teacher_pair
@@ -547,7 +550,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_passer_velocity_recovery.development.v30"
+                "soccer.neural_relay_passer_velocity_blend.development.v31"
+                if a.passer_velocity_blend
+                else "soccer.neural_relay_passer_velocity_recovery.development.v30"
                 if a.passer_velocity_recovery_pair
                 else "soccer.neural_relay_receiver_projected_action_memory.development.v27"
                 if a.receiver_projection_executed_memory
@@ -674,6 +679,7 @@ def main():
             ),
             passer_residual_is_unlearned_teacher=a.passer_residual_pair,
             passer_velocity_recovery_pair=a.passer_velocity_recovery_pair,
+            passer_velocity_blend_controls=20 if a.passer_velocity_blend else 0,
             precontact_fullbody_is_unlearned_teacher=a.precontact_fullbody_pair,
             precontact_smooth_controls=10 if a.precontact_smooth else 0,
             receiver_sampling_profile="contact-v1"
@@ -698,6 +704,8 @@ def main():
     counts = dict(native_steps=0, actual_actor_calls=0, shadow_actor_calls=0)
     if a.passer_velocity_recovery_pair:
         counts["passer_velocity_inferences"] = 0
+    if a.passer_velocity_blend:
+        counts["passer_blend_actor_inferences"] = 0
     if a.receiver_whole_identity or a.receiver_exploration or a.receiver_learned_pair:
         counts.update(receiver_onnx_calls=0, receiver_plastic_calls=0, receiver_anchor_calls=0)
     if a.receiver_exploration or a.receiver_learned_exploration:
@@ -709,6 +717,7 @@ def main():
 
         from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
         from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
+        from rosclaw_soccer.rsi.live_neural_transition import blend_live_targets, quintic_weight
         from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
         from rosclaw_soccer.rsi.native_foot_contact_teacher import (
             FootContactTeacherConfig,
@@ -719,6 +728,7 @@ def main():
         )
         from rosclaw_soccer.rsi.neural_relay_incoming import incoming_delivery
         from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
+        from rosclaw_soccer.rsi.paid_velocity_shadow import policy_action_from_hg_target
         from rosclaw_soccer.rsi.passer_residual_blend import (
             PasserContactExitGate,
             blended_passer_action,
@@ -978,6 +988,7 @@ def main():
             termination = "WORLD_HORIZON_COMPLETE"
             previous_target_b = None
             passer_recovery_boundary = None
+            passer_old_pd = passer_new_pd = None
             transition_start_action = None
             largest_jump = 0.0
             for step in range(600):
@@ -1029,13 +1040,15 @@ def main():
                 ):
                     if passer_recovery is not None and passer_foot_seen:
                         vp = passer_recovery.stream.params
+                        passer_old_pd = w.parameters["a/"].owned_copy()
+                        passer_new_pd = NativePDParameters(
+                            np.asarray(vp.stiffness, np.float64),
+                            np.asarray(vp.damping, np.float64),
+                            passer_old_pd.effort.copy(),
+                        )
                         profile_a = w.switch_pd_profile(
                             "a/",
-                            NativePDParameters(
-                                np.asarray(vp.stiffness, np.float64),
-                                np.asarray(vp.damping, np.float64),
-                                w.parameters["a/"].effort.copy(),
-                            ),
+                            passer_old_pd if a.passer_velocity_blend else passer_new_pd,
                         )
                         boundary_a = folder / "passer_recovery_boundary.npz"
                         np.savez_compressed(
@@ -1053,6 +1066,8 @@ def main():
                             ),
                         )
                         passer_recovery.activate(motion_complete=True, passer_foot_seen=True)
+                        if a.passer_velocity_blend:
+                            passer.begin_standing()
                     else:
                         passer.begin_standing()
                 recovery_trace = None
@@ -1067,11 +1082,31 @@ def main():
                     counts["passer_velocity_inferences"] += 1
                 fraction = course["arm"].get("passer_residual_fraction", 1.0)
                 teacher_arm = fraction != 1.0
-                if passer_recovery is not None and passer_recovery.active:
+                blend_index = (
+                    step - passer_recovery_boundary["control"]
+                    if a.passer_velocity_blend and passer_recovery_boundary is not None
+                    else -1
+                )
+                blend_active = 0 <= blend_index < 20
+                if passer_recovery is not None and passer_recovery.active and not blend_active:
+                    if a.passer_velocity_blend and blend_index == 20:
+                        w.switch_pd_profile("a/", passer_new_pd)
                     target_a, trace_a = recovery_target, None
                 else:
                     target_a, trace_a = passer.propose(with_reference_evidence=teacher_arm)
                 executed_a = None
+                if blend_active:
+                    weight = quintic_weight(blend_index, start=0, duration=20)
+                    target_a, profile = blend_live_targets(
+                        target_a, recovery_target, passer_old_pd, passer_new_pd, weight=weight
+                    )
+                    w.switch_pd_profile("a/", profile)
+                    executed_a = policy_action_from_hg_target(
+                        target_a, passer.offset, passer.scale, passer.order
+                    )
+                    counts["passer_blend_actor_inferences"] += 1
+                if recovery_trace is not None and a.passer_velocity_blend:
+                    recovery_trace["blend_index"] = np.array(blend_index)
                 if teacher_arm:
                     active = (
                         passer_exit_gate.active if a.passer_contact_exit else not passer_foot_seen
@@ -1250,9 +1285,15 @@ def main():
                 row = w.advance({"a/": target_a, "b/": target_b})
                 counts["native_steps"] += 10
                 if trace_a is not None:
-                    passer.commit(executed_action=executed_a if teacher_arm and active else None)
+                    passer.commit(
+                        executed_action=executed_a
+                        if blend_active or (teacher_arm and active)
+                        else None
+                    )
                 if passer_recovery is not None:
-                    recovery_row = passer_recovery.commit()
+                    recovery_row = passer_recovery.commit(
+                        transition_target=np.asarray(target_a, np.float64) if blend_active else None
+                    )
                     assert recovery_trace is not None
                     recovery_trace.update({k: np.asarray(v) for k, v in recovery_row.items()})
                     nn_passer_velocity.append(recovery_trace)
@@ -1420,7 +1461,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_PASSER_VELOCITY_RECOVERY16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_PASSER_VELOCITY_BLEND16_PENDING_OWN_REPLAY"
+                    if a.passer_velocity_blend
+                    else "NEURAL_RELAY_PASSER_VELOCITY_RECOVERY16_PENDING_OWN_REPLAY"
                     if a.passer_velocity_recovery_pair
                     else "NEURAL_RELAY_RECEIVER_PROJECTED_ACTION_MEMORY16_PENDING_OWN_REPLAY"
                     if a.receiver_projection_executed_memory

@@ -12,10 +12,13 @@ def validate_passer_velocity_history(
     active: np.ndarray,
     offset: np.ndarray,
     scale: np.ndarray,
+    transition: np.ndarray | None = None,
 ) -> dict:
     if not isinstance(active, np.ndarray) or active.ndim != 1:
         raise ValueError("one explicit consecutive active history required")
     n = len(active)
+    if transition is None:
+        transition = np.zeros(n, dtype=bool)
     arrays = (
         (observations, (n, 98), np.float32),
         (proposed, (n, 29), np.float32),
@@ -27,6 +30,10 @@ def validate_passer_velocity_history(
     if (
         n < 1
         or active.dtype != np.bool_
+        or not isinstance(transition, np.ndarray)
+        or transition.shape != (n,)
+        or transition.dtype != np.bool_
+        or np.any(transition & ~active)
         or np.any(active[:-1] & ~active[1:])
         or any(
             not isinstance(a, np.ndarray)
@@ -39,16 +46,17 @@ def validate_passer_velocity_history(
     ):
         raise ValueError("finite typed own trajectory and irreversible activation required")
     encoded = ((actual_targets - offset) / scale).astype(np.float32)
-    wanted = np.where(active[:, None], proposed, encoded)
+    direct = active & ~transition
+    wanted = np.where(direct[:, None], proposed, encoded)
     if not np.array_equal(memory_after, wanted):
         raise ValueError("shadow memory must encode actual targets, active memory own actions")
     if np.any(observations[0, -29:] != 0) or not np.array_equal(
         observations[1:, -29:], memory_after[:-1]
     ):
         raise ValueError("each actual actor observation must carry its own previous action")
-    if np.any(active) and not np.allclose(
-        actual_targets[active],
-        offset + proposed[active].astype(np.float64) * scale,
+    if np.any(direct) and not np.allclose(
+        actual_targets[direct],
+        offset + proposed[direct].astype(np.float64) * scale,
         atol=3e-7,
         rtol=0,
     ):
@@ -59,6 +67,7 @@ def validate_passer_velocity_history(
         verified_next_observations=n - 1,
         shadow_controls=int((~active).sum()),
         active_controls=int(active.sum()),
+        blended_controls=int(transition.sum()),
         first_active_control=first,
         actual_owned_action_history_verified=True,
     )

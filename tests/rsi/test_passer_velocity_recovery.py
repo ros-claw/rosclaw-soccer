@@ -175,3 +175,32 @@ def test_physical_recovery_pilot_rejects_mixed_interventions_before_loading_asse
     )
     assert result.returncode != 0
     assert "passer velocity recovery requires one isolated development block" in result.stderr
+
+
+def test_blend_cannot_be_activated_without_explicit_paired_recovery():
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
+            "--frontier-root",
+            "/not-read",
+            "--frontier-head",
+            "unused",
+            "--frontier-hash",
+            "unused",
+            "--expected-head",
+            "unused",
+            "--output",
+            "/not-written",
+            "--passer-velocity-blend",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "passer velocity blend requires the paired recovery study" in result.stderr

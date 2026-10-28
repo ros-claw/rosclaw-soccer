@@ -30,6 +30,18 @@ def test_actual_target_is_the_shadow_history_then_own_action_is_active():
     assert result["verified_next_observations"] == 3
 
 
+def test_blend_action_history_uses_actual_applied_target():
+    row = fixture()
+    row["transition"] = np.array([False, False, True, False])
+    row["actual_targets"][2] = 0.3
+    row["memory_after"][2] = 0.3
+    row["observations"][3, -29:] = row["memory_after"][2]
+    assert validate_passer_velocity_history(**row)["blended_controls"] == 1
+    row["memory_after"][2] = row["proposed"][2]
+    with pytest.raises(ValueError):
+        validate_passer_velocity_history(**row)
+
+
 @pytest.mark.parametrize("fault", ["shadow", "observation", "active_target", "reentry"])
 def test_reject_wrong_history_or_invisible_transition(fault):
     row = fixture()
