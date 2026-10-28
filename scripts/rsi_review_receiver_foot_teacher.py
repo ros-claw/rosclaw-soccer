@@ -99,11 +99,21 @@ def main() -> None:
                 changes = np.flatnonzero(np.any(delta != 0, axis=1))
                 if name == "baseline" and len(changes):
                     raise ValueError("zero teacher must never alter a joint target")
+                jumps = np.max(
+                    np.abs(np.diff(np.vstack((np.zeros((1, 29)), delta)), axis=0)), axis=1
+                )
+                slew = 0.025 if predictive and name == "teacher" else 0.015
+                fallback = v["FOOT_fallback"]
+                if fallback.shape != (len(delta),) or fallback.dtype != np.bool_:
+                    raise ValueError("complete boolean teacher fallback history required")
                 outcomes[name] = dict(
                     outcome=outcome,
                     active_controls=int(v["FOOT_active"].sum()),
                     changed_controls=len(changes),
                     max_delta_rad=float(np.abs(delta).max()),
+                    max_correction_jump_rad=float(jumps.max()),
+                    slew_exceeding_controls=int((jumps > slew + 1e-9).sum()),
+                    fallback_jump_controls=int(((jumps > slew + 1e-9) & fallback).sum()),
                     precise_healthy_return=row["result"]["return_0p1m_and_healthy"],
                 )
         rows.append(
@@ -122,6 +132,8 @@ def main() -> None:
             healthy=sum(r[name]["outcome"]["both_bodies_healthy"] for r in rows),
             precise=sum(r[name]["precise_healthy_return"] for r in rows),
             changed_worlds=sum(r[name]["changed_controls"] > 0 for r in rows),
+            slew_violation_worlds=sum(r[name]["slew_exceeding_controls"] > 0 for r in rows),
+            fallback_jump_controls=sum(r[name]["fallback_jump_controls"] for r in rows),
         )
         for name in ("baseline", "teacher")
     }
