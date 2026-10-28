@@ -3,13 +3,26 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.native_contact_course import NativeContactCourse, balanced_course_indices
+from rosclaw_soccer.rsi.native_contact_course import (
+    NativeContactCourse,
+    balanced_course_indices,
+    shin_proximity_risk,
+)
 
 
 def bank():
     return dict(
         source_id=np.repeat(np.arange(64) % 8, 4), lead_controls=np.tile([10, 20, 40, 80], 64)
     )
+
+
+def test_shin_risk_is_bounded_and_never_a_contact_claim():
+    assert shin_proximity_risk(-0.01) == 1
+    assert shin_proximity_risk(0.0) == 1
+    assert shin_proximity_risk(0.08) == pytest.approx(np.exp(-1))
+    assert 0 < shin_proximity_risk(1.0) < shin_proximity_risk(0.08)
+    with pytest.raises(ValueError):
+        shin_proximity_risk(float("nan"))
 
 
 @pytest.mark.parametrize("worlds", [8, 16, 32, 64, 256])

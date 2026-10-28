@@ -26,6 +26,7 @@ def main():
     p.add_argument("--dev-incoming-hash")
     p.add_argument("--train-target-rate-filter", action="store_true")
     p.add_argument("--ball-only-adaptation", action="store_true")
+    p.add_argument("--dense-shin-risk", action="store_true")
     p.add_argument("--resume-checkpoint", type=Path)
     p.add_argument("--resume-hash")
     p.add_argument("--stop-after-episode", type=int)
@@ -66,6 +67,8 @@ def main():
         raise ValueError("rate-filter training requires the expanded separate development bank")
     if a.ball_only_adaptation and (not expanded or a.train_target_rate_filter):
         raise ValueError("ball-only adaptation requires separate dev bank and no target filter")
+    if a.dense_shin_risk and not expanded:
+        raise ValueError("dense shin risk requires the expanded receiving protocol")
     motion_multi = False
     if motion != bool(a.motion_reference_hash):
         raise ValueError("motion reference requires an exact root and hash together")
@@ -284,6 +287,7 @@ def main():
             threads=8 if expanded else 2,
             receive_reward=True,
             receive_window=60 if expanded else 40,
+            dense_shin_risk=a.dense_shin_risk and not development,
         )
 
     a.output.mkdir()
@@ -314,6 +318,8 @@ def main():
             parent_filter_ablation_in_development=a.train_target_rate_filter,
             actor_learning_rate=3e-5 if a.ball_only_adaptation else 3e-6,
             ball_only_adaptation=a.ball_only_adaptation,
+            dense_shin_risk=a.dense_shin_risk,
+            dense_shin_risk_weight=0.1 if a.dense_shin_risk else None,
             ball_trainable_columns=[168, 169, 170, 171, 172, 173]
             if a.ball_only_adaptation
             else None,
@@ -335,6 +341,7 @@ def main():
         input_file_hashes=pins,
         train_target_rate_filter=a.train_target_rate_filter,
         ball_only_adaptation=a.ball_only_adaptation,
+        dense_shin_risk=a.dense_shin_risk,
         expanded=expanded,
         training_episodes=episode_count,
         seed=7923,
@@ -500,6 +507,7 @@ def main():
                     warmup=warmup,
                     optimizer_updates=updates,
                     update_metrics=update_metrics,
+                    shin_risk_sum=float(raw["shin_risk"].sum()) if a.dense_shin_risk else None,
                     raw_hash=digest(file),
                     raw_path=str(file.resolve()),
                 )

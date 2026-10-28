@@ -46,6 +46,13 @@ def balanced_course_indices(
     return np.array(ids, dtype=np.int64)
 
 
+def shin_proximity_risk(gap_m: float) -> float:
+    """Bounded measured shin/ball separation penalty, not a contact or safety label."""
+    if not np.isfinite(gap_m):
+        raise ValueError("finite native collision geometry distance required")
+    return float(np.exp(-max(0.0, gap_m) / 0.08))
+
+
 class NativeContactCourse:
     protocol = "native-contact24-v1"
     actor_observation_dim = critic_observation_dim = 177
@@ -64,15 +71,19 @@ class NativeContactCourse:
         threads: int = 8,
         receive_reward: bool = False,
         receive_window: int = 24,
+        dense_shin_risk: bool = False,
     ) -> None:
         if (
             type(receive_reward) is not bool
             or type(receive_window) is not int
             or receive_window not in (24, 40, 60)
             or (not receive_reward and receive_window != 24)
+            or type(dense_shin_risk) is not bool
+            or (dense_shin_risk and (not receive_reward or receive_window != 60))
         ):
             raise ValueError("explicit bounded experimental receive reward mode required")
         self.receive_reward = receive_reward
+        self.dense_shin_risk = dense_shin_risk
         self.window = receive_window
         self.receive_failure_penalty = 800 if receive_window == 60 else 600
         self.model, self.params = model, params
@@ -103,6 +114,18 @@ class NativeContactCourse:
         self.tracking = NativeCourseTracking(model, self.layout, body_references)
         self.torso = model.body("robot/torso_link").id
         self.feet = [model.body("robot/" + s + "_ankle_roll_link").id for s in ("left", "right")]
+        if dense_shin_risk:
+            balls = np.flatnonzero(model.geom_bodyid == self.layout.ball)
+            knees = [model.body("robot/" + s + "_knee_link").id for s in ("left", "right")]
+            self.shin_geoms = [
+                i
+                for i in range(model.ngeom)
+                if model.geom_bodyid[i] in knees
+                and (model.geom_contype[i] or model.geom_conaffinity[i])
+            ]
+            if len(balls) != 1 or not self.shin_geoms:
+                raise ValueError("one ball and actual knee collision geometries required")
+            self.ball_geom = int(balls[0])
         self.batch: NativePhysicsBatch | None = None
         self.episode = -1
         self.closed_steps = 0
@@ -223,6 +246,9 @@ class NativeContactCourse:
         ):
             raise ValueError("finite float32 actual actor29 required")
         active = ~self.ended.copy()
+        before_nonfoot = (
+            self.receive_credit.nonfoot_seen.copy() if self.receive_credit is not None else None
+        )
         ids = np.flatnonzero(active).astype(np.int64)
         before_observation = self.observation
         before_phase, before_frame = self.phase.copy(), self.frame.copy()
@@ -255,9 +281,20 @@ class NativeContactCourse:
             tracking = np.zeros((self.worlds, 5))
             guards = np.zeros((self.worlds, 4), dtype=bool)
             proximity, limits = np.zeros(self.worlds), np.zeros(self.worlds)
+            shin_risk = np.zeros(self.worlds)
             for i in ids:
                 d = self.batch.data[i]
                 mujoco.mj_forward(self.model, d)
+                if self.dense_shin_risk:
+                    assert before_nonfoot is not None
+                if self.dense_shin_risk and before_nonfoot is not None and not before_nonfoot[i]:
+                    gap = min(
+                        float(
+                            mujoco.mj_geomDistance(self.model, d, self.ball_geom, geom, 1.0, None)
+                        )
+                        for geom in self.shin_geoms
+                    )
+                    shin_risk[i] = shin_proximity_risk(gap)
                 index = self.index[i]
                 tracking[i], guards[i] = self.tracking.measure(
                     d,
@@ -331,6 +368,8 @@ class NativeContactCourse:
                     + 200 * credits["sustained_capture"]
                     - self.receive_failure_penalty * terminated
                 )
+                if self.dense_shin_risk:
+                    reward -= 0.1 * shin_risk
             else:
                 reward = 0.02 * (
                     tracking.sum(axis=1)
@@ -377,6 +416,7 @@ class NativeContactCourse:
                 proximity=proximity,
                 limits=limits,
                 action_rate=action_rate,
+                **({"shin_risk": shin_risk} if self.dense_shin_risk else {}),
                 **{"credit_" + k: v for k, v in credits.items()},
             )
         except Exception:
