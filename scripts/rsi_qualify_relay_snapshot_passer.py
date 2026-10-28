@@ -11,6 +11,7 @@ import torch
 
 from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+from rosclaw_soccer.rsi.relay_restored_receiving_role import restored_receiving_role
 from rosclaw_soccer.rsi.shared_native_neural_player import PlayerObservationView
 from rosclaw_soccer.rsi.shared_relay_setup import SharedRelaySetup
 from scripts.rsi_atomic_artifacts import write_once
@@ -92,6 +93,9 @@ def main() -> None:
     layout = NativeVelocityLayout(
         setup.model, robot_prefix="a/", ball_body_name="soccer_ball", player_count=2
     )
+    receiver_layout = NativeVelocityLayout(
+        setup.model, robot_prefix="b/", ball_body_name="soccer_ball", player_count=2
+    )
     by_index = {r["index"]: r for r in source["records"]}
     rows = []
     for item in snaps["rows"]:
@@ -106,12 +110,15 @@ def main() -> None:
             raise ValueError("exact observed original context and boundary required")
         snap = a.snapshots / item["snapshot"]
         trace, physical = bind(root, row, "passer_nn"), bind(root, row, "physics")
+        initial, velocity = bind(root, row, "initial"), bind(root, row, "receiver_velocity")
         if (
             snap.is_symlink()
             or snap.resolve().parent != a.snapshots.resolve()
             or digest(snap) != item["snapshot_hash"]
             or trace is None
             or physical is None
+            or initial is None
+            or velocity is None
         ):
             raise ValueError("confined snapshot and exact private source histories required")
         data = mujoco.MjData(setup.model)
@@ -125,6 +132,8 @@ def main() -> None:
         with (
             np.load(trace, allow_pickle=False) as t,
             np.load(physical, allow_pickle=False) as physics,
+            np.load(initial, allow_pickle=False) as initial_data,
+            np.load(velocity, allow_pickle=False) as velocity_data,
         ):
             if (
                 len(t["NN_obs"]) <= 140
@@ -163,10 +172,34 @@ def main() -> None:
                 or not np.array_equal(c.numpy(), t["NN_c_after"][140])
             ):
                 raise ValueError("restored passer own observation or recurrent inference differs")
+            past_ball_vel = np.concatenate(
+                (
+                    initial_data["qvel"][None, layout.bv : layout.bv + 2],
+                    physics["qvel"][:139, -1, layout.bv : layout.bv + 2],
+                ),
+                axis=0,
+            )
+            receiver_q, receiver_v = receiver_layout.canonical(data)
+            role = restored_receiving_role(
+                initial_ball=initial_data["qpos"][layout.bq : layout.bq + 2].copy(),
+                initial_home=initial_data["qpos"][
+                    receiver_layout.rq : receiver_layout.rq + 2
+                ].copy(),
+                pass_goal=ep.goal,
+                current_q=receiver_q,
+                current_v=receiver_v,
+                past_ball_velocities=past_ball_vel,
+            )
+            if not np.array_equal(
+                np.asarray(role.command_body, dtype=np.float32), velocity_data["command"][140]
+            ):
+                raise ValueError("receiver own causal role decision differs at restored boundary")
         if (
             digest(snap) != item["snapshot_hash"]
             or digest(trace) != row["artifacts"]["passer_nn"]["hash"]
             or digest(physical) != row["artifacts"]["physics"]["hash"]
+            or digest(initial) != row["artifacts"]["initial"]["hash"]
+            or digest(velocity) != row["artifacts"]["receiver_velocity"]["hash"]
         ):
             raise ValueError("original physical or neural input changed")
         rows.append(
@@ -177,6 +210,7 @@ def main() -> None:
                 observation_exact=True,
                 action_exact=True,
                 recurrent_after_exact=True,
+                receiver_role_command_exact=True,
             )
         )
     if (
@@ -203,7 +237,7 @@ def main() -> None:
             rows=rows,
             prior_own_action_and_recurrent_state_used=True,
             future_controls_used=False,
-            receiver_role_selector_verified=False,
+            receiver_role_selector_verified_at_boundary=True,
             coupled_physics_continuation_verified=False,
             native_steps=0,
             optimizer_updates=0,
