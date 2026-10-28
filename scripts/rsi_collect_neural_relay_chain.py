@@ -854,13 +854,12 @@ def main():
                     if receiver.phase == "MOTION_COMPLETE":
                         receiver.begin_standing()
                     smooth_index = step - handoff["control"]
-                    smooth_active = (
-                        a.precontact_smooth
-                        and course["arm"].get("precontact_fullbody", False)
-                        and smooth_index < 10
+                    smooth_mode = a.precontact_smooth and course["arm"].get(
+                        "precontact_fullbody", False
                     )
+                    smooth_active = smooth_mode and smooth_index < 10
                     target_b, trace_b = receiver.propose(
-                        with_reference_evidence=balance_teacher is not None or smooth_active
+                        with_reference_evidence=balance_teacher is not None or smooth_mode
                     )
                     if smooth_active:
                         from rosclaw_soccer.rsi.receiver_transition_blend import (
@@ -879,6 +878,10 @@ def main():
                         target_b = ep.offset + action_b[ep.order] * ep.scale
                         trace_b.update(
                             SMOOTH_action=action_b.copy(), SMOOTH_index=np.array(smooth_index)
+                        )
+                    elif smooth_mode:
+                        trace_b.update(
+                            SMOOTH_action=trace_b["NN_action"].copy(), SMOOTH_index=np.array(-1)
                         )
                     if balance_teacher is not None:
                         q, v = w.layouts["b/"].canonical(w.data)
