@@ -44,11 +44,47 @@ def main() -> None:
     p.add_argument("--probe-leg-rad", type=float, nargs=12)
     p.add_argument("--selector-receipt", type=Path)
     p.add_argument("--selector-receipt-hash")
+    p.add_argument("--nondefault", action="store_true")
+    p.add_argument("--expanded-velocity-proof", type=Path)
+    p.add_argument("--expanded-velocity-proof-hash")
     a = p.parse_args()
     probe = None if a.probe_leg_rad is None else np.asarray(a.probe_leg_rad, dtype=np.float64)
     if probe is not None and (not np.isfinite(probe).all() or np.abs(probe).max() > 0.15):
         raise ValueError("finite bounded 12-leg SIM probe required")
     clean(a.expected_head)
+    if (
+        a.nondefault != (a.expanded_velocity_proof is not None)
+        or a.nondefault != (a.expanded_velocity_proof_hash is not None)
+        or (a.nondefault and (probe is not None or a.selector_receipt is not None))
+    ):
+        raise ValueError("expanded zero-only proof requires exact expanded receiver inference")
+    if a.nondefault:
+        if (
+            a.expanded_velocity_proof.is_symlink()
+            or digest(a.expanded_velocity_proof) != a.expanded_velocity_proof_hash
+        ):
+            raise ValueError("exact expanded velocity proof required")
+        expanded_proof = json.loads(a.expanded_velocity_proof.read_text())
+        if (
+            expanded_proof.get("status")
+            != "RECEIVER_NONDEFAULT_SNAPSHOT_OWN_VELOCITY_INFERENCE_MATCH_NOT_POLICY_RESUME"
+            or expanded_proof.get("source_hash") != a.source_hash
+            or expanded_proof.get("audit_hash") != a.audit_hash
+            or expanded_proof.get("snapshot_hash") != a.snapshot_hash
+            or len(expanded_proof.get("rows", [])) != 24
+            or any(
+                not all(
+                    r.get(k) is True
+                    for k in ("observation_exact", "action_exact", "phase_exact", "target_exact")
+                )
+                for r in expanded_proof["rows"]
+            )
+            or any(
+                expanded_proof.get(k) is not False
+                for k in ("hardware_authorized", "promotion_authorized", "goal_complete")
+            )
+        ):
+            raise ValueError("all exact unpromoted expanded receiver inferences required")
     selector_weights = None
     if (a.selector_receipt is None) != (a.selector_receipt_hash is None) or (
         a.selector_receipt is not None and probe is not None
@@ -97,14 +133,29 @@ def main() -> None:
     snaps = json.loads(snapshot_receipt.read_text())
     if (
         sh != a.source_hash
-        or snaps.get("status") != "RELAY_PRECONTACT_NATIVE_STATE_RECONSTRUCTION_NOT_POLICY"
+        or snaps.get("status")
+        != (
+            "RELAY_NONDEFAULT_PRECONTACT_NATIVE_STATE_RECONSTRUCTION_NOT_POLICY"
+            if a.nondefault
+            else "RELAY_PRECONTACT_NATIVE_STATE_RECONSTRUCTION_NOT_POLICY"
+        )
         or snaps.get("source_hash") != sh
         or snaps.get("audit_hash") != a.audit_hash
-        or len(snaps.get("rows", [])) != 8
+        or len(snaps.get("rows", [])) != (24 if a.nondefault else 8)
         or snaps.get("saved_torque_is_not_policy") is not True
         or any(snaps.get(k) is not False for k in ("promotion_authorized", "hardware_authorized"))
     ):
-        raise ValueError("all eight exact unpromoted state snapshots required")
+        raise ValueError("all exact unpromoted state snapshots required")
+    if a.nondefault:
+        snapshot_ids = {
+            (r["index"], r["snapshot_hash"], r["receiver_lateral_offset_m"]) for r in snaps["rows"]
+        }
+        proof_ids = {
+            (r["index"], r["snapshot_hash"], r["receiver_lateral_offset_m"])
+            for r in expanded_proof["rows"]
+        }
+        if len(snapshot_ids) != 24 or snapshot_ids != proof_ids:
+            raise ValueError("expanded receiver proof must cover exactly these snapshots")
     pins, base_hash, candidates, contexts = admit_frontier(
         a.frontier, a.frontier_head, a.frontier_hash
     )
@@ -138,10 +189,13 @@ def main() -> None:
     by_index = {r["index"]: r for r in source["records"]}
     rows = []
     probe_trajectories = []
+    end_control = 160 if a.nondefault else 178
     for item in snaps["rows"]:
         row = by_index[item["index"]]
+        role_offset = row["course"]["arm"]["receiver_lateral_offset_m"]
         if (
-            row["course"]["arm"]["receiver_lateral_offset_m"] != 0.12
+            role_offset not in ((-0.35, -0.12, 0.35) if a.nondefault else (0.12,))
+            or (a.nondefault and item.get("receiver_lateral_offset_m") != role_offset)
             or row["course"]["context"] != item["context"]
             or row["course"]["lateral_m"] != item["side"]
             or item["replayed_steps"] != 1400
@@ -170,7 +224,9 @@ def main() -> None:
         mujoco.mj_forward(setup.model, data)
         view = PlayerObservationView(SimpleNamespace(data=data, layouts={"a/": layout}), "a/")
         ep = setup.episodes[item["context"]]
-        if ep.clip.length < 178 or (row["handoff"] is not None and row["handoff"]["control"] < 178):
+        if ep.clip.length < end_control or (
+            row["handoff"] is not None and row["handoff"]["control"] < end_control
+        ):
             raise ValueError("contact proof must stop before actual motion or receiver handoff")
         with (
             np.load(trace, allow_pickle=False) as t,
@@ -240,6 +296,7 @@ def main() -> None:
                 current_q=receiver_q,
                 current_v=receiver_v,
                 past_ball_velocities=past_ball_vel,
+                lateral_offset_m=role_offset,
             )
             if not np.array_equal(
                 np.asarray(role.command_body, dtype=np.float32), velocity_data["command"][140]
@@ -311,7 +368,7 @@ def main() -> None:
             previous_receiver_action = receiver_action.copy()
             previous_receiver_phase = receiver_phase
             past_ball_vel = np.concatenate((past_ball_vel, receiver_v[None, 35:37]), axis=0)
-            for frame in range(141, 178):
+            for frame in range(141, end_control):
                 mujoco.mj_forward(setup.model, scratch.data)
                 view = PlayerObservationView(scratch, "a/")
                 obs = ep.build_observation(
@@ -340,6 +397,7 @@ def main() -> None:
                     current_q=receiver_q,
                     current_v=receiver_v,
                     past_ball_velocities=past_ball_vel,
+                    lateral_offset_m=role_offset,
                 )
                 receiver_obs, receiver_phase = observation98(
                     receiver_q,
@@ -419,6 +477,7 @@ def main() -> None:
                 index=item["index"],
                 context=item["context"],
                 side=item["side"],
+                receiver_lateral_offset_m=role_offset,
                 observation_exact=validate_original,
                 action_exact=validate_original,
                 recurrent_after_exact=validate_original,
@@ -446,13 +505,15 @@ def main() -> None:
                 }
             )
     if (
-        len(rows) != 8
-        or len({(r["context"], r["side"]) for r in rows}) != 8
+        len(rows) != (24 if a.nondefault else 8)
+        or len({(r["context"], r["side"], r["receiver_lateral_offset_m"]) for r in rows})
+        != (24 if a.nondefault else 8)
         or digest(snapshot_receipt) != a.snapshot_hash
         or digest(root / "complete.json") != sh
         or digest(audit) != a.audit_hash
         or digest(scene) != snaps["scene_hash"]
         or digest(a.role_proof) != a.role_proof_hash
+        or (a.nondefault and digest(a.expanded_velocity_proof) != a.expanded_velocity_proof_hash)
         or (
             a.selector_receipt is not None
             and (
@@ -461,7 +522,7 @@ def main() -> None:
             )
         )
     ):
-        raise ValueError("all exact unchanged original eight cases required")
+        raise ValueError("all exact unchanged original development cases required")
     clean(a.expected_head)
     check_pins(pins)
     a.output.mkdir(parents=True)
@@ -475,7 +536,9 @@ def main() -> None:
         a.output / "complete.json",
         dict(
             status=(
-                "RELAY_CONTEXT_SELECTOR_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
+                "RELAY_NONDEFAULT_DUAL_NEURAL_20_CONTROLS_MATCH_NOT_FOOTBALL_SUCCESS"
+                if a.nondefault
+                else "RELAY_CONTEXT_SELECTOR_PHYSICAL_PROBE_NOT_FOOTBALL_SUCCESS"
                 if selector_weights is not None
                 else "RELAY_LEG_RESIDUAL_ZERO_OWN_REPLAY_NOT_FOOTBALL_SUCCESS"
                 if probe is not None and not np.any(probe)
@@ -489,6 +552,7 @@ def main() -> None:
             snapshot_hash=a.snapshot_hash,
             frontier_hash=a.frontier_hash,
             role_proof_hash=a.role_proof_hash,
+            expanded_velocity_proof_hash=a.expanded_velocity_proof_hash,
             rows=rows,
             prior_own_action_and_recurrent_state_used=True,
             future_controls_used=False,
