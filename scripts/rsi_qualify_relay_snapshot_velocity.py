@@ -21,6 +21,7 @@ def main() -> None:
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("source-hash", "audit-hash", "snapshot-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--nondefault", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     root, audit, receipt = (
@@ -45,16 +46,21 @@ def main() -> None:
     snapshots = json.loads(receipt.read_text())
     if (
         sh != a.source_hash
-        or snapshots.get("status") != "RELAY_PRECONTACT_NATIVE_STATE_RECONSTRUCTION_NOT_POLICY"
+        or snapshots.get("status")
+        != (
+            "RELAY_NONDEFAULT_PRECONTACT_NATIVE_STATE_RECONSTRUCTION_NOT_POLICY"
+            if a.nondefault
+            else "RELAY_PRECONTACT_NATIVE_STATE_RECONSTRUCTION_NOT_POLICY"
+        )
         or snapshots.get("source_hash") != sh
         or snapshots.get("audit_hash") != a.audit_hash
-        or len(snapshots.get("rows", [])) != 8
+        or len(snapshots.get("rows", [])) != (24 if a.nondefault else 8)
         or snapshots.get("saved_torque_is_not_policy") is not True
         or any(
             snapshots.get(k) is not False for k in ("promotion_authorized", "hardware_authorized")
         )
     ):
-        raise ValueError("all eight exact unpromoted qualified snapshots required")
+        raise ValueError("complete exact unpromoted qualified snapshot bank required")
     pins = source["input_file_hashes"]
     models = [Path(x) for x in pins if x.endswith("/velocity/v0/exported/policy.onnx")]
     configs = [Path(x) for x in pins if x.endswith("/velocity/v0/params/deploy.yaml")]
@@ -76,7 +82,13 @@ def main() -> None:
     for item in snapshots["rows"]:
         row = by_index[item["index"]]
         if (
-            row["course"]["arm"]["receiver_lateral_offset_m"] != 0.12
+            row["course"]["arm"]["receiver_lateral_offset_m"]
+            not in ((-0.35, -0.12, 0.35) if a.nondefault else (0.12,))
+            or (
+                a.nondefault
+                and item.get("receiver_lateral_offset_m")
+                != row["course"]["arm"]["receiver_lateral_offset_m"]
+            )
             or item["replayed_steps"] != 1400
             or item["restored_validation_steps"] != 10
         ):
@@ -132,6 +144,7 @@ def main() -> None:
                 index=item["index"],
                 context=item["context"],
                 side=item["side"],
+                receiver_lateral_offset_m=row["course"]["arm"]["receiver_lateral_offset_m"],
                 snapshot_hash=item["snapshot_hash"],
                 observation_exact=True,
                 action_exact=True,
@@ -140,8 +153,9 @@ def main() -> None:
             )
         )
     if (
-        len(rows) != 8
-        or len({(r["context"], r["side"]) for r in rows}) != 8
+        len(rows) != (24 if a.nondefault else 8)
+        or len({(r["context"], r["side"], r["receiver_lateral_offset_m"]) for r in rows})
+        != (24 if a.nondefault else 8)
         or digest(receipt) != a.snapshot_hash
         or digest(root / "complete.json") != sh
         or digest(audit) != a.audit_hash
@@ -155,7 +169,11 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="RECEIVER_SNAPSHOT_OWN_VELOCITY_INFERENCE_MATCH_NOT_POLICY_RESUME",
+            status=(
+                "RECEIVER_NONDEFAULT_SNAPSHOT_OWN_VELOCITY_INFERENCE_MATCH_NOT_POLICY_RESUME"
+                if a.nondefault
+                else "RECEIVER_SNAPSHOT_OWN_VELOCITY_INFERENCE_MATCH_NOT_POLICY_RESUME"
+            ),
             source_head=a.expected_head,
             source_hash=sh,
             audit_hash=a.audit_hash,
