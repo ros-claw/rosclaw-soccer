@@ -16,6 +16,7 @@ def main():
         parser.add_argument("--" + key, type=Path, required=True)
     for key in ("qualification-hash", "expected-head"):
         parser.add_argument("--" + key, required=True)
+    parser.add_argument("--incoming", action="store_true")
     args = parser.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -74,6 +75,20 @@ def main():
     model = mujoco.MjModel.from_binary_path(str(model_path))
     layout = NativeVelocityLayout(model, robot_prefix="robot/", ball_body_name="ball/ball")
     refs = load_body_references(args.reference_root, model, layout, plans)
+    course_binding = None
+    if args.incoming:
+        from rosclaw_soccer.rsi.native_receive_bank import build_incoming_bank
+        from rosclaw_soccer.training.role_receiving_courses import ROSTER, ReceivingCourse
+
+        courses = tuple(
+            ReceivingCourse(
+                ROSTER[i % 8], 920000 + i, (1.25, 2.0)[(i // 8) % 2], (-0.08, 0.08)[(i // 16) % 2]
+            )
+            for i in range(256)
+        )
+        bank, course_binding = build_incoming_bank(
+            model=model, params=params, bank=bank, plans=plans, courses=courses
+        )
     actor = VelocityPriorActor.from_onnx(
         onnx, expected_hash=pins[str(onnx)], reference_features=79
     ).eval()
@@ -102,9 +117,13 @@ def main():
         dict(
             source_head=args.expected_head,
             qualification_hash=args.qualification_hash,
-            experiment="receive-credit-physics-identity-v1",
+            experiment="receive-credit-physics-identity-incoming-v1"
+            if args.incoming
+            else "receive-credit-physics-identity-v1",
             worlds=8,
-            kick_bank_not_receive_training=True,
+            kick_bank_not_receive_training=not args.incoming,
+            kick_derived_motion_reference=True,
+            course_binding=course_binding,
             controls=24,
             optimizer_updates=0,
             hardware_authorized=False,
@@ -112,6 +131,8 @@ def main():
     )
     arrays = {}
     try:
+        if args.incoming:
+            np.savez_compressed(args.output / "incoming-bank.npz", **bank)
         observations = [course.reset() for course in courses]
         if not np.array_equal(*observations):
             raise ValueError("initial observations differ")
@@ -162,6 +183,11 @@ def main():
                 source_head=args.expected_head,
                 qualification_hash=args.qualification_hash,
                 raw_hash=digest(args.output / "physical-pairs.npz"),
+                incoming_bank_hash=digest(args.output / "incoming-bank.npz")
+                if args.incoming
+                else None,
+                course_binding=course_binding,
+                incoming=args.incoming,
                 worlds=8,
                 controls=len(rows),
                 native_steps=[course.native_steps for course in courses],
