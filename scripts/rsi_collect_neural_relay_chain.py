@@ -27,6 +27,7 @@ def main():
     p.add_argument("--receiver-whole-identity", action="store_true")
     p.add_argument("--receiver-learned-pair", action="store_true")
     p.add_argument("--passer-residual-pair", action="store_true")
+    p.add_argument("--passer-contact-exit", action="store_true")
     for key in ("receiver-checkpoint", "receiver-candidate-audit", "receiver-dataset"):
         p.add_argument("--" + key, type=Path)
     for key in (
@@ -47,6 +48,8 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.passer_contact_exit and not a.passer_residual_pair:
+        p.error("contact-exit is only defined for the isolated passer pair")
     if a.passer_residual_pair and (
         a.new_context_block is None
         or a.balance_teacher_pair is not None
@@ -337,7 +340,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_passer_residual_pair.development.v11"
+                "soccer.neural_relay_passer_contact_exit.development.v12"
+                if a.passer_contact_exit
+                else "soccer.neural_relay_passer_residual_pair.development.v11"
                 if a.passer_residual_pair
                 else "soccer.neural_relay_receiver_learned_pair.development.v10"
                 if a.receiver_learned_pair
@@ -433,7 +438,10 @@ def main():
         from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
         from rosclaw_soccer.rsi.neural_relay_incoming import incoming_delivery
         from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
-        from rosclaw_soccer.rsi.passer_residual_blend import blended_passer_action
+        from rosclaw_soccer.rsi.passer_residual_blend import (
+            PasserContactExitGate,
+            blended_passer_action,
+        )
         from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
         from rosclaw_soccer.rsi.receiving_handoff_opportunity import body_contact_kind
         from rosclaw_soccer.rsi.receiving_successor_alignment import (
@@ -634,6 +642,7 @@ def main():
             balance_teacher = None
             launch = False
             passer_foot_seen = False
+            passer_exit_gate = PasserContactExitGate()
             folder = a.output / f"trial{index}"
             folder.mkdir()
             physical, nn_a, nn_b, nn_v, nn_shadow = [], [], [], [], []
@@ -695,7 +704,9 @@ def main():
                 target_a, trace_a = passer.propose(with_reference_evidence=teacher_arm)
                 executed_a = None
                 if teacher_arm:
-                    active = not passer_foot_seen
+                    active = (
+                        passer_exit_gate.active if a.passer_contact_exit else not passer_foot_seen
+                    )
                     executed_a = blended_passer_action(
                         trace_a["NN_action"],
                         trace_a["NN_reference_nominal"],
@@ -798,6 +809,8 @@ def main():
                 passer_foot_seen = passer_foot_seen or bool(
                     (row["ball_forces"][:, 0, :2] > 10).any()
                 )
+                if a.passer_contact_exit:
+                    passer_exit_gate.observe(row["ball_forces"][:, 0, :])
                 if receiver is None:
                     if whole_receiver is not None:
                         whole_receiver.commit(
@@ -934,7 +947,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_PASSER_CONTACT_EXIT16_PENDING_OWN_REPLAY"
+                    if a.passer_contact_exit
+                    else "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY"
                     if a.passer_residual_pair
                     else "NEURAL_RELAY_RECEIVER_LEARNED_PAIR16_PENDING_OWN_REPLAY"
                     if a.receiver_learned_pair

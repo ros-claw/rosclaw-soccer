@@ -26,6 +26,7 @@ def main() -> None:
     )
     for key in ("source-head", "old-head", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--passer-contact-exit", action="store_true")
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
     clean(a.expected_head)
@@ -36,7 +37,13 @@ def main() -> None:
         root, audit, old, old_audit = map(Path, (source_name, audit_name, old_name, old_audit_name))
         ah, oh = digest(audit), digest(old_audit)
         current, _, sh = report(
-            root, audit, ah, "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY", worlds=16
+            root,
+            audit,
+            ah,
+            "NEURAL_RELAY_PASSER_CONTACT_EXIT16_PENDING_OWN_REPLAY"
+            if a.passer_contact_exit
+            else "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY",
+            worlds=16,
         )
         previous, _, ph = report(
             old,

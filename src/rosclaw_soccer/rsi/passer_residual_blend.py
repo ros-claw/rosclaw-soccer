@@ -3,6 +3,35 @@
 import numpy as np
 
 
+class PasserContactExitGate:
+    """Keep a research intervention through impact until a contact-free control.
+
+    Update only with the completed control's actual native force history. The
+    result affects the next control, never the already-executed physics step.
+    It is not evidence of a successful pass or authority to use a policy.
+    """
+
+    def __init__(self) -> None:
+        self.active = True
+        self.contact_seen = False
+
+    def observe(self, ball_forces: np.ndarray) -> None:
+        if (
+            not isinstance(ball_forces, np.ndarray)
+            or ball_forces.shape != (10, 3)
+            or not np.isfinite(ball_forces).all()
+            or (ball_forces < 0).any()
+        ):
+            raise ValueError("ten finite nonnegative native passer contact samples required")
+        touching = bool((ball_forces[:, :2] > 10).any())
+        if not self.active:
+            return
+        if touching:
+            self.contact_seen = True
+        elif self.contact_seen:
+            self.active = False
+
+
 def blended_passer_action(
     action: np.ndarray,
     reference: np.ndarray,

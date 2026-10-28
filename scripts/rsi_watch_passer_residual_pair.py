@@ -50,6 +50,7 @@ def main() -> None:
         p.add_argument("--" + key, required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--timeout-sec", type=int, default=43200)
+    p.add_argument("--passer-contact-exit", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     units = [group[1] for group in a.group]
@@ -112,6 +113,8 @@ def main() -> None:
         "--output",
         str(a.output),
     ]
+    if a.passer_contact_exit:
+        command.append("--passer-contact-exit")
     for root, _, old, old_audit in a.group:
         command.extend(
             (
