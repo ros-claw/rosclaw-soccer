@@ -13,6 +13,7 @@ from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.paired_health_exposure import paired_health_at_common_horizon
 from rosclaw_soccer.rsi.paired_precontact_authority import paired_precontact_authority
 from rosclaw_soccer.rsi.passer_curriculum_outcome import strict_pass_receive
+from rosclaw_soccer.rsi.receiver_first_contact_dynamics import first_contact_dynamics
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_fresh_common import clean
@@ -221,6 +222,15 @@ def main() -> None:
                     root_index=layout.rq,
                 )
                 health = paired_health_at_common_horizon(base_p["body_failed"], raw["body_failed"])
+                contact_dynamics = first_contact_dynamics(
+                    raw["qpos"],
+                    raw["qvel"],
+                    raw["ball_forces"],
+                    ball_q=layout.bq,
+                    ball_v=layout.bv,
+                    receiver_q=layout.rq,
+                    receiver_v=layout.rv,
+                )
             rows.append(
                 dict(
                     context=context,
@@ -231,6 +241,7 @@ def main() -> None:
                     physical_effect_vs_baseline=effect,
                     precontact_authority=precontact,
                     health_common_horizon=health,
+                    first_contact_dynamics=contact_dynamics,
                 )
             )
     if len(rows) != 32 or digest(root / "complete.json") != sh or digest(audit) != ah:
@@ -275,6 +286,12 @@ def main() -> None:
             ),
             strict_rescues=sum(not before and after for before, after in strict_pairs),
             strict_regressions=sum(before and not after for before, after in strict_pairs),
+            contact_half_second_observed=sum(
+                r["first_contact_dynamics"]["half_second_observed"] for r in subset
+            ),
+            first_nonfoot=sum(
+                "nonfoot" in r["first_contact_dynamics"]["first_contact_groups"] for r in subset
+            ),
             precise_healthy_return=sum(r["original"]["return_0p1m_and_healthy"] for r in subset),
             median_max_target_delta_rad=float(
                 np.median(
