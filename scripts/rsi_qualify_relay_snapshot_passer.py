@@ -1,4 +1,4 @@
-"""Verify ten live shared SIM controls from audited precontact boundaries."""
+"""Verify live shared SIM controls through early receiver contact."""
 
 import argparse
 import json
@@ -137,6 +137,8 @@ def main() -> None:
         mujoco.mj_forward(setup.model, data)
         view = PlayerObservationView(SimpleNamespace(data=data, layouts={"a/": layout}), "a/")
         ep = setup.episodes[item["context"]]
+        if ep.clip.length < 176 or (row["handoff"] is not None and row["handoff"]["control"] < 176):
+            raise ValueError("contact proof must stop before actual motion or receiver handoff")
         with (
             np.load(trace, allow_pickle=False) as t,
             np.load(physical, allow_pickle=False) as physics,
@@ -252,13 +254,17 @@ def main() -> None:
             for key in ("qpos", "qvel", "torque", "ball_forces"):
                 if not np.array_equal(resumed[key], physics[key][140]):
                     raise ValueError("restored coupled native substeps differ: " + key)
+            if (resumed["ball_forces"][:, 1, :] > 1.0).any():
+                raise ValueError("first restored boundary must precede receiver contact")
+            first_contact = None
+            first_groups: list[str] = []
             # Continue from each actor's *own newly generated* state. Recorded
             # future traces are audit targets only, never policy inputs.
             previous_action = out[0, 0].numpy().copy()
             previous_receiver_action = receiver_action.copy()
             previous_receiver_phase = receiver_phase
             past_ball_vel = np.concatenate((past_ball_vel, receiver_v[None, 35:37]), axis=0)
-            for frame in range(141, 150):
+            for frame in range(141, 176):
                 mujoco.mj_forward(setup.model, scratch.data)
                 view = PlayerObservationView(scratch, "a/")
                 obs = ep.build_observation(
@@ -319,6 +325,20 @@ def main() -> None:
                 for key in ("qpos", "qvel", "torque", "ball_forces"):
                     if not np.array_equal(resumed[key], physics[key][frame]):
                         raise ValueError(f"restored coupled native {key} differs at {frame}")
+                witnesses = resumed["ball_forces"][:, 1, :]
+                hit = np.flatnonzero((witnesses > 1.0).any(axis=1))
+                if first_contact is None and len(hit):
+                    substep = int(hit[0])
+                    first_contact = (frame, substep)
+                    first_groups = [
+                        name
+                        for name, force in zip(
+                            ("left_foot", "right_foot", "nonfoot"),
+                            witnesses[substep],
+                            strict=True,
+                        )
+                        if force > 1.0
+                    ]
                 previous_action = current_action
                 previous_receiver_action = receiver_action.copy()
                 previous_receiver_phase = receiver_phase
@@ -342,7 +362,9 @@ def main() -> None:
                 receiver_role_command_exact=True,
                 receiver_neural_inference_exact=True,
                 coupled_native_substeps_exact=True,
-                consecutive_controls=10,
+                consecutive_controls=36,
+                first_contact_frame_and_substep=first_contact,
+                first_contact_groups=first_groups,
             )
         )
     if (
@@ -361,7 +383,7 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="RELAY_RESTORED_OWN_NEURAL_TEN_CONTROLS_MATCH_NOT_FOOTBALL_SUCCESS",
+            status="RELAY_RESTORED_OWN_NEURAL_THROUGH_CONTACT_MATCH_NOT_FOOTBALL_SUCCESS",
             source_head=a.expected_head,
             source_hash=sh,
             audit_hash=a.audit_hash,
@@ -373,7 +395,7 @@ def main() -> None:
             future_controls_used=False,
             receiver_role_selector_verified_at_boundary=True,
             coupled_physics_continuation_verified=True,
-            native_steps=800,
+            native_steps=2880,
             optimizer_updates=0,
             independent_fresh=False,
             promotion_authorized=False,
