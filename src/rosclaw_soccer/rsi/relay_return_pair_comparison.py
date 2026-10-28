@@ -56,6 +56,26 @@ def compare_return_pair(
             for i, label in enumerate(("left_foot", "right_foot", "nonfoot"))
         }
 
+    def first_foot_followthrough(data: dict[str, np.ndarray]) -> dict[str, object]:
+        qpos = data["qpos"][prefix_controls:].reshape(-1, data["qpos"].shape[-1])
+        contacts = data["ball_forces"][prefix_controls:, :, 1, :2].reshape(-1, 2)
+        hits = np.flatnonzero(np.any(contacts > 1.0, axis=1))
+        if not hits.size:
+            return {"status": "NO_FOOT_CONTACT", "forward_60_controls_m": None}
+        first = int(hits[0])
+        if first + 600 >= len(qpos):
+            return {"status": "RIGHT_CENSORED", "forward_60_controls_m": None}
+        origin = qpos[first, ball_qpos : ball_qpos + 3]
+        delta = qpos[first + 600, ball_qpos : ball_qpos + 3] - origin
+        direction = goal - origin
+        distance = float(np.linalg.norm(direction))
+        if distance <= 1e-9:
+            return {"status": "DIRECTION_UNDEFINED", "forward_60_controls_m": None}
+        return {
+            "status": "OBSERVED",
+            "forward_60_controls_m": float(np.dot(delta, direction / distance)),
+        }
+
     first, second = minimum(baseline), minimum(candidate)
     return {
         "pre_intervention_controls_exact": prefix_controls,
@@ -67,5 +87,7 @@ def compare_return_pair(
         "baseline_receiver_contact_substeps": contact_counts(baseline),
         "candidate_receiver_contact_substeps": contact_counts(candidate),
         "contact_force_threshold_n": 1.0,
+        "baseline_first_foot_followthrough": first_foot_followthrough(baseline),
+        "candidate_first_foot_followthrough": first_foot_followthrough(candidate),
         "goal_proximity_is_not_pass_success": True,
     }

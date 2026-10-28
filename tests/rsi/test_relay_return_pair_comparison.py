@@ -58,6 +58,20 @@ def test_post_handoff_receiver_contact_substeps_are_not_counted_as_kicks():
         "right_foot": 0,
         "nonfoot": 2,
     }
+    assert result["baseline_first_foot_followthrough"]["status"] == "RIGHT_CENSORED"
+    assert result["candidate_first_foot_followthrough"]["status"] == "NO_FOOT_CONTACT"
+
+
+def test_complete_followthrough_uses_actual_substeps():
+    a, b = trajectory(64), trajectory(64)
+    for d in (a, b):
+        d["ball_forces"][2, 0, 1, 0] = 2.0
+    b["qpos"][62, 0, 3] = 1.0
+    result = compare(a, b)
+    assert result["candidate_first_foot_followthrough"] == {
+        "status": "OBSERVED",
+        "forward_60_controls_m": 1.0,
+    }
 
 
 def test_rejects_nonfinite_or_incomplete_trajectory():
