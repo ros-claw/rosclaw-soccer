@@ -36,7 +36,7 @@ def restored_scratch_world(
         or any(
             not isinstance(x, np.ndarray)
             or x.shape != (29,)
-            or x.dtype != np.float64
+            or x.dtype.kind != "f"
             or not np.isfinite(x).all()
             for x in prior_targets.values()
         )

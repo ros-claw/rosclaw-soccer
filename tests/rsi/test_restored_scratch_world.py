@@ -57,3 +57,23 @@ def test_scratch_restore_rejects_wrong_clock_or_missing_owner():
             control=1,
             prior_targets={},
         )
+
+
+def test_scratch_preserves_float32_neural_target_history():
+    original = world()
+    targets = {p: np.full(29, 0.02, dtype=np.float32) for p in original.layouts}
+    original.advance(targets)
+    spec = mujoco.mjtState.mjSTATE_INTEGRATION
+    state = np.empty(mujoco.mj_stateSize(original.model, spec), dtype=np.float64)
+    mujoco.mj_getState(original.model, original.data, state, spec)
+    scratch = restored_scratch_world(
+        original.model,
+        state,
+        players=original.parameters,
+        ball_body_name="ball",
+        control=1,
+        prior_targets=targets,
+    )
+    for prefix in targets:
+        assert scratch.last_applied_target(prefix).dtype == np.float32
+        np.testing.assert_array_equal(scratch.last_applied_target(prefix), targets[prefix])
