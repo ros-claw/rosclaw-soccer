@@ -57,7 +57,7 @@ def test_complete_sweep_replays(monkeypatch, tmp_path):
     )
     watch.main()
     assert len(calls) == 2
-    assert calls[1][1] == "scripts/rsi_audit_native_receiving_roles.py"
+    assert calls[1][1:3] == ["-m", "scripts.rsi_audit_native_receiving_roles"]
 
 
 def test_failed_sweep_does_not_retry(monkeypatch, tmp_path):
@@ -147,7 +147,7 @@ def test_development_relay_routes_to_relay_replay(monkeypatch, tmp_path):
     source.write_text(json.dumps(report))
     watch.sys.argv.append("--relay-development")
     watch.main()
-    assert calls[1][1] == "scripts/rsi_audit_neural_relay_chain.py"
+    assert calls[1][1:3] == ["-m", "scripts.rsi_audit_neural_relay_chain"]
 
 
 def test_balance_relay_routes_to_relay_replay(monkeypatch, tmp_path):
@@ -163,7 +163,7 @@ def test_balance_relay_routes_to_relay_replay(monkeypatch, tmp_path):
     source.write_text(json.dumps(report))
     watch.sys.argv.append("--relay-balance")
     watch.main()
-    assert calls[1][1] == "scripts/rsi_audit_neural_relay_chain.py"
+    assert calls[1][1:3] == ["-m", "scripts.rsi_audit_neural_relay_chain"]
 
 
 def test_expanded_balance_requires_all_64_worlds(monkeypatch, tmp_path):
@@ -183,7 +183,7 @@ def test_expanded_balance_requires_all_64_worlds(monkeypatch, tmp_path):
     report["records"] = [{}] * 64
     source.write_text(json.dumps(report))
     watch.main()
-    assert calls[-1][1] == "scripts/rsi_audit_neural_relay_chain.py"
+    assert calls[-1][1:3] == ["-m", "scripts.rsi_audit_neural_relay_chain"]
 
 
 def test_lateral_development_requires_exact_unit_and_replay(monkeypatch, tmp_path):
@@ -202,7 +202,7 @@ def test_lateral_development_requires_exact_unit_and_replay(monkeypatch, tmp_pat
     )
     watch.sys.argv.append("--relay-lateral-development")
     watch.main()
-    assert calls[-1][1] == "scripts/rsi_audit_neural_relay_chain.py"
+    assert calls[-1][1:3] == ["-m", "scripts.rsi_audit_neural_relay_chain"]
     watch.sys.argv[watch.sys.argv.index("--unit") + 1] = (
         "rosclaw-relay-lateral-dev-b3-20261028.service"
     )

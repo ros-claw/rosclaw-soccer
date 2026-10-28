@@ -106,12 +106,13 @@ def main():
     subprocess.run(
         [
             sys.executable,
-            "scripts/rsi_audit_neural_relay_chain.py"
+            "-m",
+            "scripts.rsi_audit_neural_relay_chain"
             if args.relay_development
             or args.relay_balance
             or args.relay_balance_expanded
             or args.relay_lateral_development
-            else "scripts/rsi_audit_native_receiving_roles.py",
+            else "scripts.rsi_audit_native_receiving_roles",
             "--source-root",
             str(args.source),
             "--source-head",
