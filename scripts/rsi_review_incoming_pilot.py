@@ -6,6 +6,21 @@ import subprocess
 from pathlib import Path
 
 
+def paired_changes(before, after, field):
+    """Count per-world boolean changes; do not confuse equal totals with equality."""
+    if len(before) != len(after):
+        raise ValueError("paired world count differs")
+    gained, lost = [], []
+    for left, right in zip(before, after, strict=True):
+        if left["bank_index"] != right["bank_index"]:
+            raise ValueError("paired world identity differs")
+        if not left[field] and right[field]:
+            gained.append(left["bank_index"])
+        elif left[field] and not right[field]:
+            lost.append(left["bank_index"])
+    return {"gained": gained, "lost": lost}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for key in ("pilot-root", "output"):
@@ -41,7 +56,11 @@ def main():
     ]
     if len(model_paths) != 1:
         raise ValueError("one original compiled model required")
-    for label in ("parent", "candidate"):
+    labels = ["parent"]
+    if declaration.get("parent_filter_ablation_in_development") is True:
+        labels.append("parent-filter")
+    labels.append("candidate")
+    for label in labels:
         pins[str(args.pilot_root / f"{label}-development.npz")] = report["development"][label][
             "raw_hash"
         ]
@@ -65,14 +84,15 @@ def main():
         raise ValueError("actual ball and foot collision geometry required")
     worlds = {}
     arrays = {}
-    for label in ("parent", "candidate"):
+    for label in labels:
         with np.load(args.pilot_root / f"{label}-development.npz", allow_pickle=False) as data:
             arrays[label] = {k: data[k].copy() for k in data.files}
-    a, b = arrays["parent"], arrays["candidate"]
-    if not np.array_equal(a["bank_index"], b["bank_index"]) or not np.array_equal(
-        a["observation_before"][0], b["observation_before"][0]
-    ):
-        raise ValueError("same actual initial paired states required")
+    parent = arrays["parent"]
+    for raw in arrays.values():
+        if not np.array_equal(parent["bank_index"], raw["bank_index"]) or not np.array_equal(
+            parent["observation_before"][0], raw["observation_before"][0]
+        ):
+            raise ValueError("same actual initial paired states required")
     for label, raw in arrays.items():
         rows = []
         for world in range(len(raw["bank_index"])):
@@ -103,11 +123,24 @@ def main():
                     first_foot_gt_10n=first(np.max(forces[:, :2], axis=1) > 10),
                     first_nonfoot_gt_1n=first(forces[:, 2] > 1),
                     healthy=not bool(raw["terminated"][:, world].any()),
+                    first_clean_foot_rewarded=bool(raw["credit_first_clean_foot"][:, world].any()),
+                    first_nonfoot_rewarded=bool(raw["credit_first_nonfoot"][:, world].any()),
                     capture_rewarded=bool(raw["credit_sustained_capture"][:, world].any()),
                     observed_controls=int(valid.sum()),
                 )
             )
         worlds[label] = rows
+    comparisons = {}
+    for base in labels[:-1]:
+        comparisons[base + "_to_candidate"] = {
+            field: paired_changes(worlds[base], worlds["candidate"], field)
+            for field in (
+                "healthy",
+                "first_clean_foot_rewarded",
+                "first_nonfoot_rewarded",
+                "capture_rewarded",
+            )
+        }
     check_pins(pins)
     args.output.mkdir()
     write_once(
@@ -119,6 +152,7 @@ def main():
             paired_initial_observation_exact=True,
             input_hashes=pins,
             worlds=worlds,
+            paired_changes=comparisons,
             no_new_physics=True,
             promotion_authorized=False,
             hardware_authorized=False,
