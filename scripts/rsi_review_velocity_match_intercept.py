@@ -6,9 +6,12 @@ import re
 import time
 from pathlib import Path
 
+import mujoco
 import numpy as np
 
+from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.paired_health_exposure import paired_health_at_common_horizon
+from rosclaw_soccer.rsi.paired_precontact_authority import paired_precontact_authority
 from rosclaw_soccer.rsi.passer_curriculum_outcome import strict_pass_receive
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
@@ -111,6 +114,14 @@ def main() -> None:
         indexed[key] = r
     if len(indexed) != 32:
         raise ValueError("32 complete paired development worlds required")
+    scene = root / "scene.xml"
+    scene_hash = digest(scene)
+    if scene.is_symlink():
+        raise ValueError("original immutable physics scene required")
+    model = mujoco.MjModel.from_xml_path(str(scene))
+    layout = NativeVelocityLayout(
+        model, robot_prefix="b/", ball_body_name="soccer_ball", player_count=2
+    )
     rows = []
     for context, side, offset in sorted({key[:3] for key in indexed}):
         baseline = indexed[(context, side, offset, False)]
@@ -148,6 +159,28 @@ def main() -> None:
                 for x, r in ((b, baseline), (c, candidate))
             ]
             health = paired_health_at_common_horizon(b["body_failed"], c["body_failed"])
+            m = min(n, len(b["qpos"]), len(c["qpos"]))
+            action_delta = vb["action"][:m] - va["action"][:m]
+            target_delta = c["target_b"][:m] - b["target_b"][:m]
+            joint_delta = c["qpos"][:m, -1, layout.qi] - b["qpos"][:m, -1, layout.qi]
+            ball_delta = (
+                c["qpos"][:m, -1, layout.bq : layout.bq + 3]
+                - b["qpos"][:m, -1, layout.bq : layout.bq + 3]
+            )
+            if any(
+                not np.isfinite(x).all()
+                for x in (action_delta, target_delta, joint_delta, ball_delta)
+            ):
+                raise ValueError("finite time-aligned physical intervention histories required")
+            precontact = paired_precontact_authority(
+                vb["command"],
+                va["command"],
+                c["qpos"],
+                b["qpos"],
+                c["ball_forces"],
+                joint_indices=layout.qi,
+                root_index=layout.rq,
+            )
             rows.append(
                 dict(
                     context=context,
@@ -157,11 +190,21 @@ def main() -> None:
                     candidate=outcomes[1],
                     health_common=health,
                     maximum_command_delta=float(np.abs(difference).max()),
+                    maximum_action_delta=float(np.abs(action_delta).max()),
+                    maximum_joint_target_delta_rad=float(np.abs(target_delta).max()),
+                    maximum_joint_position_delta_rad=float(np.abs(joint_delta).max()),
+                    maximum_ball_position_delta_m=float(np.linalg.norm(ball_delta, axis=1).max()),
+                    precontact_authority=precontact,
                     baseline_precision=baseline["result"]["return_0p1m_and_healthy"],
                     candidate_precision=candidate["result"]["return_0p1m_and_healthy"],
                 )
             )
-    if len(rows) != 16 or digest(root / "complete.json") != sh or digest(audit) != ah:
+    if (
+        len(rows) != 16
+        or digest(root / "complete.json") != sh
+        or digest(audit) != ah
+        or digest(scene) != scene_hash
+    ):
         raise ValueError("unchanged complete paired source and independent replay required")
     summary = summarize_pairs(rows)
     clean(a.expected_head)
@@ -172,10 +215,12 @@ def main() -> None:
             status="RECEIVER_VELOCITY_MATCH_PAIRED_DEVELOPMENT_REVIEWED",
             source_hash=sh,
             audit_hash=ah,
+            scene_hash=scene_hash,
             source_head=a.expected_head,
             summary=summary,
             rows=rows,
             unlearned_sim_teacher=True,
+            paired_closed_loop_effect_not_fixed_state_causation=True,
             independent_fresh=False,
             promotion_authorized=False,
             hardware_authorized=False,
