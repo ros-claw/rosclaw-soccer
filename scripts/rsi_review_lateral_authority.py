@@ -10,6 +10,7 @@ import mujoco
 import numpy as np
 
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+from rosclaw_soccer.rsi.paired_precontact_authority import paired_precontact_authority
 from rosclaw_soccer.rsi.passer_curriculum_outcome import strict_pass_receive
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
@@ -158,6 +159,15 @@ def main() -> None:
                     max_joint_position_delta_rad=float(np.abs(joint_difference).max()),
                     max_ball_position_delta_m=float(np.linalg.norm(ball_difference, axis=1).max()),
                 )
+                precontact = paired_precontact_authority(
+                    v["command"],
+                    base_v["command"],
+                    raw["qpos"],
+                    base_p["qpos"],
+                    raw["ball_forces"],
+                    joint_indices=layout.qi,
+                    root_index=layout.rq,
+                )
             rows.append(
                 dict(
                     context=context,
@@ -166,6 +176,7 @@ def main() -> None:
                     outcome=outcome,
                     original=measured(root, row),
                     physical_effect_vs_baseline=effect,
+                    precontact_authority=precontact,
                 )
             )
     if len(rows) != 32 or digest(root / "complete.json") != sh or digest(audit) != ah:
