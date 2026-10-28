@@ -42,6 +42,7 @@ def main() -> None:
         "expected-head",
     ):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--event-rewards", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     pins = (
@@ -73,6 +74,9 @@ def main() -> None:
         or audit.get("dataset_hash") != a.dataset_hash
         or audit.get("episodes") != 24
         or audit.get("controls") != data.get("sampled_controls")
+        or data.get("event_reward_profile")
+        != ("strict-event-redistribution-v1" if a.event_rewards else None)
+        or audit.get("event_reward_profile") != data.get("event_reward_profile")
         or parent_audit.get("status") != "DENSE_RECEIVER_CANDIDATE_READBACK_MATCH"
         or parent_audit.get("checkpoint_hash") != a.parent_hash
         or parent_audit.get("dataset_hash") != a.parent_dataset_hash
@@ -134,7 +138,8 @@ def main() -> None:
                 or not np.array_equal(ep["action_scale"], scale.numpy())
             ):
                 raise ValueError("exact actual sampled motor data and aligned rewards required")
-            reward = ep["rewards"].astype(np.float32) + np.float32(0.2) * ep["dense_rewards"]
+            reward_key = "event_rewards" if a.event_rewards else "rewards"
+            reward = ep[reward_key].astype(np.float32) + np.float32(0.2) * ep["dense_rewards"]
             returns, running = np.empty(n, np.float32), 0.0
             for i in range(n - 1, -1, -1):
                 running = float(reward[i]) + 0.99 * running
@@ -207,6 +212,7 @@ def main() -> None:
             parent_hash=a.parent_hash,
             dataset_hash=a.dataset_hash,
             dataset_audit_hash=a.dataset_audit_hash,
+            event_reward_profile="strict-event-redistribution-v1" if a.event_rewards else None,
             physical_retention_proven=False,
             promotion_authorized=False,
             hardware_authorized=False,
@@ -230,6 +236,7 @@ def main() -> None:
             critic_updates=3,
             critic_losses=losses,
             dense_weight=0.2,
+            event_reward_profile="strict-event-redistribution-v1" if a.event_rewards else None,
             gamma=0.99,
             **result,
             fresh_holdout=False,

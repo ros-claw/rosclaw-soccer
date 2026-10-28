@@ -14,6 +14,7 @@ from rosclaw_soccer.rsi.passer_curriculum_outcome import strict_pass_receive
 from rosclaw_soccer.rsi.receiver_onpolicy_episode import build_receiver_episode
 from rosclaw_soccer.rsi.receiver_strict_terminal_reward import strict_terminal_reward
 from rosclaw_soccer.rsi.receiving_progress_reward import receiver_motion_progress_rewards
+from rosclaw_soccer.rsi.relay_event_reward import strict_relay_event_rewards
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_fresh_common import clean
@@ -26,6 +27,7 @@ def main() -> None:
         p.add_argument("--" + name, type=Path, required=True)
     for name in ("review-hash", "exploration-head", "expected-head"):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--event-rewards", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if (
@@ -135,8 +137,24 @@ def main() -> None:
                 raw["ball_forces"][:n, :, 1, :].copy(),
                 raw["body_failed"][:n, 1].copy(),
             )
+            events, event_evidence = (
+                strict_relay_event_rewards(
+                    raw["ball_forces"],
+                    raw["body_failed"],
+                    handoff=trial["result"]["handoff_executed"],
+                    controls=n,
+                )
+                if a.event_rewards
+                else (None, None)
+            )
         target = a.output / f"episode-{len(rows):02d}.npz"
-        np.savez_compressed(target, **episode, action_scale=scale, dense_rewards=dense)
+        np.savez_compressed(
+            target,
+            **episode,
+            action_scale=scale,
+            dense_rewards=dense,
+            **({"event_rewards": events} if a.event_rewards else {}),
+        )
         rows.append(
             dict(
                 context=key[0],
@@ -149,6 +167,7 @@ def main() -> None:
                 source_velocity_hash=digest(velocity),
                 source_physics_hash=digest(physics),
                 physical_clean_outcome=outcome,
+                event_reward_evidence=event_evidence,
             )
         )
     if (
@@ -174,6 +193,7 @@ def main() -> None:
             sampled_controls=sum(r["controls"] for r in rows),
             records=rows,
             dense_reward_profile="receiver-motion-kinematic-v2",
+            event_reward_profile="strict-event-redistribution-v1" if a.event_rewards else None,
             independent_export_audit=False,
             research_training_sufficiency_proven=False,
             training_performed=False,

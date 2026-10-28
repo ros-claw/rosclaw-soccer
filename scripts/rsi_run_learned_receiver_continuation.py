@@ -38,6 +38,7 @@ def main() -> None:
     ):
         p.add_argument("--" + name, required=True)
     p.add_argument("--timeout-sec", type=int, default=7200)
+    p.add_argument("--event-rewards", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     pins = (
@@ -115,6 +116,7 @@ def main() -> None:
             sys.executable,
             "-m",
             "scripts.rsi_export_learned_receiver_pilot",
+            *(["--event-rewards"] if a.event_rewards else []),
             "--exploration",
             str(a.exploration),
             "--exploration-head",
@@ -136,6 +138,7 @@ def main() -> None:
             sys.executable,
             "-m",
             "scripts.rsi_audit_learned_receiver_pilot",
+            *(["--event-rewards"] if a.event_rewards else []),
             "--exploration",
             str(a.exploration),
             "--dataset",
@@ -158,6 +161,7 @@ def main() -> None:
         sys.executable,
         "-m",
         "scripts.rsi_train_learned_receiver_pilot",
+        *(["--event-rewards"] if a.event_rewards else []),
         "--dataset",
         str(dataset),
         "--dataset-hash",

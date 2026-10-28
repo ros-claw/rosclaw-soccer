@@ -16,6 +16,7 @@ from rosclaw_soccer.rsi.passer_curriculum_outcome import strict_pass_receive
 from rosclaw_soccer.rsi.receiver_onpolicy_episode import build_receiver_episode
 from rosclaw_soccer.rsi.receiver_strict_terminal_reward import strict_terminal_reward
 from rosclaw_soccer.rsi.receiving_progress_reward import receiver_motion_progress_rewards
+from rosclaw_soccer.rsi.relay_event_reward import strict_relay_event_rewards
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_fresh_common import clean
@@ -28,6 +29,7 @@ def main() -> None:
         p.add_argument("--" + name, type=Path, required=True)
     for name in ("dataset-hash", "review-hash", "expected-head"):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--event-rewards", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     manifest = a.dataset / "complete.json"
@@ -45,6 +47,8 @@ def main() -> None:
         data.get("status") != "LEARNED_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED"
         or data.get("review_hash") != a.review_hash
         or data.get("episodes") != 24
+        or data.get("event_reward_profile")
+        != ("strict-event-redistribution-v1" if a.event_rewards else None)
         or len(data.get("records", [])) != 24
         or review.get("sampled_source_hash") != data.get("source_hash")
         or any(
@@ -131,10 +135,25 @@ def main() -> None:
             n = len(expected["inputs"])
             if n != row["controls"] or n != reviewed[key]["stochastic_controls"]:
                 raise ValueError("exact contiguous executed sample count required")
-            if set(ep.files) != set(expected) | {"action_scale", "dense_rewards"} or any(
+            extra = {"action_scale", "dense_rewards"} | (
+                {"event_rewards"} if a.event_rewards else set()
+            )
+            if set(ep.files) != set(expected) | extra or any(
                 not np.array_equal(ep[k], val) for k, val in expected.items()
             ):
                 raise ValueError("exported actions, histories or terminal rewards changed")
+            if a.event_rewards:
+                events, evidence = strict_relay_event_rewards(
+                    raw["ball_forces"],
+                    raw["body_failed"],
+                    handoff=trial["result"]["handoff_executed"],
+                    controls=n,
+                )
+                if (
+                    not np.array_equal(ep["event_rewards"], events)
+                    or row["event_reward_evidence"] != evidence
+                ):
+                    raise ValueError("measured event timing and score redistribution differ")
             if not np.array_equal(ep["action_scale"], expected_scale):
                 raise ValueError("sampled motor scale must match pinned policy codec")
             q = raw["qpos"][:n, -1, :]
@@ -183,6 +202,7 @@ def main() -> None:
             maximum_density_error=max_error,
             strict_reward_and_physical_history_recomputed=True,
             dense_feedback_uses_shared_reward_function=True,
+            event_reward_profile="strict-event-redistribution-v1" if a.event_rewards else None,
             fresh_holdout=False,
             training_performed=False,
             promotion_authorized=False,
