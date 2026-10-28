@@ -30,6 +30,10 @@ def main() -> None:
         "expected-head",
     ):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--receiver-center-strict", action="store_true")
+    p.add_argument("--data-audit", type=Path)
+    p.add_argument("--data-audit-hash")
+    p.add_argument("--seed", type=int, choices=(92401, 92402, 92403))
     a = p.parse_args()
     clean(a.expected_head)
     dp, ap, tp = (x / "complete.json" for x in (a.dataset, a.admission, a.training))
@@ -41,16 +45,52 @@ def main() -> None:
     ):
         raise ValueError("pinned unchanged data, candidate and unused output required")
     data, admission, training = (json.loads(x.read_text()) for x, _ in pins)
+    if a.receiver_center_strict:
+        if (
+            a.data_audit is None
+            or a.data_audit_hash is None
+            or a.seed is None
+            or a.data_audit.is_symlink()
+            or digest(a.data_audit) != a.data_audit_hash
+        ):
+            raise ValueError("center candidate requires exact audited data and seed")
+        data_audit = json.loads(a.data_audit.read_text())
+        if (
+            data_audit.get("dataset_hash") != a.dataset_hash
+            or data_audit.get("status") != "RECEIVER_ONPOLICY_READBACK_AND_DENSITY_NOT_TRAINED"
+            or data_audit.get("reward_profile") != "center-strict-full-history-v1"
+            or data_audit.get("exact_inputs_actions_rewards_and_source_replayed") is not True
+            or data_audit.get("research_data_sufficiency") != data.get("research_data_sufficiency")
+            or data.get("research_data_sufficiency", {}).get("research_training_data_sufficient")
+            is not True
+        ):
+            raise ValueError("fully audited strict center data required")
+    elif a.data_audit is not None or a.data_audit_hash is not None or a.seed is not None:
+        raise ValueError("center data arguments require center protocol")
     checkpoint, anchors = a.training / "research-candidate.pt", a.admission / "healthy-anchors.npz"
     if (
-        training.get("status") != "RECEIVER_OFFLINE_RESEARCH_CANDIDATE"
+        training.get("status")
+        != (
+            "CENTER_RECEIVER_OFFLINE_CANDIDATE"
+            if a.receiver_center_strict
+            else "RECEIVER_OFFLINE_RESEARCH_CANDIDATE"
+        )
         or training.get("source_head") != a.producer_head
         or training.get("dataset_hash") != a.dataset_hash
-        or training.get("admission_hash") != a.admission_hash
+        or (
+            training.get("anchor_admission_hash")
+            if a.receiver_center_strict
+            else training.get("admission_hash")
+        )
+        != a.admission_hash
+        or (
+            a.receiver_center_strict
+            and (training.get("audit_hash") != a.data_audit_hash or training.get("seed") != a.seed)
+        )
         or training.get("actor_updates") != 1
         or training.get("critic_updates") != 3
         or training.get("actual_new_physics") is not False
-        or admission.get("dataset_hash") != a.dataset_hash
+        or (not a.receiver_center_strict and admission.get("dataset_hash") != a.dataset_hash)
         or any(
             x.get("hardware_authorized") is not False or x.get("promotion_authorized") is not False
             for x in (training, admission)
@@ -76,8 +116,9 @@ def main() -> None:
     state = torch.load(checkpoint, map_location="cpu", weights_only=True)
     if (
         state.get("dataset_hash") != a.dataset_hash
-        or state.get("admission_hash") != a.admission_hash
-        or state.get("seed") != 92301
+        or (state.get("audit_hash") if a.receiver_center_strict else state.get("admission_hash"))
+        != (a.data_audit_hash if a.receiver_center_strict else a.admission_hash)
+        or state.get("seed") != (a.seed if a.receiver_center_strict else 92301)
         or state.get("physical_retention_proven") is not False
         or state.get("promotion_authorized") is not False
         or state.get("hardware_authorized") is not False
@@ -138,7 +179,7 @@ def main() -> None:
     attempt = training["attempts"][-1]
     if (
         len(kls) != 72
-        or count != 18482
+        or count != (data["sampled_controls"] if a.receiver_center_strict else 18482)
         or not math.isfinite(max_delta)
         or not math.isfinite(mean_kl)
         or max_delta > 0.005
@@ -155,6 +196,7 @@ def main() -> None:
             (anchors, admission["healthy_anchor_hash"]),
             (Path(model), model_hash),
             (Path(config), config_hash),
+            *(((a.data_audit, a.data_audit_hash),) if a.receiver_center_strict else ()),
         )
     ):
         raise ValueError("candidate evidence changed during readback")
