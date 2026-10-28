@@ -121,6 +121,24 @@ class NativeContactCourse:
             raise ValueError("live native course required")
         return self._observation.copy()
 
+    def reject_worlds(self, mask: NDArray[np.bool_]) -> None:
+        """Freeze explicitly rejected SIM worlds before the next physics step.
+
+        The caller must separately record why each world was rejected; this is
+        not a physical stop, successful episode, or automatic reset.
+        """
+        if self.batch is None or self._closed or self.faulted or self.ended.all():
+            raise ValueError("active native course required for rejection")
+        if (
+            not isinstance(mask, np.ndarray)
+            or mask.shape != (self.worlds,)
+            or mask.dtype != np.bool_
+            or not mask.any()
+            or np.any(mask & self.ended)
+        ):
+            raise ValueError("nonempty live-world rejection mask required")
+        self.ended |= mask
+
     def reset(self) -> NDArray[np.float32]:
         if self._closed or self.faulted or (self.batch is not None and not self.ended.all()):
             raise ValueError("cannot reset active/faulted native course")

@@ -53,3 +53,16 @@ def test_course_window_reward_dominance_and_observation_abi():
         == NativeContactCourse.critic_observation_dim
         == 177
     )
+
+
+def test_pre_step_rejections_freeze_only_declared_live_worlds():
+    course = NativeContactCourse.__new__(NativeContactCourse)
+    course._closed, course.faulted, course.batch = False, False, object()
+    course.worlds = 3
+    course.ended = np.array([False, False, True])
+    course.reject_worlds(np.array([True, False, False]))
+    np.testing.assert_array_equal(course.ended, [True, False, True])
+    with pytest.raises(ValueError, match="live-world"):
+        course.reject_worlds(np.array([True, False, False]))
+    with pytest.raises(ValueError, match="live-world"):
+        course.reject_worlds(np.array([False, False, False]))

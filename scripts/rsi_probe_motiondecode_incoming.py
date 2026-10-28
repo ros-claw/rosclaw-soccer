@@ -22,6 +22,7 @@ def main():
     p.add_argument("--intercept-teacher", action="store_true")
     p.add_argument("--robust-teacher", action="store_true")
     p.add_argument("--reserve-teacher", action="store_true")
+    p.add_argument("--isolate-teacher-rejections", action="store_true")
     a = p.parse_args()
     if a.lateral_study and a.launch_frame != "heading":
         raise ValueError("lateral study requires an explicit body-heading launch")
@@ -31,6 +32,8 @@ def main():
         raise ValueError("robust authority bound requires explicit teacher")
     if a.robust_teacher and a.reserve_teacher:
         raise ValueError("distinct teacher intervention modes cannot be combined")
+    if a.isolate_teacher_rejections and not a.reserve_teacher:
+        raise ValueError("isolated rejection requires explicit reserved teacher study")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
 
@@ -202,6 +205,7 @@ def main():
             training=False,
             intercept_teacher=a.intercept_teacher,
             teacher_unlearned=a.intercept_teacher,
+            isolate_teacher_rejections=a.isolate_teacher_rejections,
             teacher_configuration=dict(
                 early_intercept=True,
                 contact_lead=True,
@@ -247,12 +251,14 @@ def main():
             else None
         )
         rows = []
+        rejected = []
         while not env.ended.all():
             with torch.no_grad():
                 action = actor(torch.from_numpy(env.observation)).numpy().copy()
             nominal_action = action.copy()
             teacher_delta = np.zeros((env.worlds, 29), dtype=np.float64)
             teacher_active = np.zeros(env.worlds, dtype=bool)
+            rejected_mask = np.zeros(env.worlds, dtype=bool)
             if teachers is not None:
                 assert env.batch is not None
                 for i in np.flatnonzero(~env.ended):
@@ -284,10 +290,30 @@ def main():
                     try:
                         require_teacher_slew(previous_delta, teacher_delta[i])
                     except ValueError as error:
-                        raise ValueError(
-                            f"teacher slew conflict at world {i}, control {env.elapsed[i]}"
-                        ) from error
+                        if not a.isolate_teacher_rejections:
+                            raise ValueError(
+                                f"teacher slew conflict at world {i}, control {env.elapsed[i]}"
+                            ) from error
+                        rejected_mask[i] = True
+                        rejected.append(
+                            dict(
+                                world=int(i),
+                                control=int(env.elapsed[i]),
+                                max_residual_jump=float(
+                                    np.max(np.abs(teacher_delta[i] - previous_delta))
+                                ),
+                                qpos=env.batch.data[i].qpos.copy(),
+                                qvel=env.batch.data[i].qvel.copy(),
+                                rejected_action=action[i].copy(),
+                                previous_delta=previous_delta.copy(),
+                                rejected_delta=teacher_delta[i].copy(),
+                            )
+                        )
                     teacher_active[i] = proposal["active"]
+            if rejected_mask.any():
+                env.reject_worlds(rejected_mask)
+            if env.ended.all():
+                break
             result = env.step(action)
             rows.append(
                 {
@@ -296,10 +322,16 @@ def main():
                     "nominal_action": nominal_action,
                     "teacher_delta": teacher_delta,
                     "teacher_active": teacher_active,
+                    "teacher_rejected": rejected_mask,
                 }
             )
         raw = {key: np.stack([row[key] for row in rows]) for key in rows[0]}
         np.savez_compressed(a.output / "physical.npz", bank_index=env.index, **raw)
+        if rejected:
+            np.savez_compressed(
+                a.output / "teacher-rejections.npz",
+                **{key: np.asarray([row[key] for row in rejected]) for key in rejected[0]},
+            )
         check_pins(pins)
         if subprocess.check_output(["git", "status", "--porcelain"]):
             raise ValueError("source changed during physical probe")
@@ -328,8 +360,14 @@ def main():
                 intercept_teacher=a.intercept_teacher,
                 robust_teacher=a.robust_teacher,
                 reserve_teacher=a.reserve_teacher,
-                teacher_active_controls=int(raw["teacher_active"].sum()),
-                teacher_changed_controls=int(np.any(raw["teacher_delta"] != 0, axis=-1).sum()),
+                teacher_active_controls=int((raw["teacher_active"] & raw["valid"]).sum()),
+                teacher_changed_controls=int(
+                    (np.any(raw["teacher_delta"] != 0, axis=-1) & raw["valid"]).sum()
+                ),
+                teacher_guard_rejections=len(rejected),
+                teacher_rejection_hash=digest(a.output / "teacher-rejections.npz")
+                if rejected
+                else None,
                 independent_replay=False,
                 hardware_authorized=False,
                 promotion_authorized=False,
