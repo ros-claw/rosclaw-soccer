@@ -26,6 +26,7 @@ def main():
     p.add_argument("--motion-reference-receipt-hash")
     p.add_argument("--reference-ball-initial-velocity", action="store_true")
     p.add_argument("--reference-all-initial-velocities", action="store_true")
+    p.add_argument("--reference-phase-start", type=int, default=0)
     p.add_argument("--ankle-roll-reference", action="store_true")
     p.add_argument("--motor-pilot", type=Path)
     p.add_argument("--motor-pilot-hash")
@@ -36,6 +37,10 @@ def main():
         p.error("moving-ball research initialisation requires a derived reference receipt")
     if a.reference_ball_initial_velocity and a.reference_all_initial_velocities:
         p.error("choose one explicit initial velocity protocol")
+    if not 0 <= a.reference_phase_start <= 50 or (
+        a.reference_phase_start and a.motion_reference_receipt is None
+    ):
+        p.error("bounded nonzero reference phase requires a derived reference receipt")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
     from scripts.rsi_native_fresh_common import clean, source_pins
@@ -130,6 +135,8 @@ def main():
         ):
             raise ValueError("motion must be in the pinned external source")
         motion = load_cftrack_motion(motion_source)
+        if a.reference_phase_start >= len(motion["joint_pos"]) - 8:
+            raise ValueError("sufficient original reference frames after phase start required")
         if a.reference_all_initial_velocities:
             from rosclaw_soccer.rsi.omnicontact_initial_velocity import reference_initial_velocities
             from rosclaw_soccer.training.omnicontact_reference import LAB_TO_MUJOCO
@@ -179,6 +186,8 @@ def main():
             derived_reference_ball_lift_m=None
             if derived_receipt is None
             else derived_receipt["ball_reference_lift_m"],
+            reference_phase_start=a.reference_phase_start,
+            initial_physical_state_remains_reference_frame_zero=True,
             motion_root_convention="author_body_index_zero_not_redundant_base_arrays",
             motion_base_body_max_position_difference_m=None
             if motion is None
@@ -258,7 +267,7 @@ def main():
     if motion is not None:
         policy.reference_source = "NPZmotion"
         policy.npz_dir = str(motion_source)
-        policy.tracking_start_frame, policy.tracking_end_frame = 0, -1
+        policy.tracking_start_frame, policy.tracking_end_frame = a.reference_phase_start, -1
     policy.active_object_name = "ball"
     policy.box_dims = policy.ball_dims = np.full(3, 0.11, np.float32)
     policy.bbox_scale = policy.box_dims * 2
@@ -430,6 +439,7 @@ def main():
             motion_source=str(motion_source) if motion_source else None,
             reference_ball_initial_velocity=a.reference_ball_initial_velocity,
             reference_all_initial_velocities=a.reference_all_initial_velocities,
+            reference_phase_start=a.reference_phase_start,
             controls=world.control_steps,
             native_steps=world.native_steps,
             new_neural_calls=len(captured_obs),
