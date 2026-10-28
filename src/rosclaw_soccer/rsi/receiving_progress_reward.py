@@ -3,6 +3,37 @@
 import numpy as np
 
 
+def decompose_proximity_change(
+    receiver_xy: np.ndarray, ball_xy: np.ndarray
+) -> dict[str, np.ndarray]:
+    """Separate measured receiver displacement from ball displacement.
+
+    The decomposition is an order-dependent kinematic attribution, not a
+    causal counterfactual or evidence that moving toward the ball is safe.
+    Distances use the same four-metre cap as the exploratory dense reward.
+    """
+    if (
+        not isinstance(receiver_xy, np.ndarray)
+        or receiver_xy.ndim != 2
+        or receiver_xy.shape[1] != 2
+        or len(receiver_xy) < 1
+        or not isinstance(ball_xy, np.ndarray)
+        or ball_xy.shape != receiver_xy.shape
+        or not np.isfinite(receiver_xy).all()
+        or not np.isfinite(ball_xy).all()
+    ):
+        raise ValueError("finite aligned measured XY histories required")
+    receiver = receiver_xy.astype(np.float64)
+    ball = ball_xy.astype(np.float64)
+    distance = np.minimum(np.linalg.norm(ball - receiver, axis=1), 4.0)
+    midpoint = np.minimum(np.linalg.norm(ball[:-1] - receiver[1:], axis=1), 4.0)
+    actor_progress = np.zeros(len(receiver), dtype=np.float64)
+    ball_progress = np.zeros(len(receiver), dtype=np.float64)
+    actor_progress[1:] = distance[:-1] - midpoint
+    ball_progress[1:] = midpoint - distance[1:]
+    return {"receiver_motion": actor_progress, "ball_motion": ball_progress}
+
+
 def receiving_progress_rewards(
     receiver_xy: np.ndarray,
     ball_xy: np.ndarray,
