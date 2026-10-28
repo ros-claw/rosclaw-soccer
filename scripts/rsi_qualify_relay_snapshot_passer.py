@@ -9,9 +9,12 @@ import mujoco
 import numpy as np
 import torch
 
+from rosclaw_soccer.providers.g1.velocity_policy import observation98, target29
 from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.relay_restored_receiving_role import restored_receiving_role
+from rosclaw_soccer.rsi.restored_scratch_world import restored_scratch_world
+from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
 from rosclaw_soccer.rsi.shared_native_neural_player import PlayerObservationView
 from rosclaw_soccer.rsi.shared_relay_setup import SharedRelaySetup
 from scripts.rsi_atomic_artifacts import write_once
@@ -87,6 +90,7 @@ def main() -> None:
         checkpoint_kind=candidate["kind"],
     )
     setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor, context_indices=indices)
+    velocity_policy = setup.velocity()
     scene = root / "scene.xml"
     if digest(scene) != snaps["scene_hash"] or scene.read_text() != setup.xml:
         raise ValueError("unchanged original shared model required")
@@ -123,8 +127,9 @@ def main() -> None:
             raise ValueError("confined snapshot and exact private source histories required")
         data = mujoco.MjData(setup.model)
         with np.load(snap, allow_pickle=False) as archive:
+            integration_state = archive["state"].copy()
             mujoco.mj_setState(
-                setup.model, data, archive["state"], mujoco.mjtState.mjSTATE_INTEGRATION
+                setup.model, data, integration_state, mujoco.mjtState.mjSTATE_INTEGRATION
             )
         mujoco.mj_forward(setup.model, data)
         view = PlayerObservationView(SimpleNamespace(data=data, layouts={"a/": layout}), "a/")
@@ -142,6 +147,14 @@ def main() -> None:
                 or not np.array_equal(data.qvel, physics["qvel"][139, -1])
                 or not np.array_equal(t["NN_h_after"][139], t["NN_h_before"][140])
                 or not np.array_equal(t["NN_c_after"][139], t["NN_c_before"][140])
+                or not np.array_equal(t["NN_obs"][140, 125:154], t["NN_action"][139])
+                or not np.array_equal(
+                    velocity_data["obs"][140, 69:98], velocity_data["action"][139]
+                )
+                or not np.array_equal(
+                    target29(velocity_data["action"][139], velocity_policy.params),
+                    physics["target_b"][139],
+                )
             ):
                 raise ValueError("actual own recurrent and physical boundary required")
             obs = ep.build_observation(
@@ -194,6 +207,48 @@ def main() -> None:
                 np.asarray(role.command_body, dtype=np.float32), velocity_data["command"][140]
             ):
                 raise ValueError("receiver own causal role decision differs at restored boundary")
+            receiver_obs, receiver_phase = observation98(
+                receiver_q,
+                receiver_v,
+                receiver_layout.angular_velocity_body(data),
+                np.asarray(role.command_body, dtype=np.float32),
+                velocity_data["action"][139].copy(),
+                velocity_data["phase"][139],
+                velocity_policy.params,
+            )
+            receiver_action = velocity_policy.session.run(["actions"], {"obs": receiver_obs[None]})[
+                0
+            ][0]
+            receiver_target = target29(receiver_action, velocity_policy.params)
+            passer_target = ep.offset + out[0, 0].numpy()[ep.order] * ep.scale
+            if (
+                not np.array_equal(receiver_obs, velocity_data["obs"][140])
+                or not np.array_equal(receiver_action, velocity_data["action"][140])
+                or receiver_phase != velocity_data["phase"][140]
+                or not np.array_equal(receiver_target, physics["target_b"][140])
+            ):
+                raise ValueError("receiver own inference differs at restored boundary")
+            vp = velocity_policy.params
+            scratch = restored_scratch_world(
+                setup.model,
+                integration_state,
+                players={
+                    "a/": NativePDParameters(ep.kp, ep.kd, ep.effort),
+                    "b/": NativePDParameters(
+                        np.asarray(vp.stiffness), np.asarray(vp.damping), ep.effort
+                    ),
+                },
+                ball_body_name="soccer_ball",
+                control=140,
+                prior_targets={
+                    "a/": ep.offset + t["NN_action"][139][ep.order] * ep.scale,
+                    "b/": physics["target_b"][139].copy(),
+                },
+            )
+            resumed = scratch.advance({"a/": passer_target, "b/": receiver_target})
+            for key in ("qpos", "qvel", "torque", "ball_forces"):
+                if not np.array_equal(resumed[key], physics[key][140]):
+                    raise ValueError("restored coupled native substeps differ: " + key)
         if (
             digest(snap) != item["snapshot_hash"]
             or digest(trace) != row["artifacts"]["passer_nn"]["hash"]
@@ -211,6 +266,8 @@ def main() -> None:
                 action_exact=True,
                 recurrent_after_exact=True,
                 receiver_role_command_exact=True,
+                receiver_neural_inference_exact=True,
+                coupled_native_substeps_exact=True,
             )
         )
     if (
@@ -228,7 +285,7 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="PASSER_SNAPSHOT_OWN_RECURRENT_INFERENCE_MATCH_NOT_POLICY_RESUME",
+            status="RELAY_RESTORED_OWN_NEURAL_ONE_CONTROL_MATCH_NOT_FOOTBALL_SUCCESS",
             source_head=a.expected_head,
             source_hash=sh,
             audit_hash=a.audit_hash,
@@ -238,8 +295,8 @@ def main() -> None:
             prior_own_action_and_recurrent_state_used=True,
             future_controls_used=False,
             receiver_role_selector_verified_at_boundary=True,
-            coupled_physics_continuation_verified=False,
-            native_steps=0,
+            coupled_physics_continuation_verified=True,
+            native_steps=80,
             optimizer_updates=0,
             independent_fresh=False,
             promotion_authorized=False,
