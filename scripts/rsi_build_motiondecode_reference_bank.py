@@ -16,6 +16,7 @@ def main():
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("model-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--train-offset", type=int, choices=(0, 8), default=0)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import digest
@@ -33,11 +34,12 @@ def main():
 
     root = a.dataset_root.resolve()
     folder = root / "extracted_s118/3.3.3.Football/3.3.3.4.Ball_Control"
-    selected = [
+    eligible = [
         p
         for p in sorted(folder.glob("*.csv"))
         if _split_for_path(p.relative_to(root).as_posix()) == "train"
-    ][:8]
+    ]
+    selected = eligible[a.train_offset : a.train_offset + 8]
     if len(selected) != 8 or any(
         path.is_symlink() or path.stat().st_size > 64 * 1024 * 1024 for path in selected
     ):
@@ -56,7 +58,8 @@ def main():
                 dict(path=path.relative_to(root).as_posix(), hash=h)
                 for path, h in zip(selected, hashes, strict=True)
             ],
-            selection="lexically first eight original train-split clips; no outcomes",
+            selection="eight lexical-order train clips at declared offset; no outcomes",
+            train_offset=a.train_offset,
             source_fps_assumption=120.0,
             target_fps=50.0,
             clip_source_independence_unproven=True,
@@ -129,6 +132,7 @@ def main():
             source_head=a.expected_head,
             model_hash=a.model_hash,
             records=records,
+            train_offset=a.train_offset,
             source_fps_assumption=120.0,
             min_self_tracking=min_score,
             guard_count=guards,
