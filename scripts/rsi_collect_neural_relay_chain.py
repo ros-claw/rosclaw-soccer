@@ -26,6 +26,7 @@ def main():
     p.add_argument("--receiver-follow-study", action="store_true")
     p.add_argument("--receiver-whole-identity", action="store_true")
     p.add_argument("--receiver-learned-pair", action="store_true")
+    p.add_argument("--passer-residual-pair", action="store_true")
     for key in ("receiver-checkpoint", "receiver-candidate-audit", "receiver-dataset"):
         p.add_argument("--" + key, type=Path)
     for key in (
@@ -46,6 +47,18 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.passer_residual_pair and (
+        a.new_context_block is None
+        or a.balance_teacher_pair is not None
+        or a.balance_expanded
+        or a.receiver_follow_study
+        or a.receiver_whole_identity
+        or a.receiver_learned_pair
+        or a.receiver_exploration
+        or a.successor_alignment_study
+        or a.reference_bridge_controls != [0]
+    ):
+        p.error("passer residual pair requires one isolated development block")
     candidate_args = (
         a.receiver_checkpoint,
         a.receiver_checkpoint_hash,
@@ -256,6 +269,16 @@ def main():
             )
             for i in (-1, 0, 1, 2)
         ]
+    if a.passer_residual_pair:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                passer_residual_fraction=fraction,
+            )
+            for fraction in (1.0, 0.5)
+        ]
     if a.receiver_follow_study:
         arms = [
             dict(
@@ -314,7 +337,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_receiver_learned_pair.development.v10"
+                "soccer.neural_relay_passer_residual_pair.development.v11"
+                if a.passer_residual_pair
+                else "soccer.neural_relay_receiver_learned_pair.development.v10"
                 if a.receiver_learned_pair
                 else "soccer.neural_relay_receiver_exploration.development.v9"
                 if a.receiver_exploration
@@ -367,7 +392,8 @@ def main():
             aligned_entry_consecutive_measured_controls=10,
             prior_closed_relay=prior,
             joint_targets_remain_actual_neural_outputs=a.balance_teacher_pair is None
-            and not a.receiver_exploration,
+            and not a.receiver_exploration
+            and not a.passer_residual_pair,
             bounded_teacher_added_after_neural=a.balance_teacher_pair is not None,
             all_bodies_initialized_once=True,
             no_ball_reposition=True,
@@ -377,6 +403,7 @@ def main():
             post_touch_velocity_follow_is_unlearned_teacher=a.receiver_follow_study,
             whole_receiver_identity_not_trained=a.receiver_whole_identity,
             receiver_exploration_is_stochastic_not_training=a.receiver_exploration,
+            passer_residual_is_unlearned_teacher=a.passer_residual_pair,
             receiver_sampling_profile="contact-v1" if a.receiver_exploration else None,
             receiver_sampling_law="box-truncated-ar1" if a.receiver_exploration else None,
             actual_actor_calls_are_body_proposals_not_auxiliary_forward_passes=True,
@@ -406,6 +433,7 @@ def main():
         from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
         from rosclaw_soccer.rsi.neural_relay_incoming import incoming_delivery
         from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
+        from rosclaw_soccer.rsi.passer_residual_blend import blended_passer_action
         from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
         from rosclaw_soccer.rsi.receiving_handoff_opportunity import body_contact_kind
         from rosclaw_soccer.rsi.receiving_successor_alignment import (
@@ -477,6 +505,29 @@ def main():
         for course in courses:
             ep, w, forward, _, anchor = setup.prepare(course["context"], course["lateral_m"])
             motion_segment(ep.clip, course["arm"]["start"])
+            if course["arm"].get("passer_residual_fraction") == 0.5:
+                probe = SharedNativeNeuralPlayer(
+                    w,
+                    "a/",
+                    actor,
+                    clip=ep.clip,
+                    torso_index=ep.torso_index,
+                    build_observation=ep.build_observation,
+                    goal=ep.goal,
+                    offset=ep.offset,
+                    scale=ep.scale,
+                    order=ep.order,
+                )
+                _, probe_trace = probe.propose(with_reference_evidence=True)
+                blended_passer_action(
+                    probe_trace["NN_action"],
+                    probe_trace["NN_reference_nominal"],
+                    probe.scale,
+                    probe.order,
+                    fraction=0.5,
+                )
+                if w.native_steps != 0 or w.control_steps != 0:
+                    raise ValueError("passer preflight must not integrate or mutate physics")
             if course["arm"].get("receiver_whole", False):
                 if whole_actor is None:
                     raise ValueError("qualified zero whole receiver required before any physics")
@@ -582,6 +633,7 @@ def main():
             receiver = None
             balance_teacher = None
             launch = False
+            passer_foot_seen = False
             folder = a.output / f"trial{index}"
             folder.mkdir()
             physical, nn_a, nn_b, nn_v, nn_shadow = [], [], [], [], []
@@ -638,7 +690,21 @@ def main():
                 mujoco.mj_forward(w.model, w.data)
                 if passer.phase == "MOTION_COMPLETE":
                     passer.begin_standing()
-                target_a, trace_a = passer.propose()
+                fraction = course["arm"].get("passer_residual_fraction", 1.0)
+                teacher_arm = fraction != 1.0
+                target_a, trace_a = passer.propose(with_reference_evidence=teacher_arm)
+                executed_a = None
+                if teacher_arm:
+                    active = not passer_foot_seen
+                    executed_a = blended_passer_action(
+                        trace_a["NN_action"],
+                        trace_a["NN_reference_nominal"],
+                        passer.scale,
+                        passer.order,
+                        fraction=fraction if active else 1.0,
+                    )
+                    target_a = passer.offset + executed_a[passer.order] * passer.scale
+                    trace_a.update(BLEND_active=np.array(active), BLEND_action=executed_a.copy())
                 trace_a["control"] = np.array(step)
                 counts["actual_actor_calls"] += 1
                 if receiver is None:
@@ -728,7 +794,10 @@ def main():
                 counts["actual_actor_calls"] += 1
                 row = w.advance({"a/": target_a, "b/": target_b})
                 counts["native_steps"] += 10
-                passer.commit()
+                passer.commit(executed_action=executed_a if teacher_arm and active else None)
+                passer_foot_seen = passer_foot_seen or bool(
+                    (row["ball_forces"][:, 0, :2] > 10).any()
+                )
                 if receiver is None:
                     if whole_receiver is not None:
                         whole_receiver.commit(
@@ -865,7 +934,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_RECEIVER_LEARNED_PAIR16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY"
+                    if a.passer_residual_pair
+                    else "NEURAL_RELAY_RECEIVER_LEARNED_PAIR16_PENDING_OWN_REPLAY"
                     if a.receiver_learned_pair
                     else "NEURAL_RELAY_RECEIVER_EXPLORATION32_PENDING_OWN_REPLAY"
                     if a.receiver_exploration

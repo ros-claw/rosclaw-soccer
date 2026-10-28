@@ -33,6 +33,7 @@ def main():
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
     exploration = dec["protocol"] == "soccer.neural_relay_receiver_exploration.development.v9"
     learned_pair = dec["protocol"] == "soccer.neural_relay_receiver_learned_pair.development.v10"
+    passer_pair = dec["protocol"] == "soccer.neural_relay_passer_residual_pair.development.v11"
     whole_identity = dec["protocol"] == "soccer.neural_relay_whole_receiver_identity.development.v8"
     follow_study = dec["protocol"] == "soccer.neural_relay_post_touch_follow.development.v7"
     balance_expanded = dec["protocol"] == "soccer.neural_relay_balance_expanded.development.v6"
@@ -40,7 +41,8 @@ def main():
         balance_expanded or dec["protocol"] == "soccer.neural_relay_balance_teacher.development.v5"
     )
     development_study = (
-        learned_pair
+        passer_pair
+        or learned_pair
         or exploration
         or whole_identity
         or follow_study
@@ -49,7 +51,9 @@ def main():
     )
     reference_study = dec["protocol"] == "soccer.neural_relay_reference_bridge.v2"
     team_entry_study = dec["protocol"] == "soccer.neural_relay_team_entry.v3"
-    expected_worlds = 16 if whole_identity or learned_pair else 64 if balance_expanded else 32
+    expected_worlds = (
+        16 if whole_identity or learned_pair or passer_pair else 64 if balance_expanded else 32
+    )
     if reference_study:
         if dec["reference_bridge_controls"] not in ([0], [0, 5, 15, 30]):
             raise ValueError("entire declared reference-bridge ablation required")
@@ -59,7 +63,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_RECEIVER_LEARNED_PAIR16_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY"
+        if passer_pair
+        else "NEURAL_RELAY_RECEIVER_LEARNED_PAIR16_PENDING_OWN_REPLAY"
         if learned_pair
         else "NEURAL_RELAY_RECEIVER_EXPLORATION32_PENDING_OWN_REPLAY"
         if exploration
@@ -95,6 +101,7 @@ def main():
             "soccer.neural_relay_whole_receiver_identity.development.v8",
             "soccer.neural_relay_receiver_exploration.development.v9",
             "soccer.neural_relay_receiver_learned_pair.development.v10",
+            "soccer.neural_relay_passer_residual_pair.development.v11",
         )
         or len(s["records"]) != expected_worlds
         or len(dec["courses"]) != expected_worlds
@@ -115,6 +122,16 @@ def main():
             raise ValueError("exact development context identity and reference required")
         arms = (
             [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    passer_residual_fraction=fraction,
+                )
+                for fraction in (1.0, 0.5)
+            ]
+            if passer_pair
+            else [
                 dict(
                     start=80,
                     memory="own_shadow_carry",
@@ -181,6 +198,12 @@ def main():
             or dec.get("bounded_teacher_added_after_neural") is not False
         ):
             raise ValueError("exact bounded stochastic receiver provenance required")
+        if passer_pair and (
+            dec.get("passer_residual_is_unlearned_teacher") is not True
+            or dec.get("joint_targets_remain_actual_neural_outputs") is not False
+            or dec.get("bounded_teacher_added_after_neural") is not False
+        ):
+            raise ValueError("explicit passer teacher provenance required")
         if whole_identity and (
             dec.get("whole_receiver_identity_not_trained") is not True
             or dec.get("actual_actor_calls_are_body_proposals_not_auxiliary_forward_passes")
@@ -324,6 +347,7 @@ def main():
         from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
         from rosclaw_soccer.rsi.neural_relay_incoming import incoming_delivery
         from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
+        from rosclaw_soccer.rsi.passer_residual_blend import blended_passer_action
         from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
         from rosclaw_soccer.rsi.receiving_handoff_opportunity import body_contact_kind
         from rosclaw_soccer.rsi.receiving_successor_alignment import (
@@ -476,6 +500,7 @@ def main():
             receiver = None
             balance_teacher = None
             ready = launch = False
+            passer_foot_seen = False
             handoff_control = None
             goal = origin = None
             excluded = set()
@@ -524,7 +549,21 @@ def main():
                 mujoco.mj_forward(w.model, w.data)
                 if passer.phase == "MOTION_COMPLETE":
                     passer.begin_standing()
-                target_a, trace = passer.propose()
+                fraction = course["arm"].get("passer_residual_fraction", 1.0)
+                teacher_arm = fraction != 1.0
+                target_a, trace = passer.propose(with_reference_evidence=teacher_arm)
+                executed_a = None
+                if teacher_arm:
+                    active = not passer_foot_seen
+                    executed_a = blended_passer_action(
+                        trace["NN_action"],
+                        trace["NN_reference_nominal"],
+                        passer.scale,
+                        passer.order,
+                        fraction=fraction if active else 1.0,
+                    )
+                    target_a = passer.offset + executed_a[passer.order] * passer.scale
+                    trace.update(BLEND_active=np.array(active), BLEND_action=executed_a.copy())
                 trace["control"] = np.array(step)
                 equal_trace(trace, nn["passer_nn"], step)
                 if receiver is None:
@@ -626,7 +665,10 @@ def main():
                     )
                 ):
                     raise ValueError("own control, time or health differs")
-                passer.commit()
+                passer.commit(executed_action=executed_a if teacher_arm and active else None)
+                passer_foot_seen = passer_foot_seen or bool(
+                    (row["ball_forces"][:, 0, :2] > 10).any()
+                )
                 if receiver is None:
                     if whole_receiver is not None:
                         whole_receiver.commit(
