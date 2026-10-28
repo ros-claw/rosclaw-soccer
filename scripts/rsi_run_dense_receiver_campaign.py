@@ -16,6 +16,7 @@ from scripts.rsi_watch_passer_residual_pair import worker_ready
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--receiver-motion-pair", action="store_true")
     p.add_argument(
         "--candidate",
         nargs=4,
@@ -41,7 +42,11 @@ def main() -> None:
         len(a.candidate) != 3
         or a.output.exists()
         or a.output.resolve().is_relative_to(Path.cwd())
-        or not a.pilot_unit.startswith("rosclaw-receiver-dense-pair-")
+        or not a.pilot_unit.startswith(
+            "rosclaw-receiver-motion-pair-"
+            if a.receiver_motion_pair
+            else "rosclaw-receiver-dense-pair-"
+        )
         or not a.pilot_unit.endswith(".service")
         or "/" in a.pilot_unit
         or not 1 <= a.timeout_sec <= 7200
@@ -54,7 +59,12 @@ def main() -> None:
             raise ValueError("every candidate must be preflighted before physics")
         audit = json.loads(ap.read_text())
         if (
-            audit.get("status") != "DENSE_RECEIVER_CANDIDATE_READBACK_MATCH"
+            audit.get("status")
+            != (
+                "MOTION_RECEIVER_CANDIDATE_READBACK_MATCH"
+                if a.receiver_motion_pair
+                else "DENSE_RECEIVER_CANDIDATE_READBACK_MATCH"
+            )
             or audit.get("checkpoint_hash") != ch
             or audit.get("dataset_hash") != a.dataset_hash
             or audit.get("seed") != 92401 + i
@@ -93,7 +103,9 @@ def main() -> None:
         a.pilot_root / "source",
         a.pilot_root / "audit/complete.json",
         digest(a.pilot_root / "audit/complete.json"),
-        "NEURAL_RELAY_RECEIVER_DENSE_PAIR16_PENDING_OWN_REPLAY",
+        "NEURAL_RELAY_RECEIVER_MOTION_PAIR16_PENDING_OWN_REPLAY"
+        if a.receiver_motion_pair
+        else "NEURAL_RELAY_RECEIVER_DENSE_PAIR16_PENDING_OWN_REPLAY",
         worlds=16,
     )
     if pilot.get("source_head") != a.pilot_head:
@@ -139,6 +151,7 @@ def main() -> None:
                     "--new-context-block",
                     str(block),
                     "--receiver-dense-pair",
+                    *(["--receiver-motion-pair"] if a.receiver_motion_pair else []),
                     "--expected-head",
                     a.expected_head,
                     "--output",
@@ -151,7 +164,9 @@ def main() -> None:
                     target / "source",
                     own,
                     digest(own),
-                    "NEURAL_RELAY_RECEIVER_DENSE_PAIR16_PENDING_OWN_REPLAY",
+                    "NEURAL_RELAY_RECEIVER_MOTION_PAIR16_PENDING_OWN_REPLAY"
+                    if a.receiver_motion_pair
+                    else "NEURAL_RELAY_RECEIVER_DENSE_PAIR16_PENDING_OWN_REPLAY",
                     worlds=16,
                 )
                 if source.get("source_head") != a.expected_head:
@@ -174,7 +189,9 @@ def main() -> None:
         write_once(
             a.output / "complete.json",
             dict(
-                status="DENSE_RECEIVER_CAMPAIGN_ALL_OWN_REPLAYED_NOT_PROMOTED",
+                status="MOTION_RECEIVER_CAMPAIGN_ALL_OWN_REPLAYED_NOT_PROMOTED"
+                if a.receiver_motion_pair
+                else "DENSE_RECEIVER_CAMPAIGN_ALL_OWN_REPLAYED_NOT_PROMOTED",
                 source_head=a.expected_head,
                 pilot_head=a.pilot_head,
                 dataset_hash=a.dataset_hash,
@@ -192,7 +209,9 @@ def main() -> None:
         write_once(
             a.output / "failed.json",
             dict(
-                status="DENSE_RECEIVER_CAMPAIGN_FAILED_PRESERVE",
+                status="MOTION_RECEIVER_CAMPAIGN_FAILED_PRESERVE"
+                if a.receiver_motion_pair
+                else "DENSE_RECEIVER_CAMPAIGN_FAILED_PRESERVE",
                 error_type=type(error).__name__,
                 error=str(error),
                 completed=rows,

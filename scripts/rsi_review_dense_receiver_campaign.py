@@ -32,7 +32,11 @@ def main() -> None:
         raise ValueError("pinned complete campaign and unused external output required")
     campaign = json.loads(cp.read_text())
     if (
-        campaign.get("status") != "DENSE_RECEIVER_CAMPAIGN_ALL_OWN_REPLAYED_NOT_PROMOTED"
+        campaign.get("status")
+        not in (
+            "DENSE_RECEIVER_CAMPAIGN_ALL_OWN_REPLAYED_NOT_PROMOTED",
+            "MOTION_RECEIVER_CAMPAIGN_ALL_OWN_REPLAYED_NOT_PROMOTED",
+        )
         or len(campaign.get("records", [])) != 9
         or any(
             campaign.get(k) is not False
@@ -40,6 +44,7 @@ def main() -> None:
         )
     ):
         raise ValueError("all nine unpromoted own-replayed campaign blocks required")
+    motion = campaign["status"] == "MOTION_RECEIVER_CAMPAIGN_ALL_OWN_REPLAYED_NOT_PROMOTED"
     rows, seen, frozen = [], set(), []
     for item in campaign["records"]:
         seed, block = item["seed"], item["block"]
@@ -52,7 +57,9 @@ def main() -> None:
             root,
             audit,
             item["audit_hash"],
-            "NEURAL_RELAY_RECEIVER_DENSE_PAIR16_PENDING_OWN_REPLAY",
+            "NEURAL_RELAY_RECEIVER_MOTION_PAIR16_PENDING_OWN_REPLAY"
+            if motion
+            else "NEURAL_RELAY_RECEIVER_DENSE_PAIR16_PENDING_OWN_REPLAY",
             worlds=16,
         )
         expected_head = (
@@ -124,7 +131,9 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="DENSE_RECEIVER_ALL_SEEDS_DEVELOPMENT_REVIEWED",
+            status="MOTION_RECEIVER_ALL_SEEDS_DEVELOPMENT_REVIEWED"
+            if motion
+            else "DENSE_RECEIVER_ALL_SEEDS_DEVELOPMENT_REVIEWED",
             source_head=a.expected_head,
             campaign_hash=a.campaign_hash,
             independent_fresh_contexts=False,

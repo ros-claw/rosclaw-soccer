@@ -20,7 +20,9 @@ def main() -> None:
     a = p.parse_args()
     clean(a.expected_head)
     if (
-        not a.unit.startswith("rosclaw-receiver-dense-campaign-")
+        not a.unit.startswith(
+            ("rosclaw-receiver-dense-campaign-", "rosclaw-receiver-motion-campaign-")
+        )
         or not a.unit.endswith(".service")
         or "/" in a.unit
         or a.output.exists()
