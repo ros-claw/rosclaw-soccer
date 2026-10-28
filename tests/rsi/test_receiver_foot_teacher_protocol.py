@@ -44,3 +44,29 @@ def test_foot_teacher_pair_rejects_mixed_experimental_protocol(conflict):
     )
     assert result.returncode != 0
     assert "foot teacher pair requires one isolated development block" in result.stderr
+
+
+def test_predictive_teacher_requires_explicit_paired_study():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
+            "--frontier-root",
+            "/not-read",
+            "--frontier-head",
+            "unused",
+            "--frontier-hash",
+            "unused",
+            "--expected-head",
+            "unused",
+            "--output",
+            "/not-written",
+            "--receiver-predictive-foot-shin",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "predictive foot/shin mode requires the isolated foot teacher pair" in result.stderr
