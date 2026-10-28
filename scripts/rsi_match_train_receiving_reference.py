@@ -16,6 +16,15 @@ from scripts.rsi_native_fresh_common import clean
 from scripts.rsi_review_relay_balance_counterfactual import report
 
 
+def eligible_geometry_events(geometry: dict) -> set[tuple]:
+    return {
+        (row["capture"], row["event_frame"], row["foot"])
+        for row in geometry["samples"]
+        if abs(row["samples"][1]["foot_surface_gap_m"]) <= 0.01
+        and row["samples"][1]["ball_floor_clearance_m"] >= -0.01
+    }
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     for key in ("dataset-root", "screen", "source", "audit", "snapshots", "output"):
@@ -29,6 +38,8 @@ def main() -> None:
         "expected-head",
     ):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--geometry", type=Path)
+    p.add_argument("--geometry-hash")
     a = p.parse_args()
     clean(a.expected_head)
     snapshot_receipt = a.snapshots / "complete.json"
@@ -43,6 +54,23 @@ def main() -> None:
     ):
         raise ValueError("exact source receipts, scene and unused external output required")
     screen, snapshots = (json.loads(x.read_text()) for x in (a.screen, snapshot_receipt))
+    if (a.geometry is None) != (a.geometry_hash is None):
+        raise ValueError("geometry receipt and hash must be supplied together")
+    allowed = None
+    if a.geometry is not None:
+        if a.geometry.is_symlink() or digest(a.geometry) != a.geometry_hash:
+            raise ValueError("exact training geometry receipt required")
+        geometry = json.loads(a.geometry.read_text())
+        if (
+            geometry.get("status") != "OMNICONTACT_REFERENCE_FOOT_GEOMETRY_NOT_PHYSICS"
+            or geometry.get("screen_hash") != a.screen_hash
+            or geometry.get("scene_hash") != a.scene_hash
+            or geometry.get("promotion_authorized") is not False
+        ):
+            raise ValueError("source-bound unpromoted geometry receipt required")
+        allowed = eligible_geometry_events(geometry)
+        if not allowed:
+            raise ValueError("no source events satisfy declared static onset geometry")
     source, _, source_hash = report(
         a.source,
         a.audit,
@@ -111,6 +139,11 @@ def main() -> None:
         with np.load(path, allow_pickle=False) as z:
             fps = int(z["fps"][0])
             for event in row["events"]:
+                if (
+                    allowed is not None
+                    and (row["capture"], event["frame"], event["foot"]) not in allowed
+                ):
+                    continue
                 frame = event["frame"] - round(0.5 * fps)
                 if frame < 0:
                     continue
@@ -160,6 +193,7 @@ def main() -> None:
         or digest(scene) != a.scene_hash
         or digest(a.source / "complete.json") != a.source_hash
         or digest(a.audit) != a.audit_hash
+        or (a.geometry is not None and digest(a.geometry) != a.geometry_hash)
         or any(digest(path) != h for path, h in pins)
     ):
         raise ValueError("inputs changed during matching")
@@ -171,6 +205,11 @@ def main() -> None:
             status="TRAIN_REFERENCE_TO_ACTUAL_TWO_BODY_STATE_MATCH_NOT_PHYSICS",
             source_head=a.expected_head,
             screen_hash=a.screen_hash,
+            geometry_hash=a.geometry_hash,
+            onset_surface_abs_gap_max_m=None if allowed is None else 0.01,
+            onset_ball_floor_min_m=None if allowed is None else -0.01,
+            onset_geometry_is_before_reference_ball_lift=True,
+            post_lift_contact_geometry_verified=False,
             source_hash=a.source_hash,
             audit_hash=a.audit_hash,
             snapshot_hash=a.snapshot_hash,
