@@ -196,6 +196,32 @@ def test_teacher_commits_actual_action_not_nominal_and_copies_feedback():
     assert not np.array_equal(a.last_action, action)
 
 
+def test_receiver_transition_executes_and_commits_exact_blended_action():
+    from rosclaw_soccer.rsi.receiver_transition_blend import receiver_transition_action
+
+    w, ps = players()
+    a, b = ps["a/"], ps["b/"]
+    _, trace = a.propose(with_reference_evidence=True)
+    previous = np.zeros(29, np.float32)
+    action = receiver_transition_action(
+        previous,
+        trace["NN_action"],
+        trace["NN_reference_nominal"],
+        a.scale,
+        a.order,
+        control_index=0,
+        duration=10,
+    )
+    target = a.offset + action[a.order] * a.scale
+    btarget, _ = b.propose()
+    w.advance({"a/": target, "b/": btarget})
+    np.testing.assert_array_equal(w.last_applied_target("a/"), target)
+    a.commit(executed_action=action)
+    b.commit()
+    np.testing.assert_array_equal(a.last_action, action)
+    np.testing.assert_array_equal(a.state[0].numpy(), trace["NN_h_after"])
+
+
 def test_teacher_authority_and_feedback_shape_are_fail_closed():
     w, ps = players()
     a = ps["a/"]
