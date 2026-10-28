@@ -3,9 +3,11 @@
 import argparse
 from pathlib import Path
 
+import mujoco
 import numpy as np
 
-from rosclaw_soccer.rsi.passer_curriculum_outcome import strict_pass_receive
+from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+from rosclaw_soccer.rsi.passer_curriculum_outcome import delivery_center_speeds, strict_pass_receive
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_fresh_common import clean
@@ -45,6 +47,12 @@ def main() -> None:
         )
         if current["source_head"] != a.source_head or previous["source_head"] != a.old_head:
             raise ValueError("exact frozen source histories required")
+        scene = root / "scene.xml"
+        scene_hash = digest(scene)
+        model = mujoco.MjModel.from_xml_path(str(scene))
+        layout = NativeVelocityLayout(
+            model, robot_prefix="b/", ball_body_name="soccer_ball", player_count=2
+        )
         current_rows = {
             (
                 r["course"]["context"],
@@ -92,6 +100,14 @@ def main() -> None:
                         f["body_failed"],
                         handoff=row["result"]["handoff_executed"],
                     )
+                    velocity = f["qvel"]
+                    if velocity.shape != (row["controls"], 10, model.nv):
+                        raise ValueError("complete native ball velocity history required")
+                    outcomes[name]["delivery"] = delivery_center_speeds(
+                        velocity.reshape(-1, model.nv)[:, layout.bv : layout.bv + 3],
+                        passer_substep=outcomes[name]["actual_passer_foot_substep"],
+                        receiver_substep=outcomes[name]["actual_receiver_foot_substep"],
+                    )
                 outcomes[name]["original"] = measured(root, row)
             trace = bind(root, teacher, "passer_nn")
             if trace is None:
@@ -129,6 +145,7 @@ def main() -> None:
                 (audit, ah),
                 (old / "complete.json", ph),
                 (old_audit, oh),
+                (scene, scene_hash),
             )
         )
     if blocks != {0, 1, 2} or len(rows) != 24 or any(digest(p) != h for p, h in frozen):
