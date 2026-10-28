@@ -10,8 +10,9 @@ import mujoco
 import numpy as np
 import torch
 
-from rosclaw_soccer.providers.g1.velocity_policy import observation98, target29
+from rosclaw_soccer.providers.g1.velocity_policy import observation98, phase_delta, target29
 from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
+from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
 from rosclaw_soccer.rsi.receiver_contextual_selector import selector_class
@@ -59,6 +60,7 @@ def main() -> None:
     p.add_argument("--return-handoff", action="store_true")
     p.add_argument("--smooth-transition", action="store_true")
     p.add_argument("--smooth-transition-duration", type=int, default=20)
+    p.add_argument("--passer-follow-return", action="store_true")
     p.add_argument("--expanded-velocity-proof", type=Path)
     p.add_argument("--expanded-velocity-proof-hash")
     a = p.parse_args()
@@ -80,6 +82,8 @@ def main() -> None:
         raise ValueError("return replay requires actual dynamic readiness and own shadow history")
     if a.smooth_transition and not a.return_handoff:
         raise ValueError("smooth candidate requires the full own return handoff")
+    if a.passer_follow_return and not a.smooth_transition:
+        raise ValueError("passer follow study requires the smooth return candidate")
     if not 1 <= a.smooth_transition_duration <= 100 or (
         not a.smooth_transition and a.smooth_transition_duration != 20
     ):
@@ -568,6 +572,11 @@ def main() -> None:
             return_actions = []
             return_observations = []
             return_targets = []
+            follow_actions = []
+            follow_commands = []
+            follow_controls = []
+            follow_observations = []
+            follow_targets = []
             if a.return_handoff and ready:
                 return_path = bind(root, row, "receiver_return_nn")
                 if return_path is None or shadow is None:
@@ -580,6 +589,11 @@ def main() -> None:
                     receiver = shadow.handoff(goal=goal, carry_memory=True)
                     start = scratch.control_steps
                     transition_start = receiver.last_action.copy()
+                    follow_active = False
+                    return_foot_seen = False
+                    follow_direction = None
+                    follow_phase = np.float32(0.0)
+                    follow_last = np.zeros(29, dtype=np.float32)
                     for frame in range(start, 600):
                         mujoco.mj_forward(setup.model, scratch.data)
                         view = PlayerObservationView(scratch, "a/")
@@ -599,9 +613,14 @@ def main() -> None:
                             ep.offset,
                             obs_dim=None,
                         )
-                        with torch.no_grad():
-                            out, (h, c) = actor(torch.from_numpy(obs).reshape(1, 1, 160), (h, c))
-                        current_action = out[0, 0].numpy().copy()
+                        if a.passer_follow_return and return_foot_seen:
+                            current_action = previous_action
+                        else:
+                            with torch.no_grad():
+                                out, (h, c) = actor(
+                                    torch.from_numpy(obs).reshape(1, 1, 160), (h, c)
+                                )
+                            current_action = out[0, 0].numpy().copy()
                         if not a.smooth_transition and (
                             not np.array_equal(obs, t["NN_obs"][frame])
                             or not np.array_equal(current_action, t["NN_action"][frame])
@@ -611,6 +630,57 @@ def main() -> None:
                             raise ValueError(
                                 f"passer own return-phase recurrence differs at {frame}"
                             )
+                        target_a = ep.offset + current_action[ep.order] * ep.scale
+                        if a.passer_follow_return and return_foot_seen:
+                            layout_a = scratch.layouts["a/"]
+                            q_a, v_a = layout_a.canonical(scratch.data)
+                            if not follow_active:
+                                direction = q_a[:2] - q_a[36:38]
+                                length = float(np.linalg.norm(direction))
+                                if length < 1e-8:
+                                    raise ValueError(
+                                        "nondegenerate actual return direction required"
+                                    )
+                                follow_direction = direction / length
+                                old_target = scratch.last_applied_target("a/")
+                                follow_last = np.asarray(
+                                    (old_target - np.asarray(vp.action_offset))
+                                    / np.asarray(vp.action_scale),
+                                    dtype=np.float32,
+                                )
+                                follow_phase = phase_delta()
+                                scratch.switch_pd_profile(
+                                    "a/",
+                                    NativePDParameters(
+                                        np.asarray(vp.stiffness), np.asarray(vp.damping), ep.effort
+                                    ),
+                                )
+                                follow_active = True
+                            qw, x, y, z = q_a[3:7]
+                            yaw = float(np.arctan2(2 * (qw * z + x * y), 1 - 2 * (y * y + z * z)))
+                            intent = receiving_intent(
+                                root_xy=q_a[:2],
+                                yaw=yaw,
+                                ball_xy=q_a[36:38],
+                                ball_velocity_xy=v_a[35:37],
+                                home_xy=q_a[:2],
+                                pass_direction=follow_direction,
+                                launch_seen=True,
+                            )
+                            command_a = np.asarray(intent.command_body, dtype=np.float32)
+                            obs_a, next_phase = observation98(
+                                q_a,
+                                v_a,
+                                layout_a.angular_velocity_body(scratch.data),
+                                command_a,
+                                follow_last,
+                                follow_phase,
+                                vp,
+                            )
+                            action_a = velocity_policy.session.run(
+                                ["actions"], {"obs": obs_a[None]}
+                            )[0][0]
+                            target_a = target29(action_a, vp)
                         if receiver.phase == "MOTION_COMPLETE":
                             receiver.begin_standing()
                         relative = frame - start
@@ -636,9 +706,19 @@ def main() -> None:
                             )
                         ):
                             raise ValueError(f"receiver own return policy differs at {frame}")
-                        resumed = scratch.advance(
-                            {"a/": ep.offset + current_action[ep.order] * ep.scale, "b/": target_b}
-                        )
+                        resumed = scratch.advance({"a/": target_a, "b/": target_b})
+                        if (
+                            a.passer_follow_return
+                            and (resumed["ball_forces"][:, 1, :2] > 1.0).any()
+                        ):
+                            return_foot_seen = True
+                        if follow_active:
+                            follow_last, follow_phase = action_a.copy(), next_phase
+                            follow_actions.append(action_a.copy())
+                            follow_commands.append(command_a.copy())
+                            follow_controls.append(frame)
+                            follow_observations.append(obs_a.copy())
+                            follow_targets.append(target_a.copy())
                         for key in ("qpos", "qvel", "torque", "ball_forces"):
                             if not a.smooth_transition and not np.array_equal(
                                 resumed[key], physics[key][frame]
@@ -693,6 +773,7 @@ def main() -> None:
                 receiver_velocity_controls=len(executed_actions),
                 selector_class=selection,
                 own_shadow_verified=a.with_shadow,
+                passer_follow_controls=len(follow_controls),
             )
         )
         if probe is not None or selector_weights is not None or a.dynamic_boundary:
@@ -713,6 +794,19 @@ def main() -> None:
                         return_observations, dtype=np.float32
                     ).reshape(-1, 160),
                     "receiver_return_target": np.asarray(return_targets, dtype=np.float64).reshape(
+                        -1, 29
+                    ),
+                    "passer_follow_action": np.asarray(follow_actions, dtype=np.float32).reshape(
+                        -1, 29
+                    ),
+                    "passer_follow_command": np.asarray(follow_commands, dtype=np.float32).reshape(
+                        -1, 3
+                    ),
+                    "passer_follow_control": np.asarray(follow_controls, dtype=np.int64),
+                    "passer_follow_observation": np.asarray(
+                        follow_observations, dtype=np.float32
+                    ).reshape(-1, 98),
+                    "passer_follow_target": np.asarray(follow_targets, dtype=np.float64).reshape(
                         -1, 29
                     ),
                 }
@@ -749,7 +843,9 @@ def main() -> None:
         a.output / "complete.json",
         dict(
             status=(
-                "RELAY_NONDEFAULT_SMOOTH_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS"
+                "RELAY_PASSER_FOLLOW_TEACHER_PHYSICAL_CANDIDATE_NOT_SUCCESS"
+                if a.passer_follow_return
+                else "RELAY_NONDEFAULT_SMOOTH_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS"
                 if a.smooth_transition
                 else "RELAY_NONDEFAULT_CAUSAL_RETURN_CHAIN_MATCH_NOT_FOOTBALL_SUCCESS"
                 if a.return_handoff
@@ -782,6 +878,9 @@ def main() -> None:
             smooth_transition_duration=a.smooth_transition_duration
             if a.smooth_transition
             else None,
+            passer_follow_return=a.passer_follow_return,
+            passer_follow_trigger="sim_contact_oracle" if a.passer_follow_return else None,
+            passer_follow_history_initialized_from_target=a.passer_follow_return,
             own_shadow_recurrence_verified=a.with_shadow,
             coupled_physics_continuation_verified=all(
                 r["coupled_native_substeps_exact"] for r in rows
