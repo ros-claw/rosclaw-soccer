@@ -18,6 +18,55 @@ from scripts.rsi_review_whole_receiver_identity import artifact_equal
 from scripts.rsi_watch_expanded_return import wait_unit
 
 
+def summarize_pairs(rows: list[dict]) -> dict:
+    def counts(pairs):
+        return dict(
+            baseline=sum(x for x, _ in pairs),
+            candidate=sum(y for _, y in pairs),
+            rescues=sum(not x and y for x, y in pairs),
+            regressions=sum(x and not y for x, y in pairs),
+        )
+
+    metrics = (
+        "strict_both_clean_handoff",
+        "strict_receiver_clean_handoff",
+        "passer_foot_precedes_receiver",
+        "original_handoff",
+    )
+    summary = {
+        metric: counts([(r["baseline"][metric], r["candidate"][metric]) for r in rows])
+        for metric in metrics
+    }
+    summary["health_common"] = counts(
+        [
+            (
+                r["health_common"]["raw_healthy_common"],
+                r["health_common"]["executed_healthy_common"],
+            )
+            for r in rows
+        ]
+    )
+    summary["unequal_exposure_pairs"] = sum(not r["health_common"]["equal_exposure"] for r in rows)
+    nonfoot = [
+        (
+            r["baseline"]["receiver_nonfoot_substep"] is not None,
+            r["candidate"]["receiver_nonfoot_substep"] is not None,
+        )
+        for r in rows
+    ]
+    summary["receiver_nonfoot"] = dict(
+        baseline=sum(x for x, _ in nonfoot),
+        candidate=sum(y for _, y in nonfoot),
+        new_nonfoot=sum(not x and y for x, y in nonfoot),
+        prevented_nonfoot=sum(x and not y for x, y in nonfoot),
+    )
+    summary["precision"] = counts(
+        [(r["baseline_precision"], r["candidate_precision"]) for r in rows]
+    )
+    summary["changed_command_pairs"] = sum(r["maximum_command_delta"] > 1e-6 for r in rows)
+    return summary
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--source", type=Path, required=True)
@@ -114,24 +163,7 @@ def main() -> None:
             )
     if len(rows) != 16 or digest(root / "complete.json") != sh or digest(audit) != ah:
         raise ValueError("unchanged complete paired source and independent replay required")
-    metrics = (
-        "strict_both_clean_handoff",
-        "strict_receiver_clean_handoff",
-        "passer_foot_precedes_receiver",
-        "original_handoff",
-    )
-    summary = {}
-    for metric in metrics:
-        pairs = [(r["baseline"][metric], r["candidate"][metric]) for r in rows]
-        summary[metric] = dict(
-            baseline=sum(x for x, _ in pairs),
-            candidate=sum(y for _, y in pairs),
-            rescues=sum(not x and y for x, y in pairs),
-            regressions=sum(x and not y for x, y in pairs),
-        )
-    summary["changed_command_pairs"] = sum(r["maximum_command_delta"] > 1e-6 for r in rows)
-    summary["precision_baseline"] = sum(r["baseline_precision"] for r in rows)
-    summary["precision_candidate"] = sum(r["candidate_precision"] for r in rows)
+    summary = summarize_pairs(rows)
     clean(a.expected_head)
     a.output.mkdir(parents=True)
     write_once(
