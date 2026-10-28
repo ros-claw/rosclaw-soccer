@@ -1104,6 +1104,9 @@ def main():
                     executed_a = policy_action_from_hg_target(
                         target_a, passer.offset, passer.scale, passer.order
                     )
+                    # Execute precisely the representable target retained in the
+                    # recurrent policy's own last-action history.
+                    target_a = passer.offset + executed_a[passer.order] * passer.scale
                     counts["passer_blend_actor_inferences"] += 1
                 if recovery_trace is not None and a.passer_velocity_blend:
                     recovery_trace["blend_index"] = np.array(blend_index)
@@ -1285,11 +1288,12 @@ def main():
                 row = w.advance({"a/": target_a, "b/": target_b})
                 counts["native_steps"] += 10
                 if trace_a is not None:
-                    passer.commit(
-                        executed_action=executed_a
-                        if blend_active or (teacher_arm and active)
-                        else None
-                    )
+                    if blend_active:
+                        passer.commit_sim_transition(executed_action=executed_a, target=target_a)
+                    else:
+                        passer.commit(
+                            executed_action=executed_a if teacher_arm and active else None
+                        )
                 if passer_recovery is not None:
                     recovery_row = passer_recovery.commit(
                         transition_target=np.asarray(target_a, np.float64) if blend_active else None

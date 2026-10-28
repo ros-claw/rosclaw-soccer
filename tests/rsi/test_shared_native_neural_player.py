@@ -279,6 +279,32 @@ def test_teacher_authority_and_feedback_shape_are_fail_closed():
     a.commit(executed_action=trace["NN_action"])
 
 
+def test_sim_transition_records_exact_actual_target_without_weakening_teacher_gate():
+    w, ps = players()
+    a, b = ps["a/"], ps["b/"]
+    # A handoff is allowed only after the clip has actually completed.
+    while a.phase != "MOTION_COMPLETE":
+        target, _ = a.propose()
+        other, _ = b.propose()
+        w.advance({"a/": target, "b/": other})
+        a.commit()
+        b.commit()
+    a.begin_standing()
+    b.begin_standing()
+    _, trace = a.propose(with_reference_evidence=True)
+    action = trace["NN_reference_nominal"] + np.float32(0.5)
+    target = a.offset + action[a.order] * a.scale
+    other, _ = b.propose()
+    w.advance({"a/": target, "b/": other})
+    with pytest.raises(ValueError, match="motor authority"):
+        a.commit(executed_action=action)
+    with pytest.raises(ValueError, match="ACTUAL"):
+        a.commit_sim_transition(executed_action=action, target=target + 1)
+    a.commit_sim_transition(executed_action=action, target=target)
+    b.commit()
+    np.testing.assert_array_equal(a.last_action, action)
+
+
 def test_reference_evidence_mode_preserves_single_forward_action_and_history():
     _, ps = players()
     ordinary, evidence = ps["a/"], ps["b/"]

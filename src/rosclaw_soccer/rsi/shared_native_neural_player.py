@@ -264,6 +264,21 @@ class SharedNativeNeuralPlayer:
         unchanged total±.2rad authority. No reverse-normalization rounding or
         discarded mean is silently substituted for the executed policy action.
         """
+        self._commit(executed_action=executed_action, transition_target=None)
+
+    def commit_sim_transition(self, *, executed_action: np.ndarray, target: np.ndarray) -> None:
+        """Record a separately selected simulated transition, not teacher authority.
+
+        The caller owns the transition and must execute this exact target in the
+        shared MuJoCo world. This does not modify the bounded teacher path.
+        """
+        if self.phase != "STANDING" or not isinstance(target, np.ndarray):
+            raise ValueError("standing SIM transition and explicit executed target required")
+        self._commit(executed_action=executed_action, transition_target=target)
+
+    def _commit(
+        self, *, executed_action: np.ndarray | None, transition_target: np.ndarray | None
+    ) -> None:
         if self.pending is None or self.world.control_steps != self.boundary + 1:
             raise ValueError("own proposal and exactly one executed shared control required")
         action = self.pending["action"] if executed_action is None else executed_action
@@ -274,7 +289,7 @@ class SharedNativeNeuralPlayer:
             or not np.isfinite(action).all()
         ):
             raise ValueError("finite actual original-unit R2 action required")
-        if executed_action is not None:
+        if executed_action is not None and transition_target is None:
             reference = self.pending["reference_nominal"]
             if (
                 reference is None
@@ -283,6 +298,10 @@ class SharedNativeNeuralPlayer:
                 raise ValueError(
                     "explicit own reference and unchanged total motor authority required"
                 )
+        if transition_target is not None and not np.array_equal(
+            transition_target, self.world.last_applied_target(self.prefix)
+        ):
+            raise ValueError("SIM transition must identify the ACTUAL executed target")
         if not np.array_equal(
             self.offset + action[self.order] * self.scale,
             self.world.last_applied_target(self.prefix),
