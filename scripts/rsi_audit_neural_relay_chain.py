@@ -48,12 +48,16 @@ def main():
         "soccer.neural_relay_receiver_dense_exploration.development.v19",
         "soccer.neural_relay_receiver_motion_exploration.development.v20",
     )
+    continuation_pair = (
+        dec["protocol"] == "soccer.neural_relay_receiver_continuation_pair.development.v21"
+    )
     motion_pair = dec["protocol"] in (
         "soccer.neural_relay_receiver_motion_pair.development.v18",
         "soccer.neural_relay_receiver_motion_exploration.development.v20",
     )
     dense_pair = (
         motion_pair
+        or continuation_pair
         or learned_exploration
         or dec["protocol"] == "soccer.neural_relay_receiver_dense_pair.development.v17"
     )
@@ -117,6 +121,8 @@ def main():
         if contact_exit
         else "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY"
         if passer_pair
+        else "NEURAL_RELAY_RECEIVER_CONTINUATION_PAIR16_PENDING_OWN_REPLAY"
+        if continuation_pair
         else "NEURAL_RELAY_RECEIVER_LEARNED_EXPLORATION32_PENDING_OWN_REPLAY"
         if learned_exploration
         else "NEURAL_RELAY_RECEIVER_MOTION_PAIR16_PENDING_OWN_REPLAY"
@@ -163,6 +169,7 @@ def main():
             "soccer.neural_relay_receiver_motion_pair.development.v18",
             "soccer.neural_relay_receiver_dense_exploration.development.v19",
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
+            "soccer.neural_relay_receiver_continuation_pair.development.v21",
             "soccer.neural_relay_passer_residual_pair.development.v11",
             "soccer.neural_relay_passer_contact_exit.development.v12",
             "soccer.neural_relay_receiver_center_identity.development.v13",
@@ -529,6 +536,7 @@ def main():
                 dec["receiver_dataset_hash"],
                 dense_mode=dense_pair,
                 motion_mode=motion_pair,
+                continuation_mode=continuation_pair,
             )
             if learned_pair
             else None

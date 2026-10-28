@@ -158,3 +158,82 @@ def test_candidate_loader_requires_exact_audit_and_model_identity(tmp_path, monk
     with pytest.raises(ValueError, match="explicit simulation"):
         load_research_receiver(*args, motion_mode=True)
     assert load_research_receiver(*args, dense_mode=True, motion_mode=True) is actor
+
+
+def test_continuation_requires_exact_unpromoted_lineage(tmp_path, monkeypatch):
+    model, config = tmp_path / "model.onnx", tmp_path / "config.yaml"
+    setup = SimpleNamespace(
+        velocity_path=model, velocity_config=config, pins={str(model): "m", str(config): "c"}
+    )
+    dataset, checkpoint, audit = (tmp_path / n for n in ("data.json", "candidate.pt", "audit.json"))
+    dataset.write_text(
+        json.dumps(
+            dict(
+                status="LEARNED_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED",
+                sampled_controls=123,
+                model_identity=[str(model), "m", str(config), "c"],
+            )
+        )
+    )
+    actor = (
+        AnchoredReceivingMotor(
+            VelocityPriorActor(tensors(), reference_features=14), torch.full((29,), 0.25)
+        )
+        .eval()
+        .requires_grad_(False)
+    )
+    monkeypatch.setattr(
+        "rosclaw_soccer.rsi.relay_receiver_candidate.zero_receiver_actor", lambda _: actor
+    )
+    state = actor.plastic.state_dict()
+    torch.save(
+        dict(
+            actor=state,
+            dataset_hash=file_hash(dataset),
+            dataset_audit_hash="data-audit",
+            parent_hash="parent",
+            physical_retention_proven=False,
+            promotion_authorized=False,
+            hardware_authorized=False,
+        ),
+        checkpoint,
+    )
+    review = dict(
+        status="LEARNED_RECEIVER_CONTINUATION_NUMERIC_READBACK_MATCH",
+        checkpoint_hash=file_hash(checkpoint),
+        dataset_hash=file_hash(dataset),
+        dataset_audit_hash="data-audit",
+        parent_hash="parent",
+        episodes=24,
+        sampled_controls=123,
+        physical_retention_proven=False,
+        independent_new_physics=False,
+        promotion_authorized=False,
+        hardware_authorized=False,
+    )
+    audit.write_text(json.dumps(review))
+    args = (
+        setup,
+        checkpoint,
+        file_hash(checkpoint),
+        audit,
+        file_hash(audit),
+        dataset,
+        file_hash(dataset),
+    )
+    assert load_research_receiver(*args, dense_mode=True, continuation_mode=True) is actor
+    with pytest.raises(ValueError, match="explicit simulation"):
+        load_research_receiver(*args, continuation_mode=True)
+    review["parent_hash"] = "wrong"
+    audit.write_text(json.dumps(review))
+    args = (
+        setup,
+        checkpoint,
+        file_hash(checkpoint),
+        audit,
+        file_hash(audit),
+        dataset,
+        file_hash(dataset),
+    )
+    with pytest.raises(ValueError, match="continuation checkpoint"):
+        load_research_receiver(*args, dense_mode=True, continuation_mode=True)
