@@ -6,6 +6,8 @@ import numpy as np
 
 from rosclaw_soccer.providers.g1.velocity_policy import target29
 
+ANKLE_JOINT_INDICES = (4, 5, 10, 11)
+
 
 def limit_target_rate(
     *, action: np.ndarray, previous_action: np.ndarray, params: Any, limit_rad: float = 0.08
@@ -49,3 +51,16 @@ def limit_target_rate(
     ):
         raise ValueError("actual target rate filter violated its explicit bound")
     return output, actual - proposed
+
+
+def limit_ankle_target_rate(
+    *, action: np.ndarray, previous_action: np.ndarray, params: Any
+) -> tuple[np.ndarray, np.ndarray]:
+    """Limit only ankle target slew; other joints retain the unmodified policy.
+
+    This experimental intervention is not a full-joint slew or safety bound.
+    """
+    filtered, _ = limit_target_rate(action=action, previous_action=previous_action, params=params)
+    output = action.copy()
+    output[list(ANKLE_JOINT_INDICES)] = filtered[list(ANKLE_JOINT_INDICES)]
+    return output, target29(output, params) - target29(action, params)

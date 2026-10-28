@@ -24,6 +24,7 @@ def main():
     p.add_argument("--reserve-teacher", action="store_true")
     p.add_argument("--isolate-teacher-rejections", action="store_true")
     p.add_argument("--target-rate-filter", action="store_true")
+    p.add_argument("--ankle-rate-filter", action="store_true")
     a = p.parse_args()
     if a.lateral_study and a.launch_frame != "heading":
         raise ValueError("lateral study requires an explicit body-heading launch")
@@ -35,7 +36,9 @@ def main():
         raise ValueError("distinct teacher intervention modes cannot be combined")
     if a.isolate_teacher_rejections and not a.reserve_teacher:
         raise ValueError("isolated rejection requires explicit reserved teacher study")
-    if a.target_rate_filter and (
+    if a.target_rate_filter and a.ankle_rate_filter:
+        raise ValueError("choose exactly one rate filter scope")
+    if (a.target_rate_filter or a.ankle_rate_filter) and (
         a.intercept_teacher or not a.lateral_study or a.receive_window != 60
     ):
         raise ValueError("target rate filter requires standalone 60-control lateral study")
@@ -90,7 +93,11 @@ def main():
         NativePredictiveFootShinTeacher,
     )
     from rosclaw_soccer.rsi.native_receive_bank import build_incoming_bank
-    from rosclaw_soccer.rsi.native_target_rate_filter import limit_target_rate
+    from rosclaw_soccer.rsi.native_target_rate_filter import (
+        ANKLE_JOINT_INDICES,
+        limit_ankle_target_rate,
+        limit_target_rate,
+    )
     from rosclaw_soccer.rsi.native_teacher_action import (
         require_teacher_slew,
         teacher_target_to_action,
@@ -214,6 +221,9 @@ def main():
             isolate_teacher_rejections=a.isolate_teacher_rejections,
             target_rate_filter=a.target_rate_filter,
             max_total_target_step_rad=0.08 if a.target_rate_filter else None,
+            ankle_rate_filter=a.ankle_rate_filter,
+            ankle_joint_indices=list(ANKLE_JOINT_INDICES) if a.ankle_rate_filter else None,
+            max_ankle_target_step_rad=0.08 if a.ankle_rate_filter else None,
             teacher_configuration=dict(
                 early_intercept=True,
                 contact_lead=True,
@@ -268,9 +278,12 @@ def main():
             teacher_active = np.zeros(env.worlds, dtype=bool)
             filter_delta = np.zeros((env.worlds, 29), dtype=np.float64)
             rejected_mask = np.zeros(env.worlds, dtype=bool)
-            if a.target_rate_filter:
+            if a.target_rate_filter or a.ankle_rate_filter:
+                filter_function = (
+                    limit_target_rate if a.target_rate_filter else limit_ankle_target_rate
+                )
                 for i in np.flatnonzero(~env.ended):
-                    action[i], filter_delta[i] = limit_target_rate(
+                    action[i], filter_delta[i] = filter_function(
                         action=action[i], previous_action=env.last_action[i], params=params
                     )
             if teachers is not None:
@@ -376,6 +389,8 @@ def main():
                 robust_teacher=a.robust_teacher,
                 reserve_teacher=a.reserve_teacher,
                 target_rate_filter=a.target_rate_filter,
+                ankle_rate_filter=a.ankle_rate_filter,
+                ankle_joint_indices=list(ANKLE_JOINT_INDICES) if a.ankle_rate_filter else None,
                 target_filter_changed_controls=int(
                     (np.any(raw["filter_delta"] != 0, axis=-1) & raw["valid"]).sum()
                 ),
