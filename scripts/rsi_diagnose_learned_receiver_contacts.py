@@ -79,6 +79,9 @@ def main() -> None:
                 side=key[1],
                 seed=key[2],
                 contact=contact,
+                handoff_control=trial["handoff"]["control"]
+                if trial["handoff"] is not None
+                else None,
                 original=expected[key]["candidate"],
                 strict_outcome=expected[key]["physical_clean_outcome"],
             )
@@ -116,6 +119,38 @@ def main() -> None:
                 r["strict_outcome"]["receiver_nonfoot_substep"] is not None for r in subset
             ),
             either_body_failure=sum(not r["strict_outcome"]["both_bodies_healthy"] for r in subset),
+            nonfoot_before_handoff=sum(
+                r["handoff_control"] is not None
+                and r["strict_outcome"]["receiver_nonfoot_substep"] is not None
+                and r["strict_outcome"]["receiver_nonfoot_substep"] < r["handoff_control"] * 10
+                for r in subset
+            ),
+            nonfoot_after_or_at_handoff=sum(
+                r["handoff_control"] is not None
+                and r["strict_outcome"]["receiver_nonfoot_substep"] is not None
+                and r["strict_outcome"]["receiver_nonfoot_substep"] >= r["handoff_control"] * 10
+                for r in subset
+            ),
+            nonfoot_without_handoff=sum(
+                r["handoff_control"] is None
+                and r["strict_outcome"]["receiver_nonfoot_substep"] is not None
+                for r in subset
+            ),
+            median_native_steps_to_nonfoot=float(
+                np.median(
+                    [
+                        r["strict_outcome"]["receiver_nonfoot_substep"]
+                        - (
+                            10 * r["contact"]["first_contact_control"]
+                            + r["contact"]["first_contact_substep"]
+                        )
+                        for r in subset
+                        if r["strict_outcome"]["receiver_nonfoot_substep"] is not None
+                    ]
+                )
+            )
+            if any(r["strict_outcome"]["receiver_nonfoot_substep"] is not None for r in subset)
+            else None,
             median_first_reconstructed_contact_point_z_m=float(
                 np.median(
                     [
