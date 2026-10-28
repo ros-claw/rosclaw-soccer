@@ -29,6 +29,7 @@ def main():
     p.add_argument("--receiver-learned-pair", action="store_true")
     p.add_argument("--passer-residual-pair", action="store_true")
     p.add_argument("--precontact-fullbody-pair", action="store_true")
+    p.add_argument("--precontact-smooth", action="store_true")
     p.add_argument("--passer-contact-exit", action="store_true")
     for key in ("receiver-checkpoint", "receiver-candidate-audit", "receiver-dataset"):
         p.add_argument("--" + key, type=Path)
@@ -50,6 +51,8 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.precontact_smooth and not a.precontact_fullbody_pair:
+        p.error("smooth transition requires the isolated precontact pair")
     if a.precontact_fullbody_pair and (
         a.new_context_block is None
         or a.passer_residual_pair
@@ -385,7 +388,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_precontact_fullbody.development.v15"
+                "soccer.neural_relay_precontact_smooth.development.v16"
+                if a.precontact_smooth
+                else "soccer.neural_relay_precontact_fullbody.development.v15"
                 if a.precontact_fullbody_pair
                 else "soccer.neural_relay_receiver_center_exploration.development.v14"
                 if a.receiver_center_curriculum and a.receiver_exploration
@@ -449,7 +454,8 @@ def main():
             prior_closed_relay=prior,
             joint_targets_remain_actual_neural_outputs=a.balance_teacher_pair is None
             and not a.receiver_exploration
-            and not a.passer_residual_pair,
+            and not a.passer_residual_pair
+            and not a.precontact_smooth,
             bounded_teacher_added_after_neural=a.balance_teacher_pair is not None,
             all_bodies_initialized_once=True,
             no_ball_reposition=True,
@@ -461,6 +467,7 @@ def main():
             receiver_exploration_is_stochastic_not_training=a.receiver_exploration,
             passer_residual_is_unlearned_teacher=a.passer_residual_pair,
             precontact_fullbody_is_unlearned_teacher=a.precontact_fullbody_pair,
+            precontact_smooth_controls=10 if a.precontact_smooth else 0,
             receiver_sampling_profile="contact-v1" if a.receiver_exploration else None,
             receiver_sampling_law="box-truncated-ar1" if a.receiver_exploration else None,
             actual_actor_calls_are_body_proposals_not_auxiliary_forward_passes=True,
@@ -706,6 +713,7 @@ def main():
             excluded_contacts = set()
             termination = "WORLD_HORIZON_COMPLETE"
             previous_target_b = None
+            transition_start_action = None
             largest_jump = 0.0
             for step in range(600):
                 if receiver is None and ready:
@@ -728,6 +736,7 @@ def main():
                         carry_memory=course["arm"]["memory"] == "own_shadow_carry",
                         reference_bridge_controls=course["arm"]["reference_bridge_controls"],
                     )
+                    transition_start_action = shadow.previous_action.copy()
                     teacher_index = course["arm"].get("balance_teacher", -1)
                     if teacher_index >= 0:
                         balance_teacher = RelayBalanceTeacher(
@@ -844,9 +853,33 @@ def main():
                 else:
                     if receiver.phase == "MOTION_COMPLETE":
                         receiver.begin_standing()
-                    target_b, trace_b = receiver.propose(
-                        with_reference_evidence=balance_teacher is not None
+                    smooth_index = step - handoff["control"]
+                    smooth_active = (
+                        a.precontact_smooth
+                        and course["arm"].get("precontact_fullbody", False)
+                        and smooth_index < 10
                     )
+                    target_b, trace_b = receiver.propose(
+                        with_reference_evidence=balance_teacher is not None or smooth_active
+                    )
+                    if smooth_active:
+                        from rosclaw_soccer.rsi.receiver_transition_blend import (
+                            receiver_transition_action,
+                        )
+
+                        action_b = receiver_transition_action(
+                            transition_start_action,
+                            trace_b["NN_action"],
+                            trace_b["NN_reference_nominal"],
+                            ep.scale,
+                            ep.order,
+                            control_index=smooth_index,
+                            duration=10,
+                        )
+                        target_b = ep.offset + action_b[ep.order] * ep.scale
+                        trace_b.update(
+                            SMOOTH_action=action_b.copy(), SMOOTH_index=np.array(smooth_index)
+                        )
                     if balance_teacher is not None:
                         q, v = w.layouts["b/"].canonical(w.data)
                         action_b, balance_trace = balance_teacher.apply(
@@ -896,7 +929,9 @@ def main():
                     nn_v.append(trace_v)
                 else:
                     receiver.commit(
-                        executed_action=action_b if balance_teacher is not None else None
+                        executed_action=action_b
+                        if balance_teacher is not None or smooth_active
+                        else None
                     )
                     if a.precontact_fullbody_pair:
                         readiness.update()

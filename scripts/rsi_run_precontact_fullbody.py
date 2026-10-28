@@ -16,6 +16,7 @@ def main() -> None:
     for name in ("frontier-head", "frontier-hash", "expected-head"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--new-context-block", type=int, choices=(0, 1, 2), required=True)
+    p.add_argument("--precontact-smooth", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
@@ -45,6 +46,7 @@ def main() -> None:
             "--new-context-block",
             str(a.new_context_block),
             "--precontact-fullbody-pair",
+            *(["--precontact-smooth"] if a.precontact_smooth else []),
             "--expected-head",
             a.expected_head,
             "--output",

@@ -31,9 +31,12 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
-    precontact_fullbody = (
+    precontact_smooth = dec["protocol"] == "soccer.neural_relay_precontact_smooth.development.v16"
+    precontact_fullbody = precontact_smooth or (
         dec["protocol"] == "soccer.neural_relay_precontact_fullbody.development.v15"
     )
+    if precontact_smooth and dec.get("precontact_smooth_controls") != 10:
+        raise ValueError("exact preregistered smooth transition required")
     center_exploration = (
         dec["protocol"] == "soccer.neural_relay_receiver_center_exploration.development.v14"
     )
@@ -138,6 +141,7 @@ def main():
             "soccer.neural_relay_receiver_center_identity.development.v13",
             "soccer.neural_relay_receiver_center_exploration.development.v14",
             "soccer.neural_relay_precontact_fullbody.development.v15",
+            "soccer.neural_relay_precontact_smooth.development.v16",
         )
         or len(s["records"]) != expected_worlds
         or len(dec["courses"]) != expected_worlds
@@ -577,6 +581,7 @@ def main():
             passer_foot_seen = False
             passer_exit_gate = PasserContactExitGate()
             handoff_control = None
+            transition_start_action = None
             goal = origin = None
             excluded = set()
             last_target = None
@@ -613,6 +618,7 @@ def main():
                         carry_memory=course["arm"]["memory"] == "own_shadow_carry",
                         reference_bridge_controls=course["arm"].get("reference_bridge_controls", 0),
                     )
+                    transition_start_action = shadow.previous_action.copy()
                     teacher_index = course["arm"].get("balance_teacher", -1)
                     if teacher_index >= 0:
                         balance_teacher = RelayBalanceTeacher(
@@ -713,9 +719,33 @@ def main():
                 else:
                     if receiver.phase == "MOTION_COMPLETE":
                         receiver.begin_standing()
-                    target_b, trace_b = receiver.propose(
-                        with_reference_evidence=balance_teacher is not None
+                    smooth_index = step - handoff_control
+                    smooth_active = (
+                        precontact_smooth
+                        and course["arm"].get("precontact_fullbody", False)
+                        and smooth_index < 10
                     )
+                    target_b, trace_b = receiver.propose(
+                        with_reference_evidence=balance_teacher is not None or smooth_active
+                    )
+                    if smooth_active:
+                        from rosclaw_soccer.rsi.receiver_transition_blend import (
+                            receiver_transition_action,
+                        )
+
+                        action_b = receiver_transition_action(
+                            transition_start_action,
+                            trace_b["NN_action"],
+                            trace_b["NN_reference_nominal"],
+                            ep.scale,
+                            ep.order,
+                            control_index=smooth_index,
+                            duration=10,
+                        )
+                        target_b = ep.offset + action_b[ep.order] * ep.scale
+                        trace_b.update(
+                            SMOOTH_action=action_b.copy(), SMOOTH_index=np.array(smooth_index)
+                        )
                     if balance_teacher is not None:
                         q, v = w.layouts["b/"].canonical(w.data)
                         action_b, balance_trace = balance_teacher.apply(
@@ -776,7 +806,9 @@ def main():
                         )
                 else:
                     receiver.commit(
-                        executed_action=action_b if balance_teacher is not None else None
+                        executed_action=action_b
+                        if balance_teacher is not None or smooth_active
+                        else None
                     )
                     if precontact_fullbody:
                         readiness.update()
