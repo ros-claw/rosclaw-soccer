@@ -38,12 +38,24 @@ def test_contact_threshold_and_original_consecutive_predicate():
     result = run(q, v, f, failed)
     assert result["first_passer_foot_control"] == 40
     assert result["first_receiver_contact_control"] == 285
+    assert result["first_receiver_contact_substep"] == 2854
+    assert result["first_receiver_contact_force_groups"] == ["left_foot"]
     assert result["relative_speed_at_first_contact_mps"] == 0
     assert result["root_ball_distance_at_first_contact_m"] == 0.5
     assert result["best_consecutive_candidate_controls"] == 15
     assert not result["no_handoff_reconstruction_consistent"]
     f[285, 4, 1, 0] = 1
     assert not run(q, v, f, failed)["actual_receiver_contact_over_1n"]
+
+
+def test_simultaneous_first_contact_does_not_invent_an_order():
+    q, v, f, failed = trajectory()
+    f[22, 3, 1, 1:] = [3, 4]
+    f[22, 4, 1, 0] = 8
+    result = run(q, v, f, failed)
+    assert result["first_receiver_contact_substep"] == 223
+    assert result["first_receiver_contact_force_groups"] == ["right_foot", "nonfoot"]
+    assert result["contact_groups_are_not_individual_nonfoot_body_names"] is True
 
 
 def test_excluded_contact_does_not_claim_exact_reconstruction():

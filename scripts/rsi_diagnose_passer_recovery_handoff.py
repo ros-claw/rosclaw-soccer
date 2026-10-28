@@ -105,6 +105,16 @@ def main() -> None:
                 conditions=len(rows),
                 receiver_contact=sum(r["actual_receiver_contact_over_1n"] for r in rows),
                 no_receiver_contact=sum(not r["actual_receiver_contact_over_1n"] for r in rows),
+                first_nonfoot=sum(
+                    "nonfoot" in r["first_receiver_contact_force_groups"] for r in rows
+                ),
+                first_foot=sum(
+                    any(
+                        x in ("left_foot", "right_foot")
+                        for x in r["first_receiver_contact_force_groups"]
+                    )
+                    for r in rows
+                ),
             ),
             rows=rows,
             mutually_exclusive_causes=False,

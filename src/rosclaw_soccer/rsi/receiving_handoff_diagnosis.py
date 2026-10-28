@@ -77,12 +77,31 @@ def diagnose_no_handoff(
     first_kick = np.flatnonzero(kick)
     first_touch = np.flatnonzero(touch)
     touch_index = int(first_touch[0]) if len(first_touch) else None
+    receiver_substeps = ball_forces[:, :, 1, :].reshape(-1, 3)
+    first_substeps = np.flatnonzero(np.any(receiver_substeps > 1, axis=1))
+    first_substep = int(first_substeps[0]) if len(first_substeps) else None
+    first_contact_groups = (
+        [
+            name
+            for name, value in zip(
+                ("left_foot", "right_foot", "nonfoot"),
+                receiver_substeps[first_substep],
+                strict=True,
+            )
+            if value > 1
+        ]
+        if first_substep is not None
+        else []
+    )
     pre = slice(int(first_kick[0]), n) if len(first_kick) else slice(0, n)
     return dict(
         actual_passer_foot_over_10n=bool(len(first_kick)),
         first_passer_foot_control=int(first_kick[0]) if len(first_kick) else None,
         actual_receiver_contact_over_1n=bool(len(first_touch)),
         first_receiver_contact_control=int(first_touch[0]) if len(first_touch) else None,
+        first_receiver_contact_substep=first_substep,
+        first_receiver_contact_force_groups=first_contact_groups,
+        contact_groups_are_not_individual_nonfoot_body_names=True,
         relative_speed_at_first_contact_mps=(
             float(relative_speed[touch_index]) if touch_index is not None else None
         ),
