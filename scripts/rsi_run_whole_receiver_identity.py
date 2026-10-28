@@ -16,10 +16,20 @@ def main() -> None:
     for name in ("frontier-head", "frontier-hash", "expected-head"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--new-context-block", type=int, choices=(0, 1, 2), required=True)
+    p.add_argument("--receiver-center-curriculum", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("unused external evidence root required")
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import rosclaw.continual; import rosclaw_soccer.training.native_pass_courses; "
+            "import scripts.rsi_collect_neural_relay_chain",
+        ],
+        check=True,
+    )
     a.output.mkdir(parents=True)
     source = a.output / "source"
     subprocess.run(
@@ -35,6 +45,7 @@ def main() -> None:
             "--new-context-block",
             str(a.new_context_block),
             "--receiver-whole-identity",
+            *(["--receiver-center-curriculum"] if a.receiver_center_curriculum else []),
             "--output",
             str(source),
             "--expected-head",

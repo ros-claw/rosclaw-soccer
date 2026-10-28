@@ -38,7 +38,13 @@ def main():
         contact_exit
         or dec["protocol"] == "soccer.neural_relay_passer_residual_pair.development.v11"
     )
-    whole_identity = dec["protocol"] == "soccer.neural_relay_whole_receiver_identity.development.v8"
+    center_identity = (
+        dec["protocol"] == "soccer.neural_relay_receiver_center_identity.development.v13"
+    )
+    whole_identity = (
+        center_identity
+        or dec["protocol"] == "soccer.neural_relay_whole_receiver_identity.development.v8"
+    )
     follow_study = dec["protocol"] == "soccer.neural_relay_post_touch_follow.development.v7"
     balance_expanded = dec["protocol"] == "soccer.neural_relay_balance_expanded.development.v6"
     balance_study = (
@@ -67,7 +73,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_PASSER_CONTACT_EXIT16_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_RECEIVER_CENTER_IDENTITY16_PENDING_OWN_REPLAY"
+        if center_identity
+        else "NEURAL_RELAY_PASSER_CONTACT_EXIT16_PENDING_OWN_REPLAY"
         if contact_exit
         else "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY"
         if passer_pair
@@ -109,6 +117,7 @@ def main():
             "soccer.neural_relay_receiver_learned_pair.development.v10",
             "soccer.neural_relay_passer_residual_pair.development.v11",
             "soccer.neural_relay_passer_contact_exit.development.v12",
+            "soccer.neural_relay_receiver_center_identity.development.v13",
         )
         or len(s["records"]) != expected_worlds
         or len(dec["courses"]) != expected_worlds
@@ -196,7 +205,15 @@ def main():
                 for memory in ("new_skill_zero", "own_shadow_carry")
             ]
         )
-        sides = (-0.75, -0.35, 0.35, 0.75) if balance_expanded else (-0.55, 0.55)
+        sides = (
+            (-0.2, 0.2)
+            if center_identity
+            else (-0.75, -0.35, 0.35, 0.75)
+            if balance_expanded
+            else (-0.55, 0.55)
+        )
+        if center_identity and dec.get("receiver_lateral_offsets_m") != list(sides):
+            raise ValueError("exact center curriculum offsets required")
         if exploration and (
             dec.get("receiver_exploration_is_stochastic_not_training") is not True
             or dec.get("receiver_sampling_profile") != "contact-v1"

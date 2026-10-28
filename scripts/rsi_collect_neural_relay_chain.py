@@ -25,6 +25,7 @@ def main():
     p.add_argument("--balance-expanded", action="store_true")
     p.add_argument("--receiver-follow-study", action="store_true")
     p.add_argument("--receiver-whole-identity", action="store_true")
+    p.add_argument("--receiver-center-curriculum", action="store_true")
     p.add_argument("--receiver-learned-pair", action="store_true")
     p.add_argument("--passer-residual-pair", action="store_true")
     p.add_argument("--passer-contact-exit", action="store_true")
@@ -50,6 +51,8 @@ def main():
     a = p.parse_args()
     if a.passer_contact_exit and not a.passer_residual_pair:
         p.error("contact-exit is only defined for the isolated passer pair")
+    if a.receiver_center_curriculum and not a.receiver_whole_identity:
+        p.error("center curriculum requires the receiver identity pair")
     if a.passer_residual_pair and (
         a.new_context_block is None
         or a.balance_teacher_pair is not None
@@ -331,7 +334,13 @@ def main():
             for assigned in (False, True)
             for align in (False, True)
         ]
-    sides = (-0.75, -0.35, 0.35, 0.75) if a.balance_expanded else (-0.55, 0.55)
+    sides = (
+        (-0.2, 0.2)
+        if a.receiver_center_curriculum
+        else (-0.75, -0.35, 0.35, 0.75)
+        if a.balance_expanded
+        else (-0.55, 0.55)
+    )
     courses = [
         dict(context=i, lateral_m=side, arm=arm) for i in indices for side in sides for arm in arms
     ]
@@ -340,7 +349,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_passer_contact_exit.development.v12"
+                "soccer.neural_relay_receiver_center_identity.development.v13"
+                if a.receiver_center_curriculum
+                else "soccer.neural_relay_passer_contact_exit.development.v12"
                 if a.passer_contact_exit
                 else "soccer.neural_relay_passer_residual_pair.development.v11"
                 if a.passer_residual_pair
@@ -947,7 +958,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_PASSER_CONTACT_EXIT16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_RECEIVER_CENTER_IDENTITY16_PENDING_OWN_REPLAY"
+                    if a.receiver_center_curriculum
+                    else "NEURAL_RELAY_PASSER_CONTACT_EXIT16_PENDING_OWN_REPLAY"
                     if a.passer_contact_exit
                     else "NEURAL_RELAY_PASSER_RESIDUAL_PAIR16_PENDING_OWN_REPLAY"
                     if a.passer_residual_pair
