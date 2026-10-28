@@ -26,6 +26,7 @@ def main() -> None:
             (
                 "rosclaw-receiver-foot-teacher-axis-review-",
                 "rosclaw-receiver-foot-teacher-early-review-",
+                "rosclaw-receiver-foot-teacher-lead-review-",
             )
         )
         or not a.unit.endswith(".service")
