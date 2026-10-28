@@ -32,6 +32,13 @@ def test_clean_receiver_requires_order_no_body_contact_and_health():
     assert (
         strict_pass_receive(forces, failed, handoff=True)["strict_receiver_clean_handoff"] is True
     )
+    assert strict_pass_receive(forces, failed, handoff=True)["strict_both_clean_handoff"] is True
+    forces[0, 4, 0, 2] = 1.1
+    result = strict_pass_receive(forces, failed, handoff=True)
+    assert result["strict_receiver_clean_handoff"] is True
+    assert result["strict_both_clean_handoff"] is False
+    assert result["passer_nonfoot_substep"] == 4
+    forces[0, 4, 0, 2] = 0
     forces[1, 3, 1, 2] = 1.1
     assert (
         strict_pass_receive(forces, failed, handoff=True)["strict_receiver_clean_handoff"] is False

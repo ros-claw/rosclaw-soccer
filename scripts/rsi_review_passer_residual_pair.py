@@ -153,6 +153,8 @@ def main() -> None:
     summary = dict(
         strict_baseline=sum(r["baseline"]["strict_receiver_clean_handoff"] for r in rows),
         strict_teacher=sum(r["teacher"]["strict_receiver_clean_handoff"] for r in rows),
+        strict_both_clean_baseline=sum(r["baseline"]["strict_both_clean_handoff"] for r in rows),
+        strict_both_clean_teacher=sum(r["teacher"]["strict_both_clean_handoff"] for r in rows),
         strict_rescues=sum(
             not r["baseline"]["strict_receiver_clean_handoff"]
             and r["teacher"]["strict_receiver_clean_handoff"]
@@ -196,7 +198,7 @@ def main() -> None:
             summary=summary,
             records=rows,
             teacher_not_learned=True,
-            passer_nonfoot_not_evaluated=True,
+            passer_nonfoot_not_evaluated=False,
             independent_fresh=False,
             promotion_authorized=False,
             hardware_authorized=False,

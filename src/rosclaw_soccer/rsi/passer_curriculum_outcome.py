@@ -38,7 +38,7 @@ def delivery_center_speeds(
 
 
 def strict_pass_receive(ball_forces: np.ndarray, body_failed: np.ndarray, *, handoff: bool) -> dict:
-    """Require A foot first, B foot next, no B nonfoot anywhere, and both healthy."""
+    """Report separate receiver-clean and both-body-clean native histories."""
     n = len(ball_forces)
     if (
         not isinstance(ball_forces, np.ndarray)
@@ -56,6 +56,7 @@ def strict_pass_receive(ball_forces: np.ndarray, body_failed: np.ndarray, *, han
     passer = np.flatnonzero(np.max(substeps[:, 0, :2], axis=1) > 10)
     receiver = np.flatnonzero(np.max(substeps[:, 1, :2], axis=1) > 10)
     other = np.flatnonzero(substeps[:, 1, 2] > 1)
+    passer_other = np.flatnonzero(substeps[:, 0, 2] > 1)
     first_a = int(passer[0]) if len(passer) else None
     first_b = int(receiver[0]) if len(receiver) else None
     before = first_a is not None and first_b is not None and first_a < first_b
@@ -66,10 +67,12 @@ def strict_pass_receive(ball_forces: np.ndarray, body_failed: np.ndarray, *, han
         actual_receiver_foot_substep=first_b,
         passer_foot_precedes_receiver=before,
         receiver_nonfoot_substep=int(other[0]) if len(other) else None,
+        passer_nonfoot_substep=int(passer_other[0]) if len(passer_other) else None,
         both_bodies_healthy=healthy,
         original_handoff=handoff,
         strict_receiver_clean_handoff=clean,
-        passer_nonfoot_not_evaluated=True,
+        strict_both_clean_handoff=bool(clean and not len(passer_other)),
+        passer_nonfoot_not_evaluated=False,
         goal_complete=False,
         hardware_authorized=False,
     )
