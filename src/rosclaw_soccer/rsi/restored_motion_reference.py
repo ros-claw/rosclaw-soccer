@@ -7,7 +7,7 @@ def restored_motion_reference(clip, torso_index: int, control: int):
     """Reproduce motion commit then standing transition without future state."""
     if (
         type(control) is not int
-        or not 1 <= control < 300
+        or not 1 <= control < 600
         or type(torso_index) is not int
         or torso_index < 0
         or type(clip.length) is not int

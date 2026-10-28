@@ -55,6 +55,7 @@ def main() -> None:
     p.add_argument("--nondefault", action="store_true")
     p.add_argument("--dynamic-boundary", action="store_true")
     p.add_argument("--with-shadow", action="store_true")
+    p.add_argument("--return-handoff", action="store_true")
     p.add_argument("--expanded-velocity-proof", type=Path)
     p.add_argument("--expanded-velocity-proof-hash")
     a = p.parse_args()
@@ -72,6 +73,8 @@ def main() -> None:
         raise ValueError("dynamic boundary qualification requires expanded source bank")
     if a.with_shadow and not a.nondefault:
         raise ValueError("shadow qualification requires expanded source bank")
+    if a.return_handoff and not (a.dynamic_boundary and a.with_shadow):
+        raise ValueError("return replay requires actual dynamic readiness and own shadow history")
     if a.nondefault:
         if (
             a.expanded_velocity_proof.is_symlink()
@@ -552,6 +555,82 @@ def main() -> None:
                     or (not ready and not scratch.failed and scratch.control_steps != 300)
                 ):
                     raise ValueError("own causal readiness or source termination differs")
+            return_controls = 0
+            return_actions = []
+            return_observations = []
+            return_targets = []
+            if a.return_handoff and ready:
+                return_path = bind(root, row, "receiver_return_nn")
+                if return_path is None or shadow is None:
+                    raise ValueError("own recorded return actor and live shadow required")
+                with np.load(return_path, allow_pickle=False) as return_data:
+                    goal = receiving_target_for_player(scratch, "a/")
+                    if not np.array_equal(goal, np.asarray(row["handoff"]["return_goal"])):
+                        raise ValueError("actual own return goal must match original boundary")
+                    scratch.switch_pd_profile("b/", NativePDParameters(ep.kp, ep.kd, ep.effort))
+                    receiver = shadow.handoff(goal=goal, carry_memory=True)
+                    start = scratch.control_steps
+                    for frame in range(start, 600):
+                        mujoco.mj_forward(setup.model, scratch.data)
+                        view = PlayerObservationView(scratch, "a/")
+                        ref_pos, ref_vel, ref_ang = restored_motion_reference(
+                            ep.clip, ep.torso_index, frame
+                        )
+                        obs = ep.build_observation(
+                            view,
+                            None,
+                            0,
+                            previous_action,
+                            ref_pos,
+                            ref_vel,
+                            ref_ang,
+                            view.ball_pos,
+                            ep.goal,
+                            ep.offset,
+                            obs_dim=None,
+                        )
+                        with torch.no_grad():
+                            out, (h, c) = actor(torch.from_numpy(obs).reshape(1, 1, 160), (h, c))
+                        current_action = out[0, 0].numpy().copy()
+                        if (
+                            not np.array_equal(obs, t["NN_obs"][frame])
+                            or not np.array_equal(current_action, t["NN_action"][frame])
+                            or not np.array_equal(h.numpy(), t["NN_h_after"][frame])
+                            or not np.array_equal(c.numpy(), t["NN_c_after"][frame])
+                        ):
+                            raise ValueError(
+                                f"passer own return-phase recurrence differs at {frame}"
+                            )
+                        if receiver.phase == "MOTION_COMPLETE":
+                            receiver.begin_standing()
+                        target_b, trace_b = receiver.propose()
+                        relative = frame - start
+                        if int(return_data["control"][relative]) != frame or any(
+                            not np.array_equal(trace_b[k], return_data[k][relative])
+                            for k in trace_b
+                        ):
+                            raise ValueError(f"receiver own return policy differs at {frame}")
+                        resumed = scratch.advance(
+                            {"a/": ep.offset + current_action[ep.order] * ep.scale, "b/": target_b}
+                        )
+                        for key in ("qpos", "qvel", "torque", "ball_forces"):
+                            if not np.array_equal(resumed[key], physics[key][frame]):
+                                raise ValueError(f"return-phase native {key} differs at {frame}")
+                        receiver.commit()
+                        physical_samples.append(resumed)
+                        return_actions.append(trace_b["NN_action"].copy())
+                        return_observations.append(trace_b["NN_obs"].copy())
+                        return_targets.append(target_b.copy())
+                        return_controls += 1
+                        previous_action = current_action
+                        if scratch.failed:
+                            break
+                    if scratch.failed != (
+                        row["termination"] == "BODY_FAILURE"
+                    ) or scratch.control_steps != len(physics["qpos"]):
+                        raise ValueError("actual return-phase termination differs")
+                if digest(return_path) != row["artifacts"]["receiver_return_nn"]["hash"]:
+                    raise ValueError("original return actor trace changed")
         if (
             digest(snap) != item["snapshot_hash"]
             or digest(trace) != row["artifacts"]["passer_nn"]["hash"]
@@ -581,6 +660,8 @@ def main() -> None:
                 body_failure=bool(scratch.failed),
                 receiving_ready=bool(ready),
                 last_control=scratch.control_steps,
+                return_controls=return_controls,
+                receiver_velocity_controls=len(executed_actions),
                 selector_class=selection,
                 own_shadow_verified=a.with_shadow,
             )
@@ -596,6 +677,15 @@ def main() -> None:
                     "passer_action": np.stack(passer_actions),
                     "receiver_observation": np.stack(receiver_observations),
                     "receiver_command": np.stack(receiver_commands),
+                    "receiver_return_action": np.asarray(return_actions, dtype=np.float32).reshape(
+                        -1, 29
+                    ),
+                    "receiver_return_observation": np.asarray(
+                        return_observations, dtype=np.float32
+                    ).reshape(-1, 160),
+                    "receiver_return_target": np.asarray(return_targets, dtype=np.float64).reshape(
+                        -1, 29
+                    ),
                 }
             )
     if (
@@ -630,7 +720,9 @@ def main() -> None:
         a.output / "complete.json",
         dict(
             status=(
-                "RELAY_NONDEFAULT_CAUSAL_RECEIVING_BOUNDARY_MATCH_NOT_FOOTBALL_SUCCESS"
+                "RELAY_NONDEFAULT_CAUSAL_RETURN_CHAIN_MATCH_NOT_FOOTBALL_SUCCESS"
+                if a.return_handoff
+                else "RELAY_NONDEFAULT_CAUSAL_RECEIVING_BOUNDARY_MATCH_NOT_FOOTBALL_SUCCESS"
                 if a.dynamic_boundary
                 else "RELAY_NONDEFAULT_DUAL_NEURAL_20_CONTROLS_MATCH_NOT_FOOTBALL_SUCCESS"
                 if a.nondefault
@@ -654,6 +746,7 @@ def main() -> None:
             future_controls_used=False,
             receiver_role_selector_verified_at_boundary=True,
             causal_receiving_boundary_reconstructed=a.dynamic_boundary,
+            own_return_handoff_reconstructed=a.return_handoff,
             own_shadow_recurrence_verified=a.with_shadow,
             coupled_physics_continuation_verified=all(
                 r["coupled_native_substeps_exact"] for r in rows

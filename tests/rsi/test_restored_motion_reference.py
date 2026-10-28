@@ -21,5 +21,9 @@ def test_motion_reference_becomes_standing_at_real_clip_boundary():
     assert np.all(vel == 0) and np.all(ang == 0)
     pos, _, _ = restored_motion_reference(clip, 0, 4)
     np.testing.assert_array_equal(pos, clip.joint_pos[2])
+    pos, _, _ = restored_motion_reference(clip, 0, 599)
+    np.testing.assert_array_equal(pos, clip.joint_pos[2])
     with pytest.raises(ValueError):
         restored_motion_reference(clip, 0, 0)
+    with pytest.raises(ValueError):
+        restored_motion_reference(clip, 0, 600)
