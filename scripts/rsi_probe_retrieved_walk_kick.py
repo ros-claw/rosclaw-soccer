@@ -13,7 +13,10 @@ def main():
         p.add_argument("--" + key, required=True)
     p.add_argument("--shard", type=int, choices=range(4), required=True)
     p.add_argument("--prospective", action="store_true")
+    p.add_argument("--extended", action="store_true")
     a = p.parse_args()
+    if a.extended and not a.prospective:
+        raise ValueError("extended bank requires prospective evaluation")
 
     from rosclaw_soccer.rsi.experimental_velocity_evidence import admit_heading_evidence
     from rosclaw_soccer.rsi.walk_kick_retrieval import nearest_teacher, prospective_courses
@@ -26,10 +29,14 @@ def main():
     clean(a.expected_head)
     courses = search_course_bank(expanded_public=True)
     bank_hash = preflight_receiving_courses(courses)
-    prospective = prospective_courses() if a.prospective else ()
+    prospective = prospective_courses(extended=a.extended) if a.prospective else ()
     prospective_hash = preflight_receiving_courses(prospective) if prospective else None
     if prospective and set(c.course for c in prospective) & set(c.course for c in courses):
         raise ValueError("new courses must not overlap public donor bank")
+    if a.extended and set(c.course for c in prospective) & {
+        c.course for c in prospective_courses()
+    }:
+        raise ValueError("extended bank must not overlap initial prospective study")
     if (
         a.output.exists()
         or a.source_audit.is_symlink()
@@ -114,7 +121,7 @@ def main():
         )
     )
     evaluation_courses = prospective if a.prospective else courses
-    evaluation_indices = tuple(range(8)) if a.prospective else test_indices
+    evaluation_indices = tuple(range(len(prospective))) if a.prospective else test_indices
     assignments = [i for i in evaluation_indices if evaluation_indices.index(i) % 4 == a.shard]
     a.output.mkdir(parents=True)
     write_once(
@@ -132,6 +139,7 @@ def main():
             training_labels_privileged=True,
             public_test_previously_consumed=not a.prospective,
             prospective_new_course_bank=a.prospective,
+            extended_course_bank=a.extended,
             independent_fresh=False,
             no_actor_gradient=True,
             hardware_authorized=False,
@@ -193,6 +201,7 @@ def main():
             source_head=a.expected_head,
             rows=rows,
             prospective_new_course_bank=a.prospective,
+            extended_course_bank=a.extended,
             independent_fresh=False,
             hardware_authorized=False,
             promotion_authorized=False,

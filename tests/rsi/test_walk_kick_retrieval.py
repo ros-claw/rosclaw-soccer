@@ -36,3 +36,16 @@ def test_prospective_bank_is_balanced_reproducible_and_disjoint():
         (True, True),
         (True, True),
     ]
+
+
+def test_extended_bank_has_ten_per_class_and_no_existing_cases():
+    bank = prospective_courses(extended=True)
+    assert len(bank) == 40
+    assert bank == prospective_courses(extended=True)
+    preflight_receiving_courses(bank)
+    assert not {x.course for x in bank} & {
+        x.course for x in (*prospective_courses(), *search_course_bank(expanded_public=True))
+    }
+    assert [(x.course[0] >= 2.6, x.course[2] > 0) for x in bank] == (
+        [(False, False)] * 10 + [(False, True)] * 10 + [(True, False)] * 10 + [(True, True)] * 10
+    )

@@ -7,18 +7,21 @@ Only initial observable course features are accepted at inference.
 import numpy as np
 
 
-def prospective_courses():
-    """Fixed new public diagnostic bank: two states in each original class."""
+def prospective_courses(*, extended=False):
+    """Fixed public diagnostic banks balanced across the original four classes."""
     from rosclaw_soccer.training.receiving_course_preflight import FirstTouchCourse
 
-    rng = np.random.default_rng(2026102929)
+    if type(extended) is not bool:
+        raise ValueError("explicit diagnostic bank required")
+    seed = 2026102930 if extended else 2026102929
+    rng = np.random.default_rng(seed)
     courses = []
     for bucket in range(4):
-        for _ in range(2):
+        for _ in range(10 if extended else 2):
             x = float(rng.uniform(2.2 if bucket < 2 else 2.6, 2.4 if bucket < 2 else 2.8))
             y = float(rng.uniform(-0.16, 0.16))
             vx = float(rng.uniform(0.25, 0.7)) * (1 if bucket % 2 else -1)
-            courses.append(FirstTouchCourse("striker", 2026102929 + len(courses), (x, y, vx)))
+            courses.append(FirstTouchCourse("striker", seed + len(courses), (x, y, vx)))
     return tuple(courses)
 
 
