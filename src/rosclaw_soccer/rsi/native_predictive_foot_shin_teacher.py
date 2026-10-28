@@ -26,12 +26,14 @@ class NativePredictiveFootShinTeacher:
         all_knee_colliders: bool = False,
         max_delta_rad: float = 0.16,
         joint_margin_rad: float = 0.0,
+        parent_relative_envelope: bool = False,
     ) -> None:
         if (
             type(axis_local_fallback) is not bool
             or type(early_intercept) is not bool
             or type(contact_lead) is not bool
             or type(all_knee_colliders) is not bool
+            or type(parent_relative_envelope) is not bool
             or type(max_delta_rad) is not float
             or not 0 < max_delta_rad <= 0.2
             or type(joint_margin_rad) is not float
@@ -45,6 +47,7 @@ class NativePredictiveFootShinTeacher:
         self.all_knee_colliders = all_knee_colliders
         self.max_delta_rad = max_delta_rad
         self.joint_margin_rad = joint_margin_rad
+        self.parent_relative_envelope = parent_relative_envelope
         self.next_frame = 0
         self.foot: int | None = None
         self.previous_delta = np.zeros(29, dtype=np.float64)
@@ -116,6 +119,7 @@ class NativePredictiveFootShinTeacher:
                 enabled=False,
                 max_delta_rad=self.max_delta_rad,
                 axis_local_fallback=self.axis_local_fallback,
+                parent_relative_envelope=self.parent_relative_envelope,
             )
             self.previous_delta = result["applied_delta"].copy()
             self.next_frame += 1
@@ -180,6 +184,7 @@ class NativePredictiveFootShinTeacher:
             enabled=active,
             max_delta_rad=self.max_delta_rad,
             axis_local_fallback=self.axis_local_fallback,
+            parent_relative_envelope=self.parent_relative_envelope,
         )
         self.previous_delta = result["applied_delta"].copy()
         self.next_frame += 1

@@ -100,6 +100,30 @@ def test_original_global_fallback_remains_default():
     np.testing.assert_array_equal(out["target"], args["nominal"])
 
 
+def test_parent_relative_envelope_can_retain_slew_without_worsening_parent_violation():
+    args = inputs()
+    args["nominal"][0] = 3.0
+    args["previous_delta"][0] = -0.08
+    args["axis_local_fallback"] = True
+    args["parent_relative_envelope"] = True
+    out = predictive_foot_shin_target(**args)
+    assert not out["fallback"]
+    assert out["slew_limit_respected"]
+    assert abs(out["applied_delta"][0] - args["previous_delta"][0]) <= 0.025 + 1e-12
+    assert args["joint_ranges"][0, 1] < out["target"][0] <= args["nominal"][0]
+
+
+def test_parent_relative_envelope_still_rejects_incompatible_slew():
+    args = inputs()
+    args["nominal"][0] = 3.0
+    args["previous_delta"][0] = 0.08
+    args["axis_local_fallback"] = True
+    args["parent_relative_envelope"] = True
+    out = predictive_foot_shin_target(**args)
+    assert out["fallback"] and not out["slew_limit_respected"]
+    assert out["target"][0] == args["nominal"][0]
+
+
 @pytest.mark.parametrize("fault", ["nan", "wrong_leg", "unbounded_foot"])
 def test_bad_inputs_fail_closed(fault):
     args = inputs()

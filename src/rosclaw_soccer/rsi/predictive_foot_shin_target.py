@@ -24,6 +24,7 @@ def predictive_foot_shin_target(
     max_delta_rad: float = 0.16,
     slew_rad: float = 0.025,
     axis_local_fallback: bool = False,
+    parent_relative_envelope: bool = False,
 ) -> dict:
     """Compute one damped, bounded leg-only correction from current measurements.
 
@@ -53,6 +54,7 @@ def predictive_foot_shin_target(
         or foot not in (0, 1)
         or type(enabled) is not bool
         or type(axis_local_fallback) is not bool
+        or type(parent_relative_envelope) is not bool
         or any(
             type(v) is not float or not np.isfinite(v)
             for v in (horizon_sec, target_gap_m, max_delta_rad, slew_rad)
@@ -69,20 +71,27 @@ def predictive_foot_shin_target(
     ):
         raise ValueError("finite aligned bounded predictive contact inputs required")
     leg = slice(6 * foot, 6 * foot + 6)
+    # If the parent is already outside an actuator range, an experimental
+    # correction may move it toward that range, but never farther away.
+    # This does not assert that the resulting absolute target is legal.
+    effective_low = np.minimum(joint_ranges[leg, 0], nominal[leg])
+    effective_high = np.maximum(joint_ranges[leg, 1], nominal[leg])
+    range_low = effective_low if parent_relative_envelope else joint_ranges[leg, 0]
+    range_high = effective_high if parent_relative_envelope else joint_ranges[leg, 1]
     predicted_gap = shin_gap + horizon_sec * shin_gap_rate
     desired_gap = np.clip(target_gap_m - predicted_gap, 0.0, 0.08)
     lower = np.maximum.reduce(
         (
             np.full(6, -max_delta_rad),
             previous_delta[leg] - slew_rad,
-            joint_ranges[leg, 0] - nominal[leg],
+            range_low - nominal[leg],
         )
     )
     upper = np.minimum.reduce(
         (
             np.full(6, max_delta_rad),
             previous_delta[leg] + slew_rad,
-            joint_ranges[leg, 1] - nominal[leg],
+            range_high - nominal[leg],
         )
     )
     invalid = lower > upper
@@ -94,7 +103,9 @@ def predictive_foot_shin_target(
     # parent and records the unavoidable jump. Other feasible axes retain their
     # own constraints; do not abruptly erase the entire leg's correction.
     fallback = bool(np.any(invalid & (previous_delta[leg] != 0)))
-    frozen = invalid | (outside_parent & (previous_delta[leg] == 0))
+    frozen = invalid | (
+        outside_parent & (previous_delta[leg] == 0) & (not parent_relative_envelope)
+    )
     free = ~frozen
     requested = np.zeros(29, dtype=np.float64)
     if enabled and np.any(free) and (axis_local_fallback or not fallback):

@@ -23,6 +23,7 @@ def main():
     p.add_argument("--intercept-teacher", action="store_true")
     p.add_argument("--robust-teacher", action="store_true")
     p.add_argument("--reserve-teacher", action="store_true")
+    p.add_argument("--parent-relative-teacher", action="store_true")
     p.add_argument("--isolate-teacher-rejections", action="store_true")
     p.add_argument("--target-rate-filter", action="store_true")
     p.add_argument("--ankle-rate-filter", action="store_true")
@@ -33,12 +34,16 @@ def main():
         raise ValueError("explicit lateral speed requires lateral study")
     if a.intercept_teacher and (not a.lateral_study or a.receive_window != 60):
         raise ValueError("teacher requires the declared 60-control lateral study")
-    if (a.robust_teacher or a.reserve_teacher) and not a.intercept_teacher:
+    if (
+        a.robust_teacher or a.reserve_teacher or a.parent_relative_teacher
+    ) and not a.intercept_teacher:
         raise ValueError("robust authority bound requires explicit teacher")
-    if a.robust_teacher and a.reserve_teacher:
+    if sum((a.robust_teacher, a.reserve_teacher, a.parent_relative_teacher)) > 1:
         raise ValueError("distinct teacher intervention modes cannot be combined")
-    if a.isolate_teacher_rejections and not a.reserve_teacher:
-        raise ValueError("isolated rejection requires explicit reserved teacher study")
+    if a.isolate_teacher_rejections and not (a.reserve_teacher or a.parent_relative_teacher):
+        raise ValueError("isolated rejection requires an explicit teacher study")
+    if a.parent_relative_teacher and not a.isolate_teacher_rejections:
+        raise ValueError("parent-relative study requires isolated infeasible worlds")
     if a.target_rate_filter and a.ankle_rate_filter:
         raise ValueError("choose exactly one rate filter scope")
     if (a.target_rate_filter or a.ankle_rate_filter) and (
@@ -235,6 +240,7 @@ def main():
                 reject_actual_slew_conflict=True,
                 max_delta_rad=0.012 if a.robust_teacher else 0.16,
                 joint_margin_rad=0.2 if a.reserve_teacher else 0.0,
+                parent_relative_envelope=a.parent_relative_teacher,
             )
             if a.intercept_teacher
             else None,
@@ -265,6 +271,7 @@ def main():
                     all_knee_colliders=True,
                     max_delta_rad=0.012 if a.robust_teacher else 0.16,
                     joint_margin_rad=0.2 if a.reserve_teacher else 0.0,
+                    parent_relative_envelope=a.parent_relative_teacher,
                 )
                 for _ in range(env.worlds)
             ]
@@ -319,6 +326,17 @@ def main():
                         teachers[i].previous_delta = teacher_delta[i].copy()
                     try:
                         require_teacher_slew(previous_delta, teacher_delta[i])
+                        if a.parent_relative_teacher:
+                            limits = model.jnt_range[layout.joints]
+                            actual = target29(action[i], params)
+                            parent_violation = np.maximum(limits[:, 0] - nominal, 0) + np.maximum(
+                                nominal - limits[:, 1], 0
+                            )
+                            actual_violation = np.maximum(limits[:, 0] - actual, 0) + np.maximum(
+                                actual - limits[:, 1], 0
+                            )
+                            if np.any(actual_violation > parent_violation + 1e-6):
+                                raise ValueError("actual target worsens parent range violation")
                     except ValueError as error:
                         if not a.isolate_teacher_rejections:
                             raise ValueError(
@@ -329,6 +347,7 @@ def main():
                             dict(
                                 world=int(i),
                                 control=int(env.elapsed[i]),
+                                reason=str(error),
                                 max_residual_jump=float(
                                     np.max(np.abs(teacher_delta[i] - previous_delta))
                                 ),
@@ -392,6 +411,7 @@ def main():
                 intercept_teacher=a.intercept_teacher,
                 robust_teacher=a.robust_teacher,
                 reserve_teacher=a.reserve_teacher,
+                parent_relative_teacher=a.parent_relative_teacher,
                 target_rate_filter=a.target_rate_filter,
                 ankle_rate_filter=a.ankle_rate_filter,
                 ankle_joint_indices=list(ANKLE_JOINT_INDICES) if a.ankle_rate_filter else None,
