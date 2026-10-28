@@ -47,6 +47,7 @@ def test_course_window_reward_dominance_and_observation_abi():
     # Experimental receiving has at most 50 foot + 200 capture once per
     # episode; extending it to 40 controls requires a larger failure penalty.
     assert 40 * 6 + 250 < 600
+    assert 60 * 6 + 250 < 800
     assert (
         NativeContactCourse.actor_observation_dim
         == NativeContactCourse.critic_observation_dim

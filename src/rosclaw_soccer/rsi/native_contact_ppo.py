@@ -64,7 +64,7 @@ def course_gae(
     shape = reward.shape
     if (
         type(maximum_controls) is not int
-        or maximum_controls not in (24, 40)
+        or maximum_controls not in (24, 40, 60)
         or len(shape) != 2
         or not 1 <= shape[0] <= maximum_controls
         or shape[1] < 1

@@ -18,6 +18,7 @@ def main():
         p.add_argument("--" + key, required=True)
     p.add_argument("--launch-frame", choices=("world", "heading"), default="world")
     p.add_argument("--lateral-study", action="store_true")
+    p.add_argument("--receive-window", type=int, choices=(40, 60), default=40)
     a = p.parse_args()
     if a.lateral_study and a.launch_frame != "heading":
         raise ValueError("lateral study requires an explicit body-heading launch")
@@ -95,8 +96,11 @@ def main():
     world = np.arange(256, dtype=np.int64)
     source = world % 8
     frame = 20 + source * 25 + (0 if a.lateral_study else (world // 8) * 5)
-    if any(int(f) + 40 >= len(plans[int(s)]["joint"]) for f, s in zip(frame, source, strict=True)):
-        raise ValueError("all declared forty-step references required")
+    if any(
+        int(f) + a.receive_window >= len(plans[int(s)]["joint"])
+        for f, s in zip(frame, source, strict=True)
+    ):
+        raise ValueError("all declared complete reference windows required")
     bank = dict(
         world=world,
         source_id=source,
@@ -177,7 +181,7 @@ def main():
             lateral_m=[-0.24, -0.08, 0.08, 0.24] if a.lateral_study else None,
             fixed_speed_mps=1.25 if a.lateral_study else None,
             robot_initial_state_matched_by_source=a.lateral_study,
-            controls=40,
+            controls=a.receive_window,
             no_mid_episode_resets=True,
             training=False,
             hardware_authorized=False,
@@ -194,7 +198,7 @@ def main():
         lead=10,
         threads=2,
         receive_reward=True,
-        receive_window=40,
+        receive_window=a.receive_window,
     )
     try:
         env.reset()
@@ -218,6 +222,7 @@ def main():
                 course_binding=binding,
                 launch_frame=a.launch_frame,
                 lateral_study=a.lateral_study,
+                receive_window=a.receive_window,
                 worlds=32 if a.lateral_study else 8,
                 reference_clip_count=8 if multi else 1,
                 bank_hash=digest(a.output / "incoming-bank.npz"),

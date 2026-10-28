@@ -48,6 +48,20 @@ def test_40_control_course_requires_explicit_opt_in():
     assert np.array_equal(advantage, returns)
 
 
+def test_60_control_course_requires_explicit_opt_in():
+    reward = np.ones((60, 1), dtype=np.float32)
+    value = np.zeros_like(reward)
+    valid = np.ones_like(reward, dtype=bool)
+    terminal = np.zeros_like(valid)
+    timeout = terminal.copy()
+    timeout[-1] = True
+    with pytest.raises(ValueError, match="bounded"):
+        course_gae(reward, value, value, terminal, timeout, valid, maximum_controls=40)
+    advantage, _ = course_gae(reward, value, value, terminal, timeout, valid, maximum_controls=60)
+    assert advantage[-1, 0] == 1
+    assert np.isfinite(advantage).all()
+
+
 def test_post_update_kl_guard_rolls_back_network_and_adam():
     import torch
     from torch import nn
