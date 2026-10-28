@@ -7,9 +7,14 @@ from pathlib import Path
 import numpy as np
 
 from rosclaw_soccer.providers.g1.velocity_policy import VelocityPolicyParameters
+from rosclaw_soccer.rsi.passer_curriculum_outcome import strict_pass_receive
 from rosclaw_soccer.rsi.receiver_onpolicy_episode import (
     build_receiver_episode,
     receiver_terminal_reward,
+)
+from rosclaw_soccer.rsi.receiver_strict_terminal_reward import (
+    admit_strict_training,
+    strict_terminal_reward,
 )
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
@@ -24,6 +29,7 @@ def main() -> None:
     for name in ("review-hash", "review-head", "producer-head", "expected-head"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--receiver-center-strict", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if (
@@ -68,7 +74,9 @@ def main() -> None:
             root,
             audit,
             pins[block]["own_audit_hash"],
-            "NEURAL_RELAY_RECEIVER_EXPLORATION32_PENDING_OWN_REPLAY",
+            "NEURAL_RELAY_RECEIVER_CENTER_EXPLORATION32_PENDING_OWN_REPLAY"
+            if a.receiver_center_strict
+            else "NEURAL_RELAY_RECEIVER_EXPLORATION32_PENDING_OWN_REPLAY",
             worlds=32,
         )
         if (
@@ -116,16 +124,26 @@ def main() -> None:
             velocity, physics = bind(root, trial, "receiver_velocity"), bind(root, trial, "physics")
             if velocity is None or physics is None:
                 raise ValueError("complete actual own neural and physical trajectories required")
-            score = receiver_terminal_reward(
-                handoff=actual["handoff"],
-                precise=actual["return_0p1m_and_healthy"],
-                kick=actual["outgoing_foot_strike"],
-                body_failure=actual["body_failure"],
-            )
             with (
                 np.load(velocity, allow_pickle=False) as v,
                 np.load(physics, allow_pickle=False) as raw,
             ):
+                clean_outcome = strict_pass_receive(
+                    raw["ball_forces"],
+                    raw["body_failed"],
+                    handoff=trial["result"]["handoff_executed"],
+                )
+                if a.receiver_center_strict:
+                    if clean_outcome != expected[key].get("physical_clean_outcome"):
+                        raise ValueError("strict physical outcome must match independent review")
+                    score = strict_terminal_reward(clean_outcome)
+                else:
+                    score = receiver_terminal_reward(
+                        handoff=actual["handoff"],
+                        precise=actual["return_0p1m_and_healthy"],
+                        kick=actual["outgoing_foot_strike"],
+                        body_failure=actual["body_failure"],
+                    )
                 episode = build_receiver_episode(dict(v), reward=score)
                 n = len(episode["inputs"])
                 if n != expected[key]["stochastic_controls"] or raw["ball_forces"].shape[0] < n:
@@ -148,6 +166,7 @@ def main() -> None:
                     terminal_reward=score,
                     actual=actual,
                     receiver_nonfoot_contact_during_sampling=nonfoot,
+                    physical_clean_outcome=clean_outcome if a.receiver_center_strict else None,
                 )
             )
         frozen.extend(((root / "complete.json", sh), (audit, pins[block]["own_audit_hash"])))
@@ -160,6 +179,7 @@ def main() -> None:
     ):
         raise ValueError("all reviewed sampled episodes and unchanged sources required")
     clean(a.expected_head)
+    admission = admit_strict_training(rows) if a.receiver_center_strict else None
     write_once(
         a.output / "complete.json",
         dict(
@@ -170,7 +190,14 @@ def main() -> None:
             episodes=72,
             sampled_controls=sum(r["controls"] for r in rows),
             model_identity=model_identity,
-            reward="2*precise_healthy + handoff + .25*return_foot - 2*either_body_failure",
+            reward="2*strict_both_clean - A_nonfoot - B_nonfoot - either_body_failure"
+            if a.receiver_center_strict
+            else "2*precise_healthy + handoff + .25*return_foot - 2*either_body_failure",
+            reward_profile="center-strict-full-history-v1"
+            if a.receiver_center_strict
+            else "legacy-mixed",
+            research_data_sufficiency=admission,
+            optimizer_authorized=False,
             terminal_only=True,
             actor_updates=0,
             critic_updates=0,
