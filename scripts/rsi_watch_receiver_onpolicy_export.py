@@ -19,6 +19,7 @@ def main() -> None:
     for name in ("review-unit", "review-head", "producer-head", "expected-head"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--timeout-sec", type=int, default=43200)
+    p.add_argument("--receiver-center-strict", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if (
@@ -26,7 +27,9 @@ def main() -> None:
         or a.output.exists()
         or a.output.resolve().is_relative_to(Path.cwd())
         or not 1 <= a.timeout_sec <= 43200
-        or not a.review_unit.startswith("rosclaw-team-")
+        or not a.review_unit.startswith(
+            "rosclaw-receiver-center-" if a.receiver_center_strict else "rosclaw-team-"
+        )
         or not a.review_unit.endswith(".service")
         or "/" in a.review_unit
     ):
@@ -80,7 +83,8 @@ def main() -> None:
         raise ValueError("full own-physics and density review required")
     command = [
         sys.executable,
-        "scripts/rsi_export_receiver_onpolicy.py",
+        "-m",
+        "scripts.rsi_export_receiver_onpolicy",
         "--review",
         str(a.review),
         "--review-hash",
@@ -94,6 +98,8 @@ def main() -> None:
         "--output",
         str(a.output),
     ]
+    if a.receiver_center_strict:
+        command.append("--receiver-center-strict")
     for pair in a.pair:
         command.extend(("--pair", *pair))
     subprocess.run(command, check=True)
