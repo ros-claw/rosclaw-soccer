@@ -98,6 +98,9 @@ def main() -> None:
                 z["torque"].reshape(-1, model.nu),
                 z["teacher_parent_torque"].reshape(-1, model.nu),
             )
+            observations = x["observations"].copy()
+            if observations.shape != (len(q), 140):
+                raise ValueError("complete ordered causal observation tensor required")
             forces = z["ball_forces"].reshape(-1, 2, 3)[:, 1, :]
             if (forces[:10] > 1).any():
                 raise ValueError("first control must be pre-receiver contact")
@@ -115,7 +118,7 @@ def main() -> None:
                     if actor.previous_contact[:2].any():
                         actor.last_foot_contact_step = 1400 + i - 1
                 observed = actor.observation(parent[i, receiver.ai])
-                if not np.array_equal(observed, x["observations"][i]):
+                if not np.array_equal(observed, observations[i]):
                     raise ValueError(f"causal observation mismatch case {row['index']} step {i}")
             count += len(q)
         if any(digest(path) != h for path, h in case_pins):
