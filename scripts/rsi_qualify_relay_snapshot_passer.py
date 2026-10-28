@@ -16,6 +16,7 @@ from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
 from rosclaw_soccer.rsi.receiver_contextual_selector import selector_class
 from rosclaw_soccer.rsi.receiver_counterfactual_residual import receiver_counterfactual_residual
+from rosclaw_soccer.rsi.receiver_transition_blend import receiver_transition_action
 from rosclaw_soccer.rsi.relay_restored_receiving_role import restored_receiving_role
 from rosclaw_soccer.rsi.restored_motion_reference import restored_motion_reference
 from rosclaw_soccer.rsi.restored_scratch_world import restored_scratch_world
@@ -56,6 +57,7 @@ def main() -> None:
     p.add_argument("--dynamic-boundary", action="store_true")
     p.add_argument("--with-shadow", action="store_true")
     p.add_argument("--return-handoff", action="store_true")
+    p.add_argument("--smooth-transition", action="store_true")
     p.add_argument("--expanded-velocity-proof", type=Path)
     p.add_argument("--expanded-velocity-proof-hash")
     a = p.parse_args()
@@ -75,6 +77,8 @@ def main() -> None:
         raise ValueError("shadow qualification requires expanded source bank")
     if a.return_handoff and not (a.dynamic_boundary and a.with_shadow):
         raise ValueError("return replay requires actual dynamic readiness and own shadow history")
+    if a.smooth_transition and not a.return_handoff:
+        raise ValueError("smooth candidate requires the full own return handoff")
     if a.nondefault:
         if (
             a.expanded_velocity_proof.is_symlink()
@@ -570,6 +574,7 @@ def main() -> None:
                     scratch.switch_pd_profile("b/", NativePDParameters(ep.kp, ep.kd, ep.effort))
                     receiver = shadow.handoff(goal=goal, carry_memory=True)
                     start = scratch.control_steps
+                    transition_start = receiver.last_action.copy()
                     for frame in range(start, 600):
                         mujoco.mj_forward(setup.model, scratch.data)
                         view = PlayerObservationView(scratch, "a/")
@@ -592,7 +597,7 @@ def main() -> None:
                         with torch.no_grad():
                             out, (h, c) = actor(torch.from_numpy(obs).reshape(1, 1, 160), (h, c))
                         current_action = out[0, 0].numpy().copy()
-                        if (
+                        if not a.smooth_transition and (
                             not np.array_equal(obs, t["NN_obs"][frame])
                             or not np.array_equal(current_action, t["NN_action"][frame])
                             or not np.array_equal(h.numpy(), t["NN_h_after"][frame])
@@ -603,31 +608,50 @@ def main() -> None:
                             )
                         if receiver.phase == "MOTION_COMPLETE":
                             receiver.begin_standing()
-                        target_b, trace_b = receiver.propose()
                         relative = frame - start
-                        if int(return_data["control"][relative]) != frame or any(
-                            not np.array_equal(trace_b[k], return_data[k][relative])
-                            for k in trace_b
+                        smoothing = a.smooth_transition and relative < 20
+                        target_b, trace_b = receiver.propose(with_reference_evidence=smoothing)
+                        executed_b = trace_b["NN_action"]
+                        if smoothing:
+                            executed_b = receiver_transition_action(
+                                transition_start,
+                                executed_b,
+                                trace_b["NN_reference_nominal"],
+                                ep.scale,
+                                ep.order,
+                                control_index=relative,
+                                duration=20,
+                            )
+                            target_b = ep.offset + executed_b[ep.order] * ep.scale
+                        if not a.smooth_transition and (
+                            int(return_data["control"][relative]) != frame
+                            or any(
+                                not np.array_equal(trace_b[k], return_data[k][relative])
+                                for k in trace_b
+                            )
                         ):
                             raise ValueError(f"receiver own return policy differs at {frame}")
                         resumed = scratch.advance(
                             {"a/": ep.offset + current_action[ep.order] * ep.scale, "b/": target_b}
                         )
                         for key in ("qpos", "qvel", "torque", "ball_forces"):
-                            if not np.array_equal(resumed[key], physics[key][frame]):
+                            if not a.smooth_transition and not np.array_equal(
+                                resumed[key], physics[key][frame]
+                            ):
                                 raise ValueError(f"return-phase native {key} differs at {frame}")
-                        receiver.commit()
+                        receiver.commit(executed_action=executed_b if smoothing else None)
                         physical_samples.append(resumed)
-                        return_actions.append(trace_b["NN_action"].copy())
+                        return_actions.append(executed_b.copy())
                         return_observations.append(trace_b["NN_obs"].copy())
                         return_targets.append(target_b.copy())
                         return_controls += 1
                         previous_action = current_action
                         if scratch.failed:
                             break
-                    if scratch.failed != (
-                        row["termination"] == "BODY_FAILURE"
-                    ) or scratch.control_steps != len(physics["qpos"]):
+                    if not a.smooth_transition and (
+                        scratch.failed != (row["termination"] == "BODY_FAILURE")
+                        or scratch.control_steps != len(physics["qpos"])
+                    ):
                         raise ValueError("actual return-phase termination differs")
                 if digest(return_path) != row["artifacts"]["receiver_return_nn"]["hash"]:
                     raise ValueError("original return actor trace changed")
@@ -653,7 +677,7 @@ def main() -> None:
                 recurrent_after_exact=validate_original,
                 receiver_role_command_exact=True,
                 receiver_neural_inference_exact=validate_original,
-                coupled_native_substeps_exact=validate_original,
+                coupled_native_substeps_exact=validate_original and not a.smooth_transition,
                 consecutive_controls=len(physical_samples),
                 first_contact_frame_and_substep=first_contact,
                 first_contact_groups=first_groups,
@@ -720,7 +744,9 @@ def main() -> None:
         a.output / "complete.json",
         dict(
             status=(
-                "RELAY_NONDEFAULT_CAUSAL_RETURN_CHAIN_MATCH_NOT_FOOTBALL_SUCCESS"
+                "RELAY_NONDEFAULT_SMOOTH_RETURN_PHYSICAL_CANDIDATE_NOT_SUCCESS"
+                if a.smooth_transition
+                else "RELAY_NONDEFAULT_CAUSAL_RETURN_CHAIN_MATCH_NOT_FOOTBALL_SUCCESS"
                 if a.return_handoff
                 else "RELAY_NONDEFAULT_CAUSAL_RECEIVING_BOUNDARY_MATCH_NOT_FOOTBALL_SUCCESS"
                 if a.dynamic_boundary
@@ -746,7 +772,8 @@ def main() -> None:
             future_controls_used=False,
             receiver_role_selector_verified_at_boundary=True,
             causal_receiving_boundary_reconstructed=a.dynamic_boundary,
-            own_return_handoff_reconstructed=a.return_handoff,
+            own_return_handoff_reconstructed=a.return_handoff and not a.smooth_transition,
+            smooth_transition=a.smooth_transition,
             own_shadow_recurrence_verified=a.with_shadow,
             coupled_physics_continuation_verified=all(
                 r["coupled_native_substeps_exact"] for r in rows
