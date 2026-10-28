@@ -3,9 +3,12 @@
 import argparse
 from pathlib import Path
 
+import mujoco
 import numpy as np
 
+from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.passer_curriculum_outcome import strict_pass_receive
+from rosclaw_soccer.rsi.receiving_original_readback import original_reception_readback
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_fresh_common import clean
@@ -46,6 +49,12 @@ def main() -> None:
         )
         if source["source_head"] != a.source_head or previous["source_head"] != a.old_head:
             raise ValueError("exact frozen physical producers required")
+        scene = root / "scene.xml"
+        scene_hash = digest(scene)
+        model = mujoco.MjModel.from_xml_path(str(scene))
+        layout = NativeVelocityLayout(
+            model, robot_prefix="b/", ball_body_name="soccer_ball", player_count=2
+        )
         current = {
             (
                 r["course"]["context"],
@@ -86,6 +95,28 @@ def main() -> None:
                         f["body_failed"],
                         handoff=row["result"]["handoff_executed"],
                     )
+                    readback = original_reception_readback(
+                        f["qpos"],
+                        f["qvel"],
+                        f["ball_forces"],
+                        f["body_failed"],
+                        receiver_q=layout.rq,
+                        receiver_v=layout.rv,
+                        ball_q=layout.bq,
+                        ball_v=layout.bv,
+                        excluded_contact_ever=any(
+                            name.startswith("b/")
+                            for name in row["result"]["excluded_contact_bodies"]
+                        ),
+                    )
+                if (
+                    readback["reconstruction_exact"]
+                    and readback["first_ready_control"] != row["original_receiving_ready_control"]
+                ):
+                    raise ValueError(
+                        "independent physical original reception reconstruction differs"
+                    )
+                value["original_readback"] = readback
                 value["original"] = measured(root, row)
                 value["motor_transition_executed"] = row["motor_transition_executed"]
                 value["original_receiving_ready_control"] = row["original_receiving_ready_control"]
@@ -118,6 +149,7 @@ def main() -> None:
                 (audit, ah),
                 (old / "complete.json", ph),
                 (old_audit, oh),
+                (scene, scene_hash),
             )
         )
     if seen != {0, 1, 2} or len(rows) != 24 or any(digest(path) != value for path, value in frozen):
