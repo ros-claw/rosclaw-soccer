@@ -124,6 +124,23 @@ def test_parent_relative_envelope_still_rejects_incompatible_slew():
     assert out["target"][0] == args["nominal"][0]
 
 
+@pytest.mark.parametrize("foot", [0, 1])
+def test_frozen_ankle_correction_never_changes_ankle_targets(foot):
+    args = inputs()
+    args["foot"] = foot
+    args["foot_jacobian"][:] = 0
+    args["foot_jacobian"][0, 6 * foot + 4] = 1
+    args["foot_jacobian"][0, 6 * foot] = 1
+    args["freeze_ankle_correction"] = True
+    out = predictive_foot_shin_target(**args)
+    assert out["applied_delta"][6 * foot + 4] == 0
+    assert out["applied_delta"][6 * foot + 5] == 0
+    assert out["applied_delta"][6 * foot] > 0
+    args["previous_delta"][6 * foot + 4] = 0.01
+    with pytest.raises(ValueError):
+        predictive_foot_shin_target(**args)
+
+
 @pytest.mark.parametrize("fault", ["nan", "wrong_leg", "unbounded_foot"])
 def test_bad_inputs_fail_closed(fault):
     args = inputs()

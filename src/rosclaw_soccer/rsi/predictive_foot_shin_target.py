@@ -25,6 +25,7 @@ def predictive_foot_shin_target(
     slew_rad: float = 0.025,
     axis_local_fallback: bool = False,
     parent_relative_envelope: bool = False,
+    freeze_ankle_correction: bool = False,
 ) -> dict:
     """Compute one damped, bounded leg-only correction from current measurements.
 
@@ -55,6 +56,7 @@ def predictive_foot_shin_target(
         or type(enabled) is not bool
         or type(axis_local_fallback) is not bool
         or type(parent_relative_envelope) is not bool
+        or type(freeze_ankle_correction) is not bool
         or any(
             type(v) is not float or not np.isfinite(v)
             for v in (horizon_sec, target_gap_m, max_delta_rad, slew_rad)
@@ -67,6 +69,7 @@ def predictive_foot_shin_target(
         or np.max(np.abs(previous_delta)) > max_delta_rad + 1e-12
         or np.any(previous_delta[np.r_[12:29]] != 0)
         or np.any(previous_delta[6 * (1 - foot) : 6 * (1 - foot) + 6] != 0)
+        or (freeze_ankle_correction and np.any(previous_delta[[4, 5, 10, 11]] != 0))
         or np.linalg.norm(foot_displacement) > 0.08000001
     ):
         raise ValueError("finite aligned bounded predictive contact inputs required")
@@ -106,6 +109,8 @@ def predictive_foot_shin_target(
     frozen = invalid | (
         outside_parent & (previous_delta[leg] == 0) & (not parent_relative_envelope)
     )
+    if freeze_ankle_correction:
+        frozen[4:6] = True
     free = ~frozen
     requested = np.zeros(29, dtype=np.float64)
     if enabled and np.any(free) and (axis_local_fallback or not fallback):

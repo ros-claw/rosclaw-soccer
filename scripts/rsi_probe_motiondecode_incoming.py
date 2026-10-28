@@ -24,6 +24,7 @@ def main():
     p.add_argument("--robust-teacher", action="store_true")
     p.add_argument("--reserve-teacher", action="store_true")
     p.add_argument("--parent-relative-teacher", action="store_true")
+    p.add_argument("--freeze-teacher-ankles", action="store_true")
     p.add_argument("--isolate-teacher-rejections", action="store_true")
     p.add_argument("--target-rate-filter", action="store_true")
     p.add_argument("--ankle-rate-filter", action="store_true")
@@ -44,6 +45,8 @@ def main():
         raise ValueError("isolated rejection requires an explicit teacher study")
     if a.parent_relative_teacher and not a.isolate_teacher_rejections:
         raise ValueError("parent-relative study requires isolated infeasible worlds")
+    if a.freeze_teacher_ankles and not a.parent_relative_teacher:
+        raise ValueError("ankle-freeze study requires the parent-relative teacher")
     if a.target_rate_filter and a.ankle_rate_filter:
         raise ValueError("choose exactly one rate filter scope")
     if (a.target_rate_filter or a.ankle_rate_filter) and (
@@ -241,6 +244,7 @@ def main():
                 max_delta_rad=0.012 if a.robust_teacher else 0.16,
                 joint_margin_rad=0.2 if a.reserve_teacher else 0.0,
                 parent_relative_envelope=a.parent_relative_teacher,
+                freeze_ankle_correction=a.freeze_teacher_ankles,
             )
             if a.intercept_teacher
             else None,
@@ -272,6 +276,7 @@ def main():
                     max_delta_rad=0.012 if a.robust_teacher else 0.16,
                     joint_margin_rad=0.2 if a.reserve_teacher else 0.0,
                     parent_relative_envelope=a.parent_relative_teacher,
+                    freeze_ankle_correction=a.freeze_teacher_ankles,
                 )
                 for _ in range(env.worlds)
             ]
@@ -412,6 +417,7 @@ def main():
                 robust_teacher=a.robust_teacher,
                 reserve_teacher=a.reserve_teacher,
                 parent_relative_teacher=a.parent_relative_teacher,
+                freeze_teacher_ankles=a.freeze_teacher_ankles,
                 target_rate_filter=a.target_rate_filter,
                 ankle_rate_filter=a.ankle_rate_filter,
                 ankle_joint_indices=list(ANKLE_JOINT_INDICES) if a.ankle_rate_filter else None,
