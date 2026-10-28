@@ -44,6 +44,21 @@ def bounded_actor_update(
     params = actor.plastic_parameters()
     if not params or any(not p.requires_grad for p in params):
         raise ValueError("all plastic actor tensors must be trainable")
+    # A new generation must start from the behavior policy that actually
+    # generated its full history, not from the original untrained anchor.
+    # Density checks alone cannot establish this: they only validate the
+    # stored old means against the stored actions.
+    with torch.no_grad():
+        max_behavior_error = 0.0
+        for episode in episodes:
+            current = actor(episode["observations"], episode["reference"])
+            old = episode["old_means"]
+            if current.shape != old.shape or not torch.isfinite(old).all():
+                raise ValueError("finite matching behavior-policy means required")
+            error = float((current - old).abs().max())
+            max_behavior_error = max(max_behavior_error, error)
+            if not math.isfinite(error) or error > 1e-5:
+                raise ValueError("actor must match the sampled behavior policy before update")
     original = [p.detach().clone() for p in params]
     for p in params:
         p.grad = None
@@ -116,6 +131,7 @@ def bounded_actor_update(
         accepted=accepted,
         attempts=attempts,
         actor_updates=int(accepted),
+        max_behavior_mean_error=max_behavior_error,
         physical_retention_proven=False,
         promotion_authorized=False,
         hardware_authorized=False,

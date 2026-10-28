@@ -1,5 +1,6 @@
 import math
 
+import numpy as np
 import pytest
 import torch
 from test_receiver_actor_critic import episode
@@ -8,6 +9,7 @@ from test_velocity_prior_actor import tensors
 from rosclaw_soccer.rsi.anchored_receiving_motor import AnchoredReceivingMotor
 from rosclaw_soccer.rsi.receiver_actor_critic import ReceiverCritic
 from rosclaw_soccer.rsi.receiver_bounded_update import bounded_actor_update
+from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
 from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
 
 
@@ -69,3 +71,49 @@ def test_rejected_update_restores_exact_weights_and_invalid_data_does_not_mutate
             data["reference"],
         )
     assert all(torch.equal(a, b) for a, b in zip(before, actor.plastic_parameters(), strict=True))
+
+
+def test_continuation_rejects_wrong_parent_before_any_mutation():
+    actor, critic, data = build()
+    with torch.no_grad():
+        next(reversed(list(actor.plastic.parameters()))).add_(0.1)
+    before = [p.detach().clone() for p in actor.plastic_parameters()]
+    with pytest.raises(ValueError, match="behavior policy"):
+        bounded_actor_update(
+            actor,
+            critic,
+            [data],
+            torch.full((29,), math.log(0.02)),
+            data["observations"],
+            data["reference"],
+        )
+    assert all(torch.equal(a, b) for a, b in zip(before, actor.plastic_parameters(), strict=True))
+
+
+def test_continuation_accepts_matching_nonzero_behavior_parent():
+    actor, critic, data = build()
+    with torch.no_grad():
+        next(reversed(list(actor.plastic.parameters()))).add_(0.01)
+        means = actor(data["observations"], data["reference"])
+    stream = ReceiverExplorationStream(np.full(29, 0.25, np.float32), seed=92117)
+    actions, logps = [], []
+    for t, mean in enumerate(means):
+        action, trace = stream.propose(mean.numpy(), data["reference"][t].numpy(), control=t)
+        stream.commit(action)
+        actions.append(action)
+        logps.append(trace["logp"])
+    data.update(
+        old_means=means,
+        actions=torch.from_numpy(np.stack(actions)),
+        old_logp=torch.from_numpy(np.stack(logps)),
+    )
+    result = bounded_actor_update(
+        actor,
+        critic,
+        [data],
+        torch.full((29,), math.log(0.02)),
+        data["observations"],
+        data["reference"],
+    )
+    assert result["max_behavior_mean_error"] == 0.0
+    assert result["attempts"]
