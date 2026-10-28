@@ -31,6 +31,9 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
+    passer_velocity_recovery = (
+        dec["protocol"] == "soccer.neural_relay_passer_velocity_recovery.development.v30"
+    )
     projected_memory = (
         dec["protocol"] == "soccer.neural_relay_receiver_projected_action_memory.development.v27"
     )
@@ -113,6 +116,7 @@ def main():
         or lateral_authority
         or foot_teacher_pair
         or leg_limit_pair
+        or passer_velocity_recovery
         or balance_study
         or dec["protocol"] == "soccer.neural_relay_development_contexts.v4"
     )
@@ -128,6 +132,7 @@ def main():
         or precontact_fullbody
         or foot_teacher_pair
         or leg_limit_pair
+        or passer_velocity_recovery
         else 64
         if balance_expanded
         else 32
@@ -141,7 +146,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_RECEIVER_PROJECTED_ACTION_MEMORY16_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_PASSER_VELOCITY_RECOVERY16_PENDING_OWN_REPLAY"
+        if passer_velocity_recovery
+        else "NEURAL_RELAY_RECEIVER_PROJECTED_ACTION_MEMORY16_PENDING_OWN_REPLAY"
         if projected_memory
         else "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY"
         if leg_limit_pair
@@ -222,6 +229,7 @@ def main():
             "soccer.neural_relay_receiver_axis_local_fallback.development.v25",
             "soccer.neural_relay_receiver_early_intercept.development.v28",
             "soccer.neural_relay_receiver_contact_lead.development.v29",
+            "soccer.neural_relay_passer_velocity_recovery.development.v30",
             "soccer.neural_relay_receiver_leg_target_projection.development.v26",
             "soccer.neural_relay_receiver_projected_action_memory.development.v27",
             "soccer.neural_relay_passer_residual_pair.development.v11",
@@ -250,6 +258,16 @@ def main():
             raise ValueError("exact development context identity and reference required")
         arms = (
             [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    passer_velocity_recovery=enabled,
+                )
+                for enabled in (False, True)
+            ]
+            if passer_velocity_recovery
+            else [
                 dict(
                     start=80,
                     memory="own_shadow_carry",
@@ -373,7 +391,11 @@ def main():
             (-0.2, 0.2)
             if center_identity or center_exploration
             else (-0.35, 0.35)
-            if dense_pair or lateral_authority or foot_teacher_pair or leg_limit_pair
+            if dense_pair
+            or lateral_authority
+            or foot_teacher_pair
+            or leg_limit_pair
+            or passer_velocity_recovery
             else (-0.75, -0.35, 0.35, 0.75)
             if balance_expanded
             else (-0.55, 0.55)
@@ -436,6 +458,8 @@ def main():
             raise ValueError("explicit unlearned early intercept contract required")
         if contact_lead and dec.get("receiver_early_contact_lead_is_unlearned") is not True:
             raise ValueError("explicit unlearned contact lead contract required")
+        if passer_velocity_recovery and dec.get("passer_velocity_recovery_pair") is not True:
+            raise ValueError("explicit passer velocity recovery pair required")
         if leg_limit_pair and (
             dec.get("receiver_leg_projection_is_unlearned") is not True
             or dec.get("receiver_actor_previous_action_remains_raw") is not (not projected_memory)
@@ -547,6 +571,8 @@ def main():
         artifacts = list(claim["artifacts"].values())
         if claim["handoff"] is not None:
             artifacts.append(claim["handoff"]["boundary"])
+        if claim.get("passer_velocity_recovery_boundary") is not None:
+            artifacts.append(claim["passer_velocity_recovery_boundary"]["boundary"])
         for artifact in artifacts:
             if artifact is None:
                 continue
@@ -576,6 +602,8 @@ def main():
         ),
     )
     counts = dict(native_steps=0, actual_actor_calls=0, shadow_actor_calls=0)
+    if passer_velocity_recovery:
+        counts["passer_velocity_inferences"] = 0
     if whole_identity or exploration or learned_pair:
         counts.update(receiver_onnx_calls=0, receiver_plastic_calls=0, receiver_anchor_calls=0)
     if exploration or learned_exploration:
@@ -585,6 +613,7 @@ def main():
         import mujoco
         import numpy as np
 
+        from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
         from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
         from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
         from rosclaw_soccer.rsi.native_foot_contact_teacher import (
@@ -600,6 +629,7 @@ def main():
             PasserContactExitGate,
             blended_passer_action,
         )
+        from rosclaw_soccer.rsi.passer_velocity_recovery import PasserVelocityRecovery
         from rosclaw_soccer.rsi.precontact_fullbody_gate import precontact_fullbody_gate
         from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
         from rosclaw_soccer.rsi.receiver_target_limit_projection import (
@@ -710,6 +740,9 @@ def main():
                     "receiver_return_nn",
                 )
             }
+            nn["passer_velocity"] = (
+                load(claim, "passer_velocity") if passer_velocity_recovery else {}
+            )
             segment = motion_segment(ep.clip, course["arm"]["start"])
             kwargs = dict(
                 torso_index=ep.torso_index,
@@ -735,6 +768,16 @@ def main():
                 **kwargs,
             )
             velocity = setup.velocity()
+            passer_recovery = None
+            if course["arm"].get("passer_velocity_recovery", False):
+                stream = ContinuousVelocityStream(
+                    setup.velocity_path,
+                    setup.velocity_config,
+                    expected_model_hash=pins[str(setup.velocity_path)],
+                    expected_config_hash=pins[str(setup.velocity_config)],
+                    horizon_controls=600,
+                )
+                passer_recovery = PasserVelocityRecovery(w, "a/", stream)
             whole_receiver = None
             receiver_sampler = None
             if course["arm"].get("receiver_whole", False):
@@ -790,7 +833,7 @@ def main():
             last_target = None
             largest_jump = 0.0
             physical = []
-            vi = bi = 0
+            vi = bi = ai = pvi = 0
             for step in range(len(raw["qpos"])):
                 if receiver is None and ready:
                     boundary = w.switch_pd_profile(
@@ -831,11 +874,49 @@ def main():
                 if receiver is None and step >= 300:
                     raise ValueError("source exceeded original velocity H300")
                 mujoco.mj_forward(w.model, w.data)
-                if passer.phase == "MOTION_COMPLETE":
-                    passer.begin_standing()
+                if passer.phase == "MOTION_COMPLETE" and not (
+                    passer_recovery is not None and passer_recovery.active
+                ):
+                    if passer_recovery is not None and passer_foot_seen:
+                        vp = passer_recovery.stream.params
+                        boundary_a = w.switch_pd_profile(
+                            "a/",
+                            NativePDParameters(
+                                np.asarray(vp.stiffness, np.float64),
+                                np.asarray(vp.damping, np.float64),
+                                w.parameters["a/"].effort.copy(),
+                            ),
+                        )
+                        recorded_boundary = claim.get("passer_velocity_recovery_boundary")
+                        if recorded_boundary is None or recorded_boundary["control"] != step:
+                            raise ValueError("own passer recovery boundary differs")
+                        with np.load(
+                            a.source_root / recorded_boundary["boundary"]["path"],
+                            allow_pickle=False,
+                        ) as z:
+                            for side in ("before", "after"):
+                                for k, value in boundary_a[side].items():
+                                    if not np.array_equal(value, z[side + "_" + k]):
+                                        raise ValueError("own unchanged passer boundary differs")
+                        passer_recovery.activate(motion_complete=True, passer_foot_seen=True)
+                    else:
+                        passer.begin_standing()
+                recovery_trace = None
+                if passer_recovery is not None:
+                    recovery_target = passer_recovery.observe(np.zeros(3, np.float32))
+                    recovery_trace = dict(
+                        control=np.array(step),
+                        obs=passer_recovery.stream.last_observation.copy(),
+                        proposed_action=passer_recovery.stream.last_action.copy(),
+                        phase=np.array(passer_recovery.stream.phase),
+                    )
+                    counts["passer_velocity_inferences"] += 1
                 fraction = course["arm"].get("passer_residual_fraction", 1.0)
                 teacher_arm = fraction != 1.0
-                target_a, trace = passer.propose(with_reference_evidence=teacher_arm)
+                if passer_recovery is not None and passer_recovery.active:
+                    target_a, trace = recovery_target, None
+                else:
+                    target_a, trace = passer.propose(with_reference_evidence=teacher_arm)
                 executed_a = None
                 if teacher_arm:
                     active = passer_exit_gate.active if contact_exit else not passer_foot_seen
@@ -848,8 +929,10 @@ def main():
                     )
                     target_a = passer.offset + executed_a[passer.order] * passer.scale
                     trace.update(BLEND_active=np.array(active), BLEND_action=executed_a.copy())
-                trace["control"] = np.array(step)
-                equal_trace(trace, nn["passer_nn"], step)
+                if trace is not None:
+                    trace["control"] = np.array(step)
+                    equal_trace(trace, nn["passer_nn"], ai)
+                    ai += 1
                 if receiver is None:
                     trace_s = shadow.observe()
                     trace_s["control"] = np.array(step)
@@ -1020,7 +1103,14 @@ def main():
                     )
                 ):
                     raise ValueError("own control, time or health differs")
-                passer.commit(executed_action=executed_a if teacher_arm and active else None)
+                if trace is not None:
+                    passer.commit(executed_action=executed_a if teacher_arm and active else None)
+                if passer_recovery is not None:
+                    recovery_row = passer_recovery.commit()
+                    assert recovery_trace is not None
+                    recovery_trace.update({k: np.asarray(v) for k, v in recovery_row.items()})
+                    equal_trace(recovery_trace, nn["passer_velocity"], pvi)
+                    pvi += 1
                 passer_foot_seen = passer_foot_seen or bool(
                     (row["ball_forces"][:, 0, :2] > 10).any()
                 )
@@ -1090,12 +1180,23 @@ def main():
                 raise ValueError("own complete outcome horizon differs")
             if (
                 (receiver is None and ready and not w.failed)
-                or len(nn["passer_nn"]["control"]) != w.control_steps
+                or len(nn["passer_nn"]["control"]) != ai
+                or (
+                    passer_velocity_recovery
+                    and len(nn["passer_velocity"].get("control", [])) != pvi
+                )
                 or len(nn["receiver_velocity"].get("control", [])) != vi
                 or len(nn["receiver_shadow"].get("control", [])) != vi
                 or len(nn["receiver_return_nn"].get("control", [])) != bi
             ):
                 raise ValueError("complete neural horizons or final online transition differ")
+            if passer_velocity_recovery and (
+                bool(claim.get("passer_velocity_recovery_boundary"))
+                != bool(passer_recovery is not None and passer_recovery.active)
+                or (passer_recovery is not None and pvi != w.control_steps)
+                or (passer_recovery is None and pvi != 0)
+            ):
+                raise ValueError("complete own passer shadow and actual handoff required")
             if receiver_sampler is not None:
                 import math
 

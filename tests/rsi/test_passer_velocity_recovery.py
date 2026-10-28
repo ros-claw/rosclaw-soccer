@@ -104,3 +104,35 @@ def test_shadow_and_handoff_follow_one_real_shared_simulation_clock():
     world.advance({"a/": target, "b/": np.zeros(29)})
     assert recovery.commit()["active"]
     assert world.native_steps == 20 and stream.neural_calls == 2
+
+
+def test_physical_recovery_pilot_rejects_mixed_interventions_before_loading_assets():
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
+            "--frontier-root",
+            "/not-read",
+            "--frontier-head",
+            "unused",
+            "--frontier-hash",
+            "unused",
+            "--expected-head",
+            "unused",
+            "--output",
+            "/not-written",
+            "--new-context-block",
+            "0",
+            "--passer-velocity-recovery-pair",
+            "--receiver-foot-teacher-pair",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "passer velocity recovery requires one isolated development block" in result.stderr

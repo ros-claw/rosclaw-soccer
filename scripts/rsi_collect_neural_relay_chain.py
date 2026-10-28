@@ -39,6 +39,7 @@ def main():
     p.add_argument("--receiver-motion-pair", action="store_true")
     p.add_argument("--receiver-continuation-pair", action="store_true")
     p.add_argument("--passer-residual-pair", action="store_true")
+    p.add_argument("--passer-velocity-recovery-pair", action="store_true")
     p.add_argument("--precontact-fullbody-pair", action="store_true")
     p.add_argument("--precontact-smooth", action="store_true")
     p.add_argument("--passer-contact-exit", action="store_true")
@@ -63,6 +64,24 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.passer_velocity_recovery_pair and (
+        a.new_context_block is None
+        or a.receiver_foot_teacher_pair
+        or a.receiver_leg_limit_pair
+        or a.receiver_lateral_authority
+        or a.receiver_follow_study
+        or a.receiver_whole_identity
+        or a.receiver_exploration
+        or a.receiver_learned_pair
+        or a.passer_residual_pair
+        or a.precontact_fullbody_pair
+        or a.balance_teacher_pair is not None
+        or a.balance_expanded
+        or a.successor_alignment_study
+        or a.receiver_center_curriculum
+        or a.reference_bridge_controls != [0]
+    ):
+        p.error("passer velocity recovery requires one isolated development block")
     if a.receiver_early_contact_lead and not a.receiver_early_foot_intercept:
         p.error("contact lead requires the early foot intercept study")
     if a.receiver_early_foot_intercept and not (
@@ -446,6 +465,16 @@ def main():
             )
             for enabled in (False, True)
         ]
+    if a.passer_velocity_recovery_pair:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                passer_velocity_recovery=enabled,
+            )
+            for enabled in (False, True)
+        ]
     if a.receiver_whole_identity:
         arms = [
             dict(
@@ -505,6 +534,7 @@ def main():
         or a.receiver_lateral_authority
         or a.receiver_foot_teacher_pair
         or a.receiver_leg_limit_pair
+        or a.passer_velocity_recovery_pair
         else (-0.75, -0.35, 0.35, 0.75)
         if a.balance_expanded
         else (-0.55, 0.55)
@@ -517,7 +547,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_receiver_projected_action_memory.development.v27"
+                "soccer.neural_relay_passer_velocity_recovery.development.v30"
+                if a.passer_velocity_recovery_pair
+                else "soccer.neural_relay_receiver_projected_action_memory.development.v27"
                 if a.receiver_projection_executed_memory
                 else "soccer.neural_relay_receiver_leg_target_projection.development.v26"
                 if a.receiver_leg_limit_pair
@@ -641,6 +673,7 @@ def main():
                 a.receiver_exploration or a.receiver_learned_exploration
             ),
             passer_residual_is_unlearned_teacher=a.passer_residual_pair,
+            passer_velocity_recovery_pair=a.passer_velocity_recovery_pair,
             precontact_fullbody_is_unlearned_teacher=a.precontact_fullbody_pair,
             precontact_smooth_controls=10 if a.precontact_smooth else 0,
             receiver_sampling_profile="contact-v1"
@@ -663,6 +696,8 @@ def main():
         ),
     )
     counts = dict(native_steps=0, actual_actor_calls=0, shadow_actor_calls=0)
+    if a.passer_velocity_recovery_pair:
+        counts["passer_velocity_inferences"] = 0
     if a.receiver_whole_identity or a.receiver_exploration or a.receiver_learned_pair:
         counts.update(receiver_onnx_calls=0, receiver_plastic_calls=0, receiver_anchor_calls=0)
     if a.receiver_exploration or a.receiver_learned_exploration:
@@ -672,6 +707,7 @@ def main():
         import mujoco
         import numpy as np
 
+        from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
         from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
         from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
         from rosclaw_soccer.rsi.native_foot_contact_teacher import (
@@ -687,6 +723,7 @@ def main():
             PasserContactExitGate,
             blended_passer_action,
         )
+        from rosclaw_soccer.rsi.passer_velocity_recovery import PasserVelocityRecovery
         from rosclaw_soccer.rsi.precontact_fullbody_gate import precontact_fullbody_gate
         from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
         from rosclaw_soccer.rsi.receiver_target_limit_projection import (
@@ -857,6 +894,16 @@ def main():
                 order=ep.order,
             )
             velocity = setup.velocity()
+            passer_recovery = None
+            if course["arm"].get("passer_velocity_recovery", False):
+                stream = ContinuousVelocityStream(
+                    setup.velocity_path,
+                    setup.velocity_config,
+                    expected_model_hash=pins[str(setup.velocity_path)],
+                    expected_config_hash=pins[str(setup.velocity_config)],
+                    horizon_controls=600,
+                )
+                passer_recovery = PasserVelocityRecovery(w, "a/", stream)
             whole_receiver = None
             receiver_sampler = None
             if course["arm"].get("receiver_whole", False):
@@ -922,7 +969,7 @@ def main():
             passer_exit_gate = PasserContactExitGate()
             folder = a.output / f"trial{index}"
             folder.mkdir()
-            physical, nn_a, nn_b, nn_v, nn_shadow = [], [], [], [], []
+            physical, nn_a, nn_b, nn_v, nn_shadow, nn_passer_velocity = [], [], [], [], [], []
             ready = False
             handoff = None
             return_goal = kick_origin = None
@@ -930,6 +977,7 @@ def main():
             excluded_contacts = set()
             termination = "WORLD_HORIZON_COMPLETE"
             previous_target_b = None
+            passer_recovery_boundary = None
             transition_start_action = None
             largest_jump = 0.0
             for step in range(600):
@@ -976,11 +1024,53 @@ def main():
                     termination = "NO_RECEIVING_HANDOFF_WITHIN_ORIGINAL_VELOCITY_H300"
                     break
                 mujoco.mj_forward(w.model, w.data)
-                if passer.phase == "MOTION_COMPLETE":
-                    passer.begin_standing()
+                if passer.phase == "MOTION_COMPLETE" and not (
+                    passer_recovery is not None and passer_recovery.active
+                ):
+                    if passer_recovery is not None and passer_foot_seen:
+                        vp = passer_recovery.stream.params
+                        profile_a = w.switch_pd_profile(
+                            "a/",
+                            NativePDParameters(
+                                np.asarray(vp.stiffness, np.float64),
+                                np.asarray(vp.damping, np.float64),
+                                w.parameters["a/"].effort.copy(),
+                            ),
+                        )
+                        boundary_a = folder / "passer_recovery_boundary.npz"
+                        np.savez_compressed(
+                            boundary_a,
+                            **{"before_" + k: v for k, v in profile_a["before"].items()},
+                            **{"after_" + k: v for k, v in profile_a["after"].items()},
+                        )
+                        passer_recovery_boundary = dict(
+                            control=step,
+                            profile={
+                                k: v for k, v in profile_a.items() if k not in ("before", "after")
+                            },
+                            boundary=dict(
+                                path=str(boundary_a.relative_to(a.output)), hash=digest(boundary_a)
+                            ),
+                        )
+                        passer_recovery.activate(motion_complete=True, passer_foot_seen=True)
+                    else:
+                        passer.begin_standing()
+                recovery_trace = None
+                if passer_recovery is not None:
+                    recovery_target = passer_recovery.observe(np.zeros(3, np.float32))
+                    recovery_trace = dict(
+                        control=np.array(step),
+                        obs=passer_recovery.stream.last_observation.copy(),
+                        proposed_action=passer_recovery.stream.last_action.copy(),
+                        phase=np.array(passer_recovery.stream.phase),
+                    )
+                    counts["passer_velocity_inferences"] += 1
                 fraction = course["arm"].get("passer_residual_fraction", 1.0)
                 teacher_arm = fraction != 1.0
-                target_a, trace_a = passer.propose(with_reference_evidence=teacher_arm)
+                if passer_recovery is not None and passer_recovery.active:
+                    target_a, trace_a = recovery_target, None
+                else:
+                    target_a, trace_a = passer.propose(with_reference_evidence=teacher_arm)
                 executed_a = None
                 if teacher_arm:
                     active = (
@@ -995,7 +1085,8 @@ def main():
                     )
                     target_a = passer.offset + executed_a[passer.order] * passer.scale
                     trace_a.update(BLEND_active=np.array(active), BLEND_action=executed_a.copy())
-                trace_a["control"] = np.array(step)
+                if trace_a is not None:
+                    trace_a["control"] = np.array(step)
                 counts["actual_actor_calls"] += 1
                 if receiver is None:
                     trace_shadow = shadow.observe()
@@ -1158,7 +1249,13 @@ def main():
                 counts["actual_actor_calls"] += 1
                 row = w.advance({"a/": target_a, "b/": target_b})
                 counts["native_steps"] += 10
-                passer.commit(executed_action=executed_a if teacher_arm and active else None)
+                if trace_a is not None:
+                    passer.commit(executed_action=executed_a if teacher_arm and active else None)
+                if passer_recovery is not None:
+                    recovery_row = passer_recovery.commit()
+                    assert recovery_trace is not None
+                    recovery_trace.update({k: np.asarray(v) for k, v in recovery_row.items()})
+                    nn_passer_velocity.append(recovery_trace)
                 passer_foot_seen = passer_foot_seen or bool(
                     (row["ball_forces"][:, 0, :2] > 10).any()
                 )
@@ -1203,7 +1300,8 @@ def main():
                     if a.precontact_fullbody_pair:
                         readiness.update()
                     nn_b.append(trace_b)
-                nn_a.append(trace_a)
+                if trace_a is not None:
+                    nn_a.append(trace_a)
                 if previous_target_b is not None:
                     largest_jump = max(
                         largest_jump, float(np.abs(target_b - previous_target_b).max())
@@ -1229,6 +1327,7 @@ def main():
                 for name, rows in (
                     ("physics", physical),
                     ("passer_nn", nn_a),
+                    ("passer_velocity", nn_passer_velocity),
                     ("receiver_velocity", nn_v),
                     ("receiver_shadow", nn_shadow),
                     ("receiver_return_nn", nn_b),
@@ -1296,6 +1395,7 @@ def main():
                 artifacts=artifacts,
                 original_clean_foot_grade_not_changed=True,
                 whole_game_verified=False,
+                passer_velocity_recovery_boundary=passer_recovery_boundary,
             )
             if a.precontact_fullbody_pair:
                 record["motor_transition_executed"] = handoff is not None
@@ -1320,7 +1420,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_RECEIVER_PROJECTED_ACTION_MEMORY16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_PASSER_VELOCITY_RECOVERY16_PENDING_OWN_REPLAY"
+                    if a.passer_velocity_recovery_pair
+                    else "NEURAL_RELAY_RECEIVER_PROJECTED_ACTION_MEMORY16_PENDING_OWN_REPLAY"
                     if a.receiver_projection_executed_memory
                     else "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY"
                     if a.receiver_leg_limit_pair
