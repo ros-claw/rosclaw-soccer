@@ -27,7 +27,7 @@ from scripts.rsi_stroke_search_common import open_motor
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    for key in ("source", "snapshots", "frontier", "output"):
+    for key in ("source", "snapshots", "frontier", "role-proof", "output"):
         p.add_argument("--" + key, type=Path, required=True)
     for key in (
         "source-hash",
@@ -35,6 +35,7 @@ def main() -> None:
         "snapshot-hash",
         "frontier-hash",
         "frontier-head",
+        "role-proof-hash",
         "expected-head",
     ):
         p.add_argument("--" + key, required=True)
@@ -50,6 +51,8 @@ def main() -> None:
         or a.output.resolve().is_relative_to(Path.cwd())
         or snapshot_receipt.is_symlink()
         or digest(snapshot_receipt) != a.snapshot_hash
+        or a.role_proof.is_symlink()
+        or digest(a.role_proof) != a.role_proof_hash
     ):
         raise ValueError("exact completed snapshots and unused external output required")
     source, _, sh = report(
@@ -277,6 +280,7 @@ def main() -> None:
         or digest(root / "complete.json") != sh
         or digest(audit) != a.audit_hash
         or digest(scene) != snaps["scene_hash"]
+        or digest(a.role_proof) != a.role_proof_hash
     ):
         raise ValueError("all exact unchanged original eight cases required")
     clean(a.expected_head)
@@ -291,6 +295,7 @@ def main() -> None:
             audit_hash=a.audit_hash,
             snapshot_hash=a.snapshot_hash,
             frontier_hash=a.frontier_hash,
+            role_proof_hash=a.role_proof_hash,
             rows=rows,
             prior_own_action_and_recurrent_state_used=True,
             future_controls_used=False,
