@@ -79,3 +79,18 @@ def test_early_candidate_responds_to_incoming_ball_without_editing_physics():
         (data.qpos, data.qvel, data.ctrl, data.xfrc_applied), before, strict=True
     ):
         np.testing.assert_array_equal(actual, saved)
+
+
+def test_explicit_reserve_is_bounded_and_does_not_mutate_model():
+    model, data, layout = fixture()
+    model.jnt_range[layout.joints] = [-2.0, 2.0]
+    data.qpos[layout.bq : layout.bq + 3] = [0.1, 0.07, 0.2]
+    mujoco.mj_forward(model, data)
+    before = model.jnt_range.copy()
+    teacher = NativePredictiveFootShinTeacher(joint_margin_rad=0.2)
+    teacher.propose(
+        model=model, snapshot=data, layout=layout, nominal=np.zeros(29), enabled=True, frame=0
+    )
+    np.testing.assert_array_equal(model.jnt_range, before)
+    with pytest.raises(ValueError):
+        NativePredictiveFootShinTeacher(joint_margin_rad=0.21)

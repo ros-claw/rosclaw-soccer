@@ -25,6 +25,7 @@ class NativePredictiveFootShinTeacher:
         contact_lead: bool = False,
         all_knee_colliders: bool = False,
         max_delta_rad: float = 0.16,
+        joint_margin_rad: float = 0.0,
     ) -> None:
         if (
             type(axis_local_fallback) is not bool
@@ -33,6 +34,8 @@ class NativePredictiveFootShinTeacher:
             or type(all_knee_colliders) is not bool
             or type(max_delta_rad) is not float
             or not 0 < max_delta_rad <= 0.2
+            or type(joint_margin_rad) is not float
+            or not 0 <= joint_margin_rad <= 0.2
             or (contact_lead and not early_intercept)
         ):
             raise ValueError("explicit axis-local fallback and early-intercept flags required")
@@ -41,6 +44,7 @@ class NativePredictiveFootShinTeacher:
         self.contact_lead = contact_lead
         self.all_knee_colliders = all_knee_colliders
         self.max_delta_rad = max_delta_rad
+        self.joint_margin_rad = joint_margin_rad
         self.next_frame = 0
         self.foot: int | None = None
         self.previous_delta = np.zeros(29, dtype=np.float64)
@@ -92,6 +96,9 @@ class NativePredictiveFootShinTeacher:
         if self.foot is None and enabled and min(foot_gaps) <= 0.55:
             self.foot = int(np.argmin(foot_gaps))
         foot = self.foot if self.foot is not None else 0
+        ranges = model.jnt_range[layout.joints].copy()
+        ranges[:, 0] += self.joint_margin_rad
+        ranges[:, 1] -= self.joint_margin_rad
         prediction = candidates[foot]
         early_active = bool(prediction is not None and prediction["eligible"])
         foot_surface = feet[foot]
@@ -99,7 +106,7 @@ class NativePredictiveFootShinTeacher:
             result = predictive_foot_shin_target(
                 nominal=nominal,
                 previous_delta=self.previous_delta,
-                joint_ranges=model.jnt_range[layout.joints].copy(),
+                joint_ranges=ranges,
                 foot_jacobian=np.zeros((3, 29)),
                 foot_displacement=np.zeros(3),
                 shin_gap=np.full(2, 2.0),
@@ -163,7 +170,7 @@ class NativePredictiveFootShinTeacher:
         result = predictive_foot_shin_target(
             nominal=nominal,
             previous_delta=self.previous_delta,
-            joint_ranges=model.jnt_range[layout.joints].copy(),
+            joint_ranges=ranges,
             foot_jacobian=foot_surface["jacobian_hg"].copy(),
             foot_displacement=delta,
             shin_gap=gaps,

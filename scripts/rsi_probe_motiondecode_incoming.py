@@ -21,13 +21,16 @@ def main():
     p.add_argument("--receive-window", type=int, choices=(40, 60), default=40)
     p.add_argument("--intercept-teacher", action="store_true")
     p.add_argument("--robust-teacher", action="store_true")
+    p.add_argument("--reserve-teacher", action="store_true")
     a = p.parse_args()
     if a.lateral_study and a.launch_frame != "heading":
         raise ValueError("lateral study requires an explicit body-heading launch")
     if a.intercept_teacher and (not a.lateral_study or a.receive_window != 60):
         raise ValueError("teacher requires the declared 60-control lateral study")
-    if a.robust_teacher and not a.intercept_teacher:
+    if (a.robust_teacher or a.reserve_teacher) and not a.intercept_teacher:
         raise ValueError("robust authority bound requires explicit teacher")
+    if a.robust_teacher and a.reserve_teacher:
+        raise ValueError("distinct teacher intervention modes cannot be combined")
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
 
@@ -206,6 +209,7 @@ def main():
                 all_knee_colliders=True,
                 reject_actual_slew_conflict=True,
                 max_delta_rad=0.012 if a.robust_teacher else 0.16,
+                joint_margin_rad=0.2 if a.reserve_teacher else 0.0,
             )
             if a.intercept_teacher
             else None,
@@ -235,6 +239,7 @@ def main():
                     contact_lead=True,
                     all_knee_colliders=True,
                     max_delta_rad=0.012 if a.robust_teacher else 0.16,
+                    joint_margin_rad=0.2 if a.reserve_teacher else 0.0,
                 )
                 for _ in range(env.worlds)
             ]
@@ -322,6 +327,7 @@ def main():
                 training=False,
                 intercept_teacher=a.intercept_teacher,
                 robust_teacher=a.robust_teacher,
+                reserve_teacher=a.reserve_teacher,
                 teacher_active_controls=int(raw["teacher_active"].sum()),
                 teacher_changed_controls=int(np.any(raw["teacher_delta"] != 0, axis=-1).sum()),
                 independent_replay=False,
