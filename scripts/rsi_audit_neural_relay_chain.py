@@ -87,9 +87,16 @@ def main():
         center_exploration
         or dec["protocol"] == "soccer.neural_relay_receiver_exploration.development.v9"
     )
-    learned_exploration = dec["protocol"] in (
-        "soccer.neural_relay_receiver_dense_exploration.development.v19",
-        "soccer.neural_relay_receiver_motion_exploration.development.v20",
+    precontact_exploration = (
+        dec["protocol"] == "soccer.neural_relay_receiver_precontact_exploration.development.v42"
+    )
+    learned_exploration = (
+        dec["protocol"]
+        in (
+            "soccer.neural_relay_receiver_dense_exploration.development.v19",
+            "soccer.neural_relay_receiver_motion_exploration.development.v20",
+        )
+        or precontact_exploration
     )
     continuation_pair = (
         dec["protocol"] == "soccer.neural_relay_receiver_continuation_pair.development.v21"
@@ -98,7 +105,7 @@ def main():
         "soccer.neural_relay_receiver_motion_pair.development.v18",
         "soccer.neural_relay_receiver_motion_exploration.development.v20",
     )
-    precontact_pair = (
+    precontact_pair = precontact_exploration or (
         dec["protocol"] == "soccer.neural_relay_receiver_precontact_pair.development.v41"
     )
     functional_timed_pair = precontact_pair or (
@@ -232,6 +239,8 @@ def main():
         if lateral_authority
         else "NEURAL_RELAY_RECEIVER_CONTINUATION_PAIR16_PENDING_OWN_REPLAY"
         if continuation_pair
+        else "NEURAL_RELAY_RECEIVER_PRECONTACT_EXPLORATION32_PENDING_OWN_REPLAY"
+        if precontact_exploration
         else "NEURAL_RELAY_RECEIVER_LEARNED_EXPLORATION32_PENDING_OWN_REPLAY"
         if learned_exploration
         else "NEURAL_RELAY_RECEIVER_MOTION_PAIR16_PENDING_OWN_REPLAY"
@@ -284,6 +293,7 @@ def main():
             "soccer.neural_relay_receiver_functional_pair.development.v39",
             "soccer.neural_relay_receiver_functional_timed_pair.development.v40",
             "soccer.neural_relay_receiver_precontact_pair.development.v41",
+            "soccer.neural_relay_receiver_precontact_exploration.development.v42",
             "soccer.neural_relay_receiver_motion_pair.development.v18",
             "soccer.neural_relay_receiver_dense_exploration.development.v19",
             "soccer.neural_relay_receiver_motion_exploration.development.v20",

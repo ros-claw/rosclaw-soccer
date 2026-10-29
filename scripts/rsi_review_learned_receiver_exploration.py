@@ -28,6 +28,7 @@ def main() -> None:
     for name in ("exploration-head", "parent-head", "expected-head"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--wait-unit")
+    p.add_argument("--precontact", action="store_true")
     p.add_argument("--timeout-sec", type=int, default=7200)
     a = p.parse_args()
     clean(a.expected_head)
@@ -78,14 +79,18 @@ def main() -> None:
         roots[0],
         audits[0],
         audit_hashes[0],
-        "NEURAL_RELAY_RECEIVER_LEARNED_EXPLORATION32_PENDING_OWN_REPLAY",
+        "NEURAL_RELAY_RECEIVER_PRECONTACT_EXPLORATION32_PENDING_OWN_REPLAY"
+        if a.precontact
+        else "NEURAL_RELAY_RECEIVER_LEARNED_EXPLORATION32_PENDING_OWN_REPLAY",
         worlds=32,
     )
     parent, _, parent_hash = report(
         roots[1],
         audits[1],
         audit_hashes[1],
-        "NEURAL_RELAY_RECEIVER_DENSE_PAIR16_PENDING_OWN_REPLAY",
+        "NEURAL_RELAY_RECEIVER_PRECONTACT_PAIR16_PENDING_OWN_REPLAY"
+        if a.precontact
+        else "NEURAL_RELAY_RECEIVER_DENSE_PAIR16_PENDING_OWN_REPLAY",
         worlds=16,
     )
     decl, parent_decl = [json.loads((r / "declaration.json").read_text()) for r in roots]
@@ -208,7 +213,9 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="LEARNED_RECEIVER_EXPLORATION_PILOT_REVIEWED",
+            status="PRECONTACT_RECEIVER_EXPLORATION_PILOT_REVIEWED"
+            if a.precontact
+            else "LEARNED_RECEIVER_EXPLORATION_PILOT_REVIEWED",
             source_head=a.expected_head,
             conditions=8,
             sampled_episodes=24,

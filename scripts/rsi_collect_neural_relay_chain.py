@@ -251,7 +251,7 @@ def main():
         not a.receiver_dense_pair
         or a.receiver_motion_pair
         or a.receiver_continuation_pair
-        or a.receiver_learned_exploration
+        or (a.receiver_learned_exploration and not a.receiver_precontact_pair)
     ):
         p.error("functional candidate requires an isolated dense learned pair")
     if a.receiver_continuation_pair and (
@@ -785,6 +785,8 @@ def main():
                 if a.receiver_lateral_authority
                 else "soccer.neural_relay_receiver_continuation_pair.development.v21"
                 if a.receiver_continuation_pair
+                else "soccer.neural_relay_receiver_precontact_exploration.development.v42"
+                if a.receiver_learned_exploration and a.receiver_precontact_pair
                 else "soccer.neural_relay_receiver_motion_exploration.development.v20"
                 if a.receiver_learned_exploration and a.receiver_motion_pair
                 else "soccer.neural_relay_receiver_dense_exploration.development.v19"
@@ -1957,6 +1959,8 @@ def main():
                     if a.receiver_lateral_authority
                     else "NEURAL_RELAY_RECEIVER_CONTINUATION_PAIR16_PENDING_OWN_REPLAY"
                     if a.receiver_continuation_pair
+                    else "NEURAL_RELAY_RECEIVER_PRECONTACT_EXPLORATION32_PENDING_OWN_REPLAY"
+                    if a.receiver_learned_exploration and a.receiver_precontact_pair
                     else "NEURAL_RELAY_RECEIVER_LEARNED_EXPLORATION32_PENDING_OWN_REPLAY"
                     if a.receiver_learned_exploration
                     else "NEURAL_RELAY_RECEIVER_MOTION_PAIR16_PENDING_OWN_REPLAY"
