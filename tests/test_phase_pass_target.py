@@ -19,6 +19,7 @@ from rosclaw_soccer.growth.strike_phase_controller import StrikePhaseConfig
 from rosclaw_soccer.skills.team.independent_team_world import (
     _controller_strike_stance_metrics,
     _phase_task_target,
+    _strike_stance_metrics,
     _strike_tracking_yaw_error,
 )
 from rosclaw_soccer.world.field import G1TrainingGoalSpec
@@ -79,6 +80,50 @@ def test_stance_metrics_injected_pass_target():
     assert depth == pytest.approx(0.0)
     assert lateral == pytest.approx(1.0)
     assert yaw == pytest.approx(math.pi / 2)
+
+
+def test_bilateral_recorded_stance_uses_each_teams_attacking_goal():
+    goal = G1TrainingGoalSpec()
+    q = np.zeros(21)
+    q[0:7] = (2, 1, 0.8, 1, 0, 0, 0)
+    q[7:14] = (4, -1, 0.8, 0, 0, 0, 1)
+    data = SimpleNamespace(qpos=q)
+    red = SimpleNamespace(
+        qpos_base=0,
+        cell=SimpleNamespace(agent_id="red.finisher", self_model=SimpleNamespace(team_id="red")),
+    )
+    blue = SimpleNamespace(
+        qpos_base=7,
+        cell=SimpleNamespace(agent_id="blue.finisher", self_model=SimpleNamespace(team_id="blue")),
+    )
+    q[14:17] = (3, 1, 0.115)
+    red_metrics = _strike_stance_metrics(
+        controllers=(red, blue),
+        strike_lease_agent_id="red.finisher",
+        data=data,
+        ball_qpos=14,
+        goal=goal,
+        left_goal_plane_x_m=-1.5,
+    )
+    q[14:17] = (3, -1, 0.115)
+    blue_metrics = _strike_stance_metrics(
+        controllers=(red, blue),
+        strike_lease_agent_id="blue.finisher",
+        data=data,
+        ball_qpos=14,
+        goal=goal,
+        left_goal_plane_x_m=-1.5,
+    )
+    assert blue_metrics == pytest.approx(red_metrics, abs=1e-12)
+    assert red_metrics == pytest.approx((1, 0, 0))
+    legacy = _strike_stance_metrics(
+        controllers=(red, blue),
+        strike_lease_agent_id="blue.finisher",
+        data=data,
+        ball_qpos=14,
+        goal=goal,
+    )
+    assert legacy[0] < 0 and legacy[2] > 2
 
 
 def test_tracking_yaw_error_target_changes_value_without_mutation():

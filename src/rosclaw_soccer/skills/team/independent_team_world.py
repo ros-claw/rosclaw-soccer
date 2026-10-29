@@ -4730,6 +4730,7 @@ def simulate_independent_team_world(
             data=data,
             ball_qpos=ball_qpos,
             goal=goal,
+            left_goal_plane_x_m=active.left_goal_plane_x_m if active.bilateral_goals else None,
         )
         trace["strike_stance_depth_m"].append(strike_metrics[0])
         trace["strike_stance_lateral_error_m"].append(strike_metrics[1])
@@ -6401,17 +6402,24 @@ def _strike_stance_metrics(
     data: Any,
     ball_qpos: int,
     goal: G1TrainingGoalSpec,
+    left_goal_plane_x_m: float | None = None,
 ) -> tuple[float, float, float]:
     if strike_lease_agent_id is None:
         return (0.0, 0.0, 0.0)
     controller = next(
         value for value in controllers if value.cell.agent_id == strike_lease_agent_id
     )
+    target_xy = (
+        (left_goal_plane_x_m, -goal.target_y_m)
+        if left_goal_plane_x_m is not None and controller.cell.self_model.team_id == "blue"
+        else None
+    )
     return _controller_strike_stance_metrics(
         controller=controller,
         data=data,
         ball_qpos=ball_qpos,
         goal=goal,
+        target_xy=target_xy,
     )
 
 
