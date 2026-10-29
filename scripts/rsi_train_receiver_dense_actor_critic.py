@@ -34,11 +34,14 @@ def main() -> None:
     p.add_argument("--seed", type=int, choices=(92401, 92402, 92403), required=True)
     p.add_argument("--receiver-motion-only", action="store_true")
     p.add_argument("--functional-proxy", action="store_true")
+    p.add_argument("--precontact-proxy", action="store_true")
     p.add_argument("--functional-failure-timing", type=Path)
     p.add_argument("--functional-failure-timing-hash")
     a = p.parse_args()
     if a.functional_proxy and a.receiver_motion_only:
         p.error("functional proxy and motion-only feedback are distinct protocols")
+    if a.precontact_proxy and (not a.functional_proxy or not a.functional_failure_timing):
+        p.error("precontact research requires functional mode and exact failure timing")
     if bool(a.functional_failure_timing) != bool(a.functional_failure_timing_hash) or (
         a.functional_failure_timing and not a.functional_proxy
     ):
@@ -135,7 +138,13 @@ def main() -> None:
     params = VelocityPolicyParameters.load(Path(config), expected_hash=ch)
     prior = VelocityPriorActor.from_onnx(Path(model), expected_hash=mh, reference_features=14)
     scale = torch.tensor(params.action_scale, dtype=torch.float32)
-    actor, critic = AnchoredReceivingMotor(prior, scale).eval(), ReceiverCritic()
+    if a.precontact_proxy:
+        from rosclaw_soccer.rsi.precontact_receiving_motor import PrecontactReceivingMotor
+
+        actor = PrecontactReceivingMotor(prior, scale).eval()
+    else:
+        actor = AnchoredReceivingMotor(prior, scale).eval()
+    critic = ReceiverCritic()
     with np.load(anchors, allow_pickle=False) as f:
         anchor_x, anchor_r = (
             torch.from_numpy(f["inputs"].copy()),
@@ -168,15 +177,22 @@ def main() -> None:
                     timed_failure_penalty,
                 )
 
-                reward, window = functional_receive_proxy(
-                    d["receiver_xy"],
-                    d["ball_xy"],
-                    d["ball_forces"],
-                    d["body_failed"],
-                    eventual_failure=original["actual"]["body_failure"]
-                    if not timing_by_key
-                    else False,
-                )
+                if a.precontact_proxy:
+                    from rosclaw_soccer.rsi.precontact_feedback import precontact_feedback
+
+                    reward, contact_event = precontact_feedback(d["ball_forces"])
+                    window = None
+                else:
+                    reward, window = functional_receive_proxy(
+                        d["receiver_xy"],
+                        d["ball_xy"],
+                        d["ball_forces"],
+                        d["body_failed"],
+                        eventual_failure=original["actual"]["body_failure"]
+                        if not timing_by_key
+                        else False,
+                    )
+                    contact_event = None
                 timing_credit = None
                 if timing_by_key:
                     row = timing_by_key[(original["context"], original["side"], original["seed"])]
@@ -207,6 +223,7 @@ def main() -> None:
                         side=original["side"],
                         seed=original["seed"],
                         first_window_control=window,
+                        contact_event=contact_event,
                         eventual_failure=original["actual"]["body_failure"],
                         timing_credit=timing_credit,
                     )
@@ -299,7 +316,9 @@ def main() -> None:
             dataset_hash=a.dataset_hash,
             dense_hash=a.dense_hash,
             dense_audit_hash=a.dense_audit_hash,
-            feedback_profile="functional-receive-timed-proxy-v2"
+            feedback_profile="precontact-force-timed-v1"
+            if a.precontact_proxy
+            else "functional-receive-timed-proxy-v2"
             if timing_by_key
             else "functional-receive-proxy-v1"
             if a.functional_proxy
@@ -317,7 +336,9 @@ def main() -> None:
         a.output / "complete.json",
         dict(
             status=(
-                "FUNCTIONAL_TIMED_RECEIVER_OFFLINE_CANDIDATE"
+                "PRECONTACT_RECEIVER_OFFLINE_CANDIDATE"
+                if a.precontact_proxy
+                else "FUNCTIONAL_TIMED_RECEIVER_OFFLINE_CANDIDATE"
                 if timing_by_key
                 else "FUNCTIONAL_RECEIVER_OFFLINE_CANDIDATE"
                 if a.functional_proxy
@@ -327,7 +348,9 @@ def main() -> None:
             )
             if result["accepted"]
             else (
-                "FUNCTIONAL_TIMED_RECEIVER_OFFLINE_REJECTED"
+                "PRECONTACT_RECEIVER_OFFLINE_REJECTED"
+                if a.precontact_proxy
+                else "FUNCTIONAL_TIMED_RECEIVER_OFFLINE_REJECTED"
                 if timing_by_key
                 else "FUNCTIONAL_RECEIVER_OFFLINE_REJECTED"
                 if a.functional_proxy
@@ -339,7 +362,9 @@ def main() -> None:
             dataset_hash=a.dataset_hash,
             dense_hash=a.dense_hash,
             dense_audit_hash=a.dense_audit_hash,
-            feedback_profile="functional-receive-timed-proxy-v2"
+            feedback_profile="precontact-force-timed-v1"
+            if a.precontact_proxy
+            else "functional-receive-timed-proxy-v2"
             if timing_by_key
             else "functional-receive-proxy-v1"
             if a.functional_proxy
@@ -356,6 +381,7 @@ def main() -> None:
             dense_weight=0.0 if a.functional_proxy else 0.2,
             proxy_window_rows=proxy_windows if a.functional_proxy else None,
             proxy_is_not_possession=a.functional_proxy,
+            contact_feedback_is_not_legality=a.precontact_proxy,
             failure_timing_hash=a.functional_failure_timing_hash,
             gamma=0.99,
             **result,

@@ -34,11 +34,14 @@ def main() -> None:
     p.add_argument("--seed", type=int, choices=(92401, 92402, 92403), required=True)
     p.add_argument("--receiver-motion-only", action="store_true")
     p.add_argument("--functional-proxy", action="store_true")
+    p.add_argument("--precontact-proxy", action="store_true")
     p.add_argument("--functional-failure-timing", type=Path)
     p.add_argument("--functional-failure-timing-hash")
     a = p.parse_args()
     if a.functional_proxy and a.receiver_motion_only:
         p.error("functional proxy and motion-only feedback are distinct protocols")
+    if a.precontact_proxy and (not a.functional_proxy or not a.functional_failure_timing):
+        p.error("precontact research requires functional mode and exact failure timing")
     if bool(a.functional_failure_timing) != bool(a.functional_failure_timing_hash) or (
         a.functional_failure_timing and not a.functional_proxy
     ):
@@ -61,6 +64,13 @@ def main() -> None:
         raise ValueError("exact immutable research input and unused external output required")
     data, admission, training, audit = [json.loads(p.read_text()) for p, _ in pins[:4]]
     timed = bool(a.functional_failure_timing)
+    profile = (
+        "precontact-force-timed-v1"
+        if a.precontact_proxy
+        else "functional-receive-timed-proxy-v2"
+        if timed
+        else "functional-receive-proxy-v1"
+    )
     if timed:
         timing = json.loads(a.functional_failure_timing.read_text())
         if (
@@ -74,7 +84,9 @@ def main() -> None:
     if (
         training.get("status")
         != (
-            "FUNCTIONAL_TIMED_RECEIVER_OFFLINE_CANDIDATE"
+            "PRECONTACT_RECEIVER_OFFLINE_CANDIDATE"
+            if a.precontact_proxy
+            else "FUNCTIONAL_TIMED_RECEIVER_OFFLINE_CANDIDATE"
             if timed
             else "FUNCTIONAL_RECEIVER_OFFLINE_CANDIDATE"
             if a.functional_proxy
@@ -92,9 +104,12 @@ def main() -> None:
         or (
             a.functional_proxy
             and (
-                training.get("feedback_profile")
-                != ("functional-receive-timed-proxy-v2" if timed else "functional-receive-proxy-v1")
+                training.get("feedback_profile") != profile
                 or training.get("proxy_is_not_possession") is not True
+                or (
+                    a.precontact_proxy
+                    and training.get("contact_feedback_is_not_legality") is not True
+                )
             )
         )
         or audit.get("status")
@@ -128,8 +143,14 @@ def main() -> None:
     torch.set_num_threads(2)
     model, mh, config, ch = data["model_identity"]
     params = VelocityPolicyParameters.load(Path(config), expected_hash=ch)
+    if a.precontact_proxy:
+        from rosclaw_soccer.rsi.precontact_receiving_motor import PrecontactReceivingMotor
+
+        motor_class = PrecontactReceivingMotor
+    else:
+        motor_class = AnchoredReceivingMotor
     actor = (
-        AnchoredReceivingMotor(
+        motor_class(
             VelocityPriorActor.from_onnx(Path(model), expected_hash=mh, reference_features=14),
             torch.tensor(params.action_scale, dtype=torch.float32),
         )
@@ -143,11 +164,7 @@ def main() -> None:
         or state.get("dense_hash") != training["dense_hash"]
         or state.get("dense_audit_hash") != a.dense_audit_hash
         or state.get("seed") != a.seed
-        or (
-            a.functional_proxy
-            and state.get("feedback_profile")
-            != ("functional-receive-timed-proxy-v2" if timed else "functional-receive-proxy-v1")
-        )
+        or (a.functional_proxy and state.get("feedback_profile") != profile)
         or (timed and state.get("failure_timing_hash") != a.functional_failure_timing_hash)
         or (
             a.receiver_motion_only
@@ -238,14 +255,18 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="FUNCTIONAL_TIMED_RECEIVER_CANDIDATE_READBACK_MATCH"
+            status="PRECONTACT_RECEIVER_CANDIDATE_READBACK_MATCH"
+            if a.precontact_proxy
+            else "FUNCTIONAL_TIMED_RECEIVER_CANDIDATE_READBACK_MATCH"
             if timed
             else "FUNCTIONAL_RECEIVER_CANDIDATE_READBACK_MATCH"
             if a.functional_proxy
             else "MOTION_RECEIVER_CANDIDATE_READBACK_MATCH"
             if a.receiver_motion_only
             else "DENSE_RECEIVER_CANDIDATE_READBACK_MATCH",
-            feedback_profile="functional-receive-timed-proxy-v2"
+            feedback_profile="precontact-force-timed-v1"
+            if a.precontact_proxy
+            else "functional-receive-timed-proxy-v2"
             if timed
             else "functional-receive-proxy-v1"
             if a.functional_proxy
