@@ -28,6 +28,7 @@ def main():
     p.add_argument("--receiver-adaptive-intercept", action="store_true")
     p.add_argument("--receiver-coordinated-intercept", action="store_true")
     p.add_argument("--passer-return-pair", action="store_true")
+    p.add_argument("--passer-return-align-pair", action="store_true")
     p.add_argument("--receiver-longitudinal-authority", action="store_true")
     p.add_argument("--receiver-foot-teacher-pair", action="store_true")
     p.add_argument("--receiver-predictive-foot-shin", action="store_true")
@@ -130,6 +131,8 @@ def main():
         )
     ):
         p.error("passer strike teacher requires one isolated development block")
+    if a.passer_return_align_pair and not a.passer_return_pair:
+        p.error("return alignment requires the passer return pair")
     if a.passer_return_pair and not (
         a.receiver_coordinated_intercept
         and not a.passer_velocity_recovery_pair
@@ -603,7 +606,8 @@ def main():
                 reference_bridge_controls=0,
                 receiver_foot_teacher_strength=0.5,
                 receiver_adaptive_intercept=True,
-                passer_velocity_recovery=enabled,
+                passer_velocity_recovery=True if a.passer_return_align_pair else enabled,
+                **({"passer_return_align": enabled} if a.passer_return_align_pair else {}),
             )
             for enabled in (False, True)
         ]
@@ -699,7 +703,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_passer_return_pair.development.v35"
+                "soccer.neural_relay_passer_return_alignment.development.v36"
+                if a.passer_return_align_pair
+                else "soccer.neural_relay_passer_return_pair.development.v35"
                 if a.passer_return_pair
                 else "soccer.neural_relay_passer_reference_tempo.development.v1"
                 if a.passer_reference_tempo_pair
@@ -850,6 +856,7 @@ def main():
             if a.passer_velocity_blend or a.passer_return_pair
             else 0,
             passer_return_role_is_unlearned=a.passer_return_pair,
+            passer_return_alignment_is_unlearned=a.passer_return_align_pair,
             precontact_fullbody_is_unlearned_teacher=a.precontact_fullbody_pair,
             precontact_smooth_controls=10 if a.precontact_smooth else 0,
             receiver_sampling_profile="contact-v1"
@@ -1149,6 +1156,8 @@ def main():
             launch = False
             passer_foot_seen = False
             return_seen = False
+            return_readiness = None
+            return_alignment_active = False
             passer_exit_gate = PasserContactExitGate()
             passer_strike_teacher = None
             folder = a.output / f"trial{index}"
@@ -1264,6 +1273,13 @@ def main():
                         if a.passer_return_pair
                         else np.zeros(3, np.float32)
                     )
+                    if course["arm"].get("passer_return_align", False) and return_alignment_active:
+                        recovery_command = np.asarray(
+                            successor_alignment(
+                                q_a, v_a, receiving_target_for_player(w, "b/")
+                            ).command_body,
+                            np.float32,
+                        )
                     recovery_target = passer_recovery.observe(recovery_command)
                     recovery_trace = dict(
                         control=np.array(step),
@@ -1271,6 +1287,11 @@ def main():
                         proposed_action=passer_recovery.stream.last_action.copy(),
                         phase=np.array(passer_recovery.stream.phase),
                     )
+                    if a.passer_return_align_pair:
+                        recovery_trace.update(
+                            command=recovery_command.copy(),
+                            alignment_active=np.array(return_alignment_active),
+                        )
                     counts["passer_velocity_inferences"] += 1
                 fraction = course["arm"].get("passer_residual_fraction", 1.0)
                 teacher_arm = fraction != 1.0
@@ -1512,6 +1533,8 @@ def main():
                 passer_foot_seen = passer_foot_seen or bool(
                     (row["ball_forces"][:, 0, :2] > 10).any()
                 )
+                if return_readiness is not None:
+                    return_alignment_active = return_readiness.update()
                 if a.passer_return_pair and receiver is not None:
                     return_seen = return_seen or return_strike_seen(
                         row["ball_forces"],
@@ -1519,6 +1542,8 @@ def main():
                         ball_v=w.layouts["a/"].bv,
                         return_direction=-forward,
                     )
+                if a.passer_return_align_pair and return_seen and return_readiness is None:
+                    return_readiness = OnlineReceivingBoundary(w, "a/")
                 if a.passer_contact_exit:
                     passer_exit_gate.observe(row["ball_forces"][:, 0, :])
                 if receiver is None:
@@ -1696,7 +1721,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_PASSER_RETURN_PAIR16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
+                    if a.passer_return_align_pair
+                    else "NEURAL_RELAY_PASSER_RETURN_PAIR16_PENDING_OWN_REPLAY"
                     if a.passer_return_pair
                     else "NEURAL_RELAY_PASSER_REFERENCE_TEMPO16_PENDING_OWN_REPLAY"
                     if a.passer_reference_tempo_pair

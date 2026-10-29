@@ -69,3 +69,32 @@ def test_return_pair_rejects_missing_coordinated_protocol(tmp_path):
     assert result.returncode == 2
     assert "return pair requires the isolated coordinated receiver protocol" in result.stderr
     assert not (tmp_path / "output").exists()
+
+
+def test_return_alignment_requires_return_protocol(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
+            "--frontier-root",
+            str(tmp_path),
+            "--frontier-head",
+            "x",
+            "--frontier-hash",
+            "x",
+            "--expected-head",
+            "x",
+            "--output",
+            str(tmp_path / "output"),
+            "--new-context-block",
+            "0",
+            "--passer-return-align-pair",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "return alignment requires the passer return pair" in result.stderr
+    assert not (tmp_path / "output").exists()
