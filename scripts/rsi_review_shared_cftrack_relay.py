@@ -40,6 +40,38 @@ def compare_prefix(left, right, fields, controls):
             raise ValueError("actual paired prefix differs")
 
 
+def proximity_readback(q, v, *, ball_q, ball_v, root_q, root_v, first):
+    """Retrospective measured proximity, not possession or a controller input."""
+    if (
+        q.ndim != 2
+        or v.ndim != 2
+        or len(q) != len(v)
+        or not len(q)
+        or type(first) is not int
+        or not 0 <= first < len(q)
+        or min(ball_q, ball_v, root_q, root_v) < 0
+        or max(ball_q + 2, root_q + 2) > q.shape[1]
+        or max(ball_v + 2, root_v + 2) > v.shape[1]
+        or not np.isfinite(q).all()
+        or not np.isfinite(v).all()
+    ):
+        raise ValueError("aligned finite measured ball and receiver states required")
+    dist = np.linalg.norm(q[first:, ball_q : ball_q + 2] - q[first:, root_q : root_q + 2], axis=1)
+    index = first + int(np.argmin(dist))
+    relative = np.linalg.norm(v[index, ball_v : ball_v + 2] - v[index, root_v : root_v + 2])
+    return dict(
+        start_native_substep=first,
+        closest_native_substep=index,
+        closest_root_ball_planar_m=float(dist[index - first]),
+        relative_planar_speed_at_closest_mps=float(relative),
+        final_root_ball_planar_m=float(dist[-1]),
+        final_relative_planar_speed_mps=float(
+            np.linalg.norm(v[-1, ball_v : ball_v + 2] - v[-1, root_v : root_v + 2])
+        ),
+        possession_proven=False,
+    )
+
+
 def own_report(source, audit, source_hash, audit_hash, *, early_cftrack=False, protocol_hash=None):
     source_path, audit_path = source / "complete.json", audit / "complete.json"
     if (
@@ -125,7 +157,7 @@ def own_report(source, audit, source_hash, audit_hash, *, early_cftrack=False, p
     return original
 
 
-def outcome(root, row, horizon, model, b):
+def outcome(root, row, horizon, model, b, *, proximity_start_control=None):
     with np.load(bind(root, row, "physics"), allow_pickle=False) as z:
         forces = z["ball_forces"][:horizon].reshape(-1, 2, 3)
         q = z["qpos"][:horizon].reshape(-1, model.nq)
@@ -155,6 +187,13 @@ def outcome(root, row, horizon, model, b):
                 ao = np.flatnonzero(forces[strike:, 0, 2] > 1)
                 a_foot = strike + int(af[0]) if len(af) else None
                 a_other = strike + int(ao[0]) if len(ao) else None
+        first = (
+            proximity_start_control * 10
+            if proximity_start_control is not None
+            else handoff["control"] * 10
+            if handoff is not None and handoff["control"] < horizon
+            else 0
+        )
         return dict(
             controls=horizon,
             handoff=handoff is not None and handoff["control"] < horizon,
@@ -166,6 +205,17 @@ def outcome(root, row, horizon, model, b):
             teammate_a_foot_substep=a_foot,
             teammate_a_nonfoot_substep=a_other,
             screen=screen,
+            proximity=proximity_readback(
+                q,
+                v,
+                ball_q=b.bq,
+                ball_v=b.bv,
+                root_q=b.rq,
+                root_v=b.rv,
+                first=first,
+            )
+            if first < len(q)
+            else None,
             teammate_possession_proven=False,
             nonfoot_is_not_legality=True,
         )
@@ -261,8 +311,12 @@ def main():
                 cftrack_termination=candidate["termination"],
                 baseline_full=outcome(a.source, base, base["controls"], model, layout),
                 cftrack_full=outcome(a.source, candidate, candidate["controls"], model, layout),
-                baseline_common=outcome(a.source, base, common, model, layout),
-                cftrack_common=outcome(a.source, candidate, common, model, layout),
+                baseline_common=outcome(
+                    a.source, base, common, model, layout, proximity_start_control=prefix
+                ),
+                cftrack_common=outcome(
+                    a.source, candidate, common, model, layout, proximity_start_control=prefix
+                ),
                 cftrack_neural_controls=0
                 if candidate["artifacts"]["cftrack"] is None
                 else candidate["controls"] - candidate["handoff"]["control"],
