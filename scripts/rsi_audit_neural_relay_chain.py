@@ -1706,6 +1706,15 @@ def main():
                 or (passer_recovery is None and pvi != 0)
             ):
                 raise ValueError("complete own passer shadow and actual handoff required")
+            if return_player_sampling:
+                from rosclaw_soccer.rsi.return_player_sampling_audit import (
+                    audit_return_player_sampling,
+                )
+
+                audit_return_player_sampling(
+                    nn["passer_velocity"],
+                    np.asarray(setup.velocity_parameters.action_scale, dtype=np.float32),
+                )
             if receiver_sampler is not None:
                 import math
 
