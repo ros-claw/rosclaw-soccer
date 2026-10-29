@@ -138,6 +138,26 @@ def test_private_cftrack_nn_and_fk_prediction_exact_actual_without_enter_reset(t
     assert f.counters()["attempted_native_steps"] == 80
 
 
+def test_npz_forecast_requires_explicit_opt_in_and_preserves_donor(tmp_path):
+    p, _ = setup(tmp_path)
+    p.reference_source = p.policy.reference_source = "NPZmotion"
+    kwargs = dict(
+        expected_policy_type=Policy,
+        expected_model_hash=compiled_model_hash(p.world.model),
+        native_step_budget=80,
+    )
+    with pytest.raises(ValueError):
+        SharedCFtrackForecaster(p, **kwargs)
+    forecast = SharedCFtrackForecaster(p, reference_source="NPZmotion", **kwargs)
+    before = cftrack_state_hash(p.policy, reference_source="NPZmotion")
+    result = forecast.forecast(controls=4, capture_inference=True)
+    assert result["runtime_failure"] is None and result["controls"] == 4
+    assert result["neural_obs"].shape == (4, 1, 1244)
+    assert result["neural_actions"].shape == (4, 1, 29)
+    assert cftrack_state_hash(p.policy, reference_source="NPZmotion") == before
+    assert p.world.control_steps == 0
+
+
 def test_pending_or_failed_player_is_not_forked(tmp_path):
     p, f = setup(tmp_path)
     p.propose()

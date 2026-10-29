@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 
-def _clone_or_hash(policy: Any, *, clone: bool) -> tuple[Any, str]:
+def _clone_or_hash(policy: Any, *, clone: bool, reference_source: str) -> tuple[Any, str]:
     import mujoco
     import onnxruntime as ort
 
@@ -23,7 +23,8 @@ def _clone_or_hash(policy: Any, *, clone: bool) -> tuple[Any, str]:
         type(policy.ort_session) is not ort.InferenceSession
         or policy.ort_session.get_providers() != ["CPUExecutionProvider"]
         or policy.task != "kickball"
-        or policy.reference_source != "CFgen"
+        or reference_source not in ("CFgen", "NPZmotion")
+        or policy.reference_source != reference_source
         or any(
             getattr(policy, k) is not None
             for k in ("async_stage_thread", "async_stage_pending", "async_stage_error")
@@ -140,12 +141,15 @@ def _clone_or_hash(policy: Any, *, clone: bool) -> tuple[Any, str]:
     return copied, "sha256:" + h.hexdigest()
 
 
-def cftrack_state_hash(policy: Any) -> str:
-    return _clone_or_hash(policy, clone=False)[1]
+def cftrack_state_hash(policy: Any, *, reference_source: str = "CFgen") -> str:
+    return _clone_or_hash(policy, clone=False, reference_source=reference_source)[1]
 
 
-def copy_cftrack_policy(policy: Any) -> Any:
-    copied, before = _clone_or_hash(policy, clone=True)
-    if cftrack_state_hash(copied) != before or cftrack_state_hash(policy) != before:
+def copy_cftrack_policy(policy: Any, *, reference_source: str = "CFgen") -> Any:
+    copied, before = _clone_or_hash(policy, clone=True, reference_source=reference_source)
+    if (
+        cftrack_state_hash(copied, reference_source=reference_source) != before
+        or cftrack_state_hash(policy, reference_source=reference_source) != before
+    ):
         raise ValueError("private CFtrack resource copy changed state")
     return copied

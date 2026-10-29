@@ -109,7 +109,8 @@ class SharedOmniContactPlayer:
                 "one fresh donor-bound motor plan and explicit physical joint limits required"
             )
         plan.require_donor(
-            policy_hash=cftrack_state_hash(self.policy), counter=self.policy.counter_step
+            policy_hash=cftrack_state_hash(self.policy, reference_source=self.reference_source),
+            counter=self.policy.counter_step,
         )
         limits = w.model.jnt_range[self.layout.joints].astype(np.float64)
         if not np.isfinite(limits).all() or (limits[:, 0] >= limits[:, 1]).any():

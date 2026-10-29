@@ -90,3 +90,17 @@ def test_dictionary_keys_and_fk_model_parameters_are_fingerprinted(tmp_path):
     before = cftrack_state_hash(p)
     p.kinematics.model.opt.gravity[0] = 1
     assert cftrack_state_hash(p) != before
+
+
+def test_npz_motion_requires_explicit_reference_opt_in(tmp_path):
+    p = policy(tmp_path)
+    p.reference_source = "NPZmotion"
+    with pytest.raises(ValueError):
+        copy_cftrack_policy(p)
+    with pytest.raises(ValueError):
+        cftrack_state_hash(p, reference_source="unknown")
+    before = cftrack_state_hash(p, reference_source="NPZmotion")
+    copied = copy_cftrack_policy(p, reference_source="NPZmotion")
+    assert cftrack_state_hash(copied, reference_source="NPZmotion") == before
+    copied.last_action_il[0] += 1
+    assert cftrack_state_hash(p, reference_source="NPZmotion") == before

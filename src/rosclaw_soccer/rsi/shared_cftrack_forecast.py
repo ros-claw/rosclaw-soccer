@@ -26,6 +26,7 @@ class SharedCFtrackForecaster:
         expected_policy_type: type[Any],
         expected_model_hash: str,
         native_step_budget: int,
+        reference_source: str = "CFgen",
     ) -> None:
         import mujoco
 
@@ -34,6 +35,8 @@ class SharedCFtrackForecaster:
         if (
             type(player) is not SharedOmniContactPlayer
             or type(player.policy) is not expected_policy_type
+            or reference_source not in ("CFgen", "NPZmotion")
+            or player.reference_source != reference_source
             or player.failed
             or player.pending is not None
             or player.boundary != w.control_steps
@@ -46,9 +49,10 @@ class SharedCFtrackForecaster:
             or native_step_budget % 10
         ):
             raise ValueError("qualified synchronous single-player CFtrack Euler forecast required")
-        copy_cftrack_policy(player.policy)
+        copy_cftrack_policy(player.policy, reference_source=reference_source)
         self.player, self.model_hash = player, expected_model_hash
         self.policy_type = expected_policy_type
+        self.reference_source = reference_source
         self.budget = native_step_budget
         self.calls = self.attempted_steps = self.integrated_steps = 0
         self.future_nn_calls = self.attempted_nn_calls = 0
@@ -69,6 +73,7 @@ class SharedCFtrackForecaster:
         controls: int,
         contact_plan: CFtrackContactPlan | None = None,
         motor_plan: CFtrackMotorResidualPlan | None = None,
+        capture_inference: bool = False,
     ) -> dict[str, Any]:
         import mujoco
 
@@ -81,6 +86,7 @@ class SharedCFtrackForecaster:
             or type(source.policy) is not self.policy_type
             or compiled_model_hash(donor.model) != self.model_hash
             or type(controls) is not int
+            or type(capture_inference) is not bool
             or not 1 <= controls <= 360
             or self.attempted_steps + controls * 10 > self.budget
             or (
@@ -91,12 +97,12 @@ class SharedCFtrackForecaster:
             raise ValueError(
                 "current pre-proposal CFtrack boundary and reserved finite budget required"
             )
-        before = cftrack_state_hash(source.policy)
+        before = cftrack_state_hash(source.policy, reference_source=self.reference_source)
         if motor_plan is not None:
             if type(motor_plan) is not CFtrackMotorResidualPlan:
                 raise ValueError("explicit bounded CFtrack motor plan required")
             motor_plan.require_donor(policy_hash=before, counter=source.policy.counter_step)
-        policy = copy_cftrack_policy(source.policy)
+        policy = copy_cftrack_policy(source.policy, reference_source=self.reference_source)
         receipt = None
         if contact_plan is not None:
             receipt = condition_cftrack_contact_reference(policy, contact_plan)
@@ -125,10 +131,33 @@ class SharedCFtrackForecaster:
             id(policy.policy_output),
         )
         rows, targets, decoded = [], [], []
+        neural_obs, neural_actions = [], []
         failure: dict[str, Any] | None = None
         try:
             if motor_plan is not None:
                 ghost.install_motor_plan(motor_plan)
+            if capture_inference:
+                session = policy.ort_session
+
+                class CaptureSession:
+                    def get_inputs(self):
+                        return session.get_inputs()
+
+                    def get_outputs(self):
+                        return session.get_outputs()
+
+                    def get_providers(self):
+                        return session.get_providers()
+
+                    def run(self, outputs, inputs):
+                        if len(neural_obs) >= controls or inputs["obs"].shape != (1, 1244):
+                            raise ValueError("declared inference budget or interface exceeded")
+                        result = session.run(outputs, inputs)
+                        neural_obs.append(inputs["obs"].copy())
+                        neural_actions.append(result[0].copy())
+                        return result
+
+                policy.ort_session = CaptureSession()
             for _ in range(controls):
                 self.attempted_nn_calls += 1
                 previous_counter = policy.counter_step
@@ -154,7 +183,7 @@ class SharedCFtrackForecaster:
         finally:
             self.integrated_steps += owned.native_steps
             donor._require_current_boundary()
-            if cftrack_state_hash(source.policy) != before:
+            if cftrack_state_hash(source.policy, reference_source=self.reference_source) != before:
                 source.failed = True
                 raise ValueError("CFtrack forecast mutated donor software/FK/model state")
         arrays = {
@@ -170,6 +199,8 @@ class SharedCFtrackForecaster:
             **arrays,
             joint_targets=np.array(targets).reshape(-1, 29),
             nn_decoded_targets=np.array(decoded).reshape(-1, 29),
+            neural_obs=np.array(neural_obs).reshape(-1, 1, 1244),
+            neural_actions=np.array(neural_actions).reshape(-1, 1, 29),
             controls=len(rows),
             native_steps=owned.native_steps,
             body_failed=owned.failed,
