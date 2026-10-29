@@ -3,7 +3,10 @@ from pathlib import Path
 import pytest
 
 from rosclaw_soccer.training.contact_teacher_ablation import ContactTeacherSuppression
-from rosclaw_soccer.training.receiving_experiment import simulate_r0_receiving_course
+from rosclaw_soccer.training.receiving_experiment import (
+    _focal_exploration_options,
+    simulate_r0_receiving_course,
+)
 from rosclaw_soccer.training.receiving_oracle_schedule import ReceivingOracleSchedule
 from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse
 
@@ -12,6 +15,10 @@ from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse
     "kwargs",
     [
         {"checkpoint_frame": True},
+        {"research_focal_exploration_seed": True},
+        {"research_focal_exploration_seed": -1},
+        {"research_focal_exploration_seed": 2**32},
+        {"research_focal_exploration_seed": 1.0},
         {"checkpoint_frame": 300},
         {"capture_support": 1},
         {"capture_oracle_authority": 1},
@@ -104,3 +111,17 @@ def test_invalid_contract_rejected_before_asset_loading(kwargs):
             scenario_id="s199.test.receiving",
             **kwargs,
         )
+
+
+def test_focal_exploration_is_explicit_seeded_and_scoped():
+    assert _focal_exploration_options("red.finisher", None) == {
+        "near_ball_explore": False,
+        "near_ball_exploration_agent_ids": None,
+    }
+    assert _focal_exploration_options("red.finisher", 13) == {
+        "near_ball_explore": True,
+        "near_ball_exploration_agent_ids": ("red.finisher",),
+        "near_ball_seed": 13,
+    }
+    with pytest.raises(ValueError):
+        _focal_exploration_options("unknown", 13)

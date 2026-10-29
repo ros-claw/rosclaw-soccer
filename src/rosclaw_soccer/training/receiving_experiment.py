@@ -59,6 +59,21 @@ from rosclaw_soccer.training.role_receiving_courses import (
 )
 
 
+def _focal_exploration_options(agent_id: str, seed: int | None) -> dict[str, Any]:
+    """Explicit research-only, seeded sampling for the assigned receiving role."""
+    if seed is None:
+        return {"near_ball_explore": False, "near_ball_exploration_agent_ids": None}
+    if type(seed) is not int or not 0 <= seed < 2**32:
+        raise ValueError("focal exploration requires an unsigned 32-bit integer seed")
+    if agent_id not in ROSTER:
+        raise ValueError("focal exploration requires a roster agent")
+    return {
+        "near_ball_explore": True,
+        "near_ball_exploration_agent_ids": (agent_id,),
+        "near_ball_seed": seed,
+    }
+
+
 def simulate_r0_receiving_course(
     *,
     asset_root: Path,
@@ -66,6 +81,7 @@ def simulate_r0_receiving_course(
     course: ReceivingCourse | AirborneReceivingCourse,
     scenario_id: str,
     airborne_standard_ball: bool = False,
+    research_focal_exploration_seed: int | None = None,
     checkpoint_frame: int = 0,
     capture_support: bool = False,
     capture_oracle_authority: bool = False,
@@ -123,6 +139,7 @@ def simulate_r0_receiving_course(
         or course.agent_id not in ROSTER
     ):
         raise ValueError("typed focal receiving course required")
+    exploration = _focal_exploration_options(course.agent_id, research_focal_exploration_seed)
     if type(airborne_standard_ball) is not bool or (
         airborne_standard_ball and not isinstance(course, AirborneReceivingCourse)
     ):
@@ -578,8 +595,7 @@ def simulate_r0_receiving_course(
         research_contact_distance_threshold_m=research_contact_distance_threshold_m,
         research_contact_max_active_substeps=research_contact_max_active_substeps,
         research_focal_shin_reflex_torque_nm=research_focal_shin_reflex_torque_nm,
-        near_ball_seed=course.seed,
-        near_ball_explore=False,
+        **({"near_ball_seed": course.seed, **exploration}),
         motor_options=(
             {course.agent_id: research_motor_option}
             if research_motor_option is not None

@@ -34,9 +34,14 @@ def main():
     p.add_argument("--shard", type=int, choices=range(4), required=True)
     p.add_argument("--standard-ball", action="store_true")
     p.add_argument("--focal-nearest", action="store_true")
+    p.add_argument("--focal-exploration-seed-base", type=int)
     a = p.parse_args()
     if a.focal_nearest and not a.standard_ball:
         raise ValueError("focal-nearest study requires the declared standard ball")
+    if a.focal_exploration_seed_base is not None and (
+        not a.focal_nearest or not 0 <= a.focal_exploration_seed_base <= 2**32 - 8
+    ):
+        raise ValueError("seeded exploration requires focal courses and eight valid seeds")
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("unused external evidence path required")
@@ -62,6 +67,7 @@ def main():
     import mujoco
     import rosclaw
 
+    from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
     from rosclaw_soccer.physics.native_ball_dimensions import inspect_native_ball_dimensions
     from rosclaw_soccer.providers.g1.asset_qualification import qualify_g1_assets
     from rosclaw_soccer.providers.g1.mujoco_primitives import load_robonaldo
@@ -74,6 +80,7 @@ def main():
     )
     from rosclaw_soccer.training.continuous_competitive_match_growth import _write_trajectory
     from rosclaw_soccer.training.continuous_match_residual_ppo import collection_fixture
+    from rosclaw_soccer.training.near_ball_residual_ppo import _validate_on_policy
     from rosclaw_soccer.training.receiving_classroom import (
         coached_receiving_cells,
         r1_contact_tap_receiving_configuration,
@@ -189,6 +196,7 @@ def main():
             focal_nearest_margins_m=focal_nearest_margins,
             standard_ball=a.standard_ball,
             focal_nearest=a.focal_nearest,
+            focal_exploration_seed_base=a.focal_exploration_seed_base,
             input_file_hashes=pins,
             coach_assigned_receive=True,
             classroom_profile="R1_CONTACT_TAP",
@@ -209,6 +217,11 @@ def main():
                     scenario_id=f"s199.airborne-receive-{course.seed}",
                     configuration_profile="R1_CONTACT_TAP",
                     airborne_standard_ball=a.standard_ball,
+                    research_focal_exploration_seed=(
+                        None
+                        if a.focal_exploration_seed_base is None
+                        else a.focal_exploration_seed_base + i
+                    ),
                 )
                 if str(trace["initial_integration_hash"][0]) != starts[course.seed]:
                     raise ValueError("actual initial state differs from whole-bank preflight")
@@ -220,6 +233,28 @@ def main():
                     original = {k: np.asarray(v).copy() for k, v in trace.items()}
                 frames = len(trace["time"])
                 aligned = {k: v for k, v in trace.items() if np.ndim(v) and len(v) == frames}
+                exploration_diagnostics = None
+                if a.focal_exploration_seed_base is not None:
+                    _validate_on_policy(NearBallResidualPolicy.load(a.policy), aligned)
+                    mask = aligned["residual_exploration_mask"]
+                    if (
+                        mask.shape != (frames, len(ROSTER))
+                        or not np.all(mask[:, ROSTER.index(course.agent_id)])
+                        or np.any(np.delete(mask, ROSTER.index(course.agent_id), axis=1))
+                    ):
+                        raise ValueError("exploration was not scoped to the focal player")
+                    focal_index = ROSTER.index(course.agent_id)
+                    exploration_diagnostics = {
+                        "seed": a.focal_exploration_seed_base + i,
+                        "focal_active_frames": int(
+                            np.count_nonzero(aligned["residual_active"][:, focal_index])
+                        ),
+                        "focal_nonzero_applied_frames": int(
+                            np.count_nonzero(
+                                np.any(aligned["residual_applied"][:, focal_index] != 0, axis=1)
+                            )
+                        ),
+                    }
                 _, trials = team_capture_trials(aligned, agent_ids=ROSTER)
                 artifact = _write_trajectory(a.output / f"course-{i:02d}-{repeat}.npz", trace)
                 records.append(
@@ -229,6 +264,7 @@ def main():
                         repeat=repeat,
                         result=result.to_dict(),
                         receiving_trials=trials,
+                        exploration_diagnostics=exploration_diagnostics,
                         artifact=artifact,
                     )
                 )
@@ -248,6 +284,7 @@ def main():
                 classroom_profile="R1_CONTACT_TAP",
                 standard_ball=a.standard_ball,
                 focal_nearest=a.focal_nearest,
+                focal_exploration_seed_base=a.focal_exploration_seed_base,
                 promotion_authorized=False,
                 hardware_authorized=False,
             ),
