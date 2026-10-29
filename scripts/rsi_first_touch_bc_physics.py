@@ -46,6 +46,9 @@ def main():
     p.add_argument("--kick-teacher-shadow", action="store_true")
     p.add_argument("--shadow-reference", type=Path)
     p.add_argument("--shadow-reference-hash")
+    p.add_argument("--teacher-takeover", action="store_true")
+    p.add_argument("--teacher-shadow-reference", type=Path)
+    p.add_argument("--teacher-shadow-reference-hash")
     a = p.parse_args()
     clean(a.expected_head)
     if len(a.source) != 4 or len(a.source_hash) != 4 or len(a.declaration_hash) != 4:
@@ -71,6 +74,25 @@ def main():
     ):
         raise ValueError("shadow requires an exact prior student reference")
     shadow_report = None
+    teacher_shadow_report = None
+    if a.teacher_takeover != bool(a.teacher_shadow_reference) or a.teacher_takeover != bool(
+        a.teacher_shadow_reference_hash
+    ):
+        raise ValueError("takeover requires an exact previous teacher-shadow reference")
+    if a.teacher_takeover:
+        if (
+            not a.kick_teacher_shadow
+            or file_digest(a.teacher_shadow_reference / "complete.json")
+            != a.teacher_shadow_reference_hash
+        ):
+            raise ValueError("pinned teacher shadow required")
+        teacher_shadow_report = json.loads(
+            (a.teacher_shadow_reference / "complete.json").read_text()
+        )
+        if teacher_shadow_report["model_hash"] != a.model_hash or [
+            r["course"] for r in teacher_shadow_report["rows"]
+        ] != list(range(0, 40, 5)):
+            raise ValueError("same teacher-shadow student and eight courses required")
     if a.kick_teacher_shadow:
         if (
             not a.phase_policy
@@ -213,6 +235,8 @@ def main():
             kick_source_hash=kick_hash,
             kick_dependency_hashes={str(path): digest for path, digest in kick_dependencies},
             shadow_reference_hash=a.shadow_reference_hash,
+            teacher_shadow_reference_hash=a.teacher_shadow_reference_hash,
+            teacher_takeover_after_controls=10 if a.teacher_takeover else None,
             courses=list(range(0, 40, 5)),
             promotion_authorized=False,
             hardware_authorized=False,
@@ -399,6 +423,8 @@ def main():
                 if kick_shadow is not None:
                     teacher_target, _ = kick_shadow.propose()
                     teacher_proposals.append(teacher_target.copy())
+                    if a.teacher_takeover and frame >= switch_frame + 10:
+                        target = teacher_target.copy()
                 result = world.advance({"a/": target})
                 if kick_shadow is not None:
                     kick_shadow.commit_observed_target()
@@ -450,10 +476,44 @@ def main():
                     raise ValueError("original bounded student artifact mismatch")
                 reference_pins.append((ref_path, ref_rows[0]["artifact_hash"]))
                 with np.load(ref_path, allow_pickle=False) as ref:
-                    if any(
+                    if a.teacher_takeover and switch_frame is not None:
+                        boundary = switch_frame + 10
+                        if n < boundary or len(ref["joint_targets"]) < boundary:
+                            raise ValueError("incomplete student takeover prefix")
+                        for k in ref.files:
+                            count = (
+                                boundary * 10
+                                if k in ("qpos", "qvel", "torque", "ball_forces")
+                                else boundary
+                            )
+                            if k == "student_observations":
+                                count = 10
+                            if not np.array_equal(
+                                arrays[k][:count], ref[k][:count], equal_nan=True
+                            ):
+                                raise ValueError("student takeover prefix differs")
+                    elif any(
                         not np.array_equal(arrays[k], ref[k], equal_nan=True) for k in ref.files
                     ):
                         raise ValueError("teacher shadow altered actual student trajectory")
+                if a.teacher_takeover:
+                    teacher_rows = [r for r in teacher_shadow_report["rows"] if r["course"] == i]
+                    if (
+                        len(teacher_rows) != 1
+                        or teacher_rows[0]["phase_switch_frame"] != switch_frame
+                    ):
+                        raise ValueError("teacher shadow phase boundary mismatch")
+                    teacher_path = a.teacher_shadow_reference / f"course-{i:02d}-student.npz"
+                    if file_digest(teacher_path) != teacher_rows[0]["artifact_hash"]:
+                        raise ValueError("teacher shadow artifact mismatch")
+                    reference_pins.append((teacher_path, teacher_rows[0]["artifact_hash"]))
+                    with np.load(teacher_path, allow_pickle=False) as ref:
+                        count = 11 if switch_frame is not None else 0
+                        if len(arrays["kick_teacher_targets"]) < count or not np.array_equal(
+                            arrays["kick_teacher_targets"][:count],
+                            ref["kick_teacher_targets"][:count],
+                        ):
+                            raise ValueError("teacher proposal prefix mismatch")
             label = relabel_arrays(arrays, controls=n, ball_address=lo.bq, root_address=lo.rq)
             path = a.output / f"course-{i:02d}-student.npz"
             np.savez_compressed(path, **arrays)
@@ -464,6 +524,11 @@ def main():
                     parent_outcome=parent["result"]["outcome"],
                     controls=n,
                     phase_switch_frame=switch_frame,
+                    teacher_takeover_frame=(
+                        switch_frame + 10
+                        if a.teacher_takeover and switch_frame is not None and n > switch_frame + 10
+                        else None
+                    ),
                     teacher_reference_phase=selected_reference_phase,
                     teacher_history_receipt=shadow_receipt,
                     healthy_full_horizon=not world.failed and n == 360,
@@ -480,6 +545,11 @@ def main():
             or any(file_digest(path) != digest for path, digest in reference_pins)
             or (kick_path is not None and file_digest(kick_path) != kick_hash)
             or any(file_digest(path) != digest for path, digest in kick_dependencies)
+            or (
+                a.teacher_shadow_reference is not None
+                and file_digest(a.teacher_shadow_reference / "complete.json")
+                != a.teacher_shadow_reference_hash
+            )
             or (
                 a.shadow_reference is not None
                 and file_digest(a.shadow_reference / "complete.json") != a.shadow_reference_hash
