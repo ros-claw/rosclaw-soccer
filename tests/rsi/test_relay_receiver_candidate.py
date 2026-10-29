@@ -354,3 +354,39 @@ def test_continuation_requires_exact_unpromoted_lineage(tmp_path, monkeypatch):
     )
     with pytest.raises(ValueError, match="continuation checkpoint"):
         load_research_receiver(*args, dense_mode=True, continuation_mode=True)
+    dataset.write_text(
+        json.dumps(
+            dict(
+                status="PRECONTACT_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED",
+                sampled_controls=123,
+                model_identity=[str(model), "m", str(config), "c"],
+            )
+        )
+    )
+    current = torch.load(checkpoint, weights_only=True)
+    current["dataset_hash"] = file_hash(dataset)
+    current["feedback_profile"] = "precontact-force-timed-v1"
+    torch.save(current, checkpoint)
+    review.update(
+        status="PRECONTACT_RECEIVER_CONTINUATION_NUMERIC_READBACK_MATCH",
+        checkpoint_hash=file_hash(checkpoint),
+        dataset_hash=file_hash(dataset),
+        parent_hash="parent",
+        feedback_profile="precontact-force-timed-v1",
+    )
+    audit.write_text(json.dumps(review))
+    args = (
+        setup,
+        checkpoint,
+        file_hash(checkpoint),
+        audit,
+        file_hash(audit),
+        dataset,
+        file_hash(dataset),
+    )
+    with pytest.raises(ValueError, match="explicit simulation"):
+        load_research_receiver(*args, precontact_continuation_mode=True)
+    result = load_research_receiver(
+        *args, dense_mode=True, continuation_mode=True, precontact_continuation_mode=True
+    )
+    assert result.policy_domain == "research.receiver_precontact_velocity_actor.v1"

@@ -48,6 +48,7 @@ def main():
     p.add_argument("--receiver-precontact-pair", action="store_true")
     p.add_argument("--receiver-motion-pair", action="store_true")
     p.add_argument("--receiver-continuation-pair", action="store_true")
+    p.add_argument("--receiver-precontact-continuation-pair", action="store_true")
     p.add_argument("--passer-residual-pair", action="store_true")
     p.add_argument("--passer-strike-teacher-pair", action="store_true")
     p.add_argument("--passer-reference-tempo-pair", action="store_true")
@@ -245,6 +246,8 @@ def main():
         p.error("lateral authority requires one isolated development block")
     if a.receiver_precontact_pair and not a.receiver_functional_timed_pair:
         p.error("precontact pair requires the timed functional protocol")
+    if a.receiver_precontact_continuation_pair and not a.receiver_continuation_pair:
+        p.error("precontact continuation requires the continuation protocol")
     if a.receiver_functional_timed_pair and not a.receiver_functional_pair:
         p.error("timed functional pair requires functional pair protocol")
     if a.receiver_functional_pair and (
@@ -783,6 +786,8 @@ def main():
                 if a.receiver_adaptive_intercept
                 else "soccer.neural_relay_receiver_lateral_authority.development.v22"
                 if a.receiver_lateral_authority
+                else "soccer.neural_relay_receiver_precontact_continuation.development.v43"
+                if a.receiver_precontact_continuation_pair
                 else "soccer.neural_relay_receiver_continuation_pair.development.v21"
                 if a.receiver_continuation_pair
                 else "soccer.neural_relay_receiver_precontact_exploration.development.v42"
@@ -1021,6 +1026,7 @@ def main():
                 functional_mode=a.receiver_functional_pair,
                 functional_timed_mode=a.receiver_functional_timed_pair,
                 precontact_mode=a.receiver_precontact_pair,
+                precontact_continuation_mode=a.receiver_precontact_continuation_pair,
             )
             if a.receiver_learned_pair
             else None
@@ -1957,6 +1963,8 @@ def main():
                     if a.receiver_adaptive_intercept
                     else "NEURAL_RELAY_RECEIVER_LATERAL_AUTHORITY32_PENDING_OWN_REPLAY"
                     if a.receiver_lateral_authority
+                    else "NEURAL_RELAY_RECEIVER_PRECONTACT_CONTINUATION16_PENDING_OWN_REPLAY"
+                    if a.receiver_precontact_continuation_pair
                     else "NEURAL_RELAY_RECEIVER_CONTINUATION_PAIR16_PENDING_OWN_REPLAY"
                     if a.receiver_continuation_pair
                     else "NEURAL_RELAY_RECEIVER_PRECONTACT_EXPLORATION32_PENDING_OWN_REPLAY"

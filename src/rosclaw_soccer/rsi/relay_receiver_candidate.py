@@ -24,6 +24,7 @@ def load_research_receiver(
     functional_mode: bool = False,
     functional_timed_mode: bool = False,
     precontact_mode: bool = False,
+    precontact_continuation_mode: bool = False,
 ):
     if (
         type(dense_mode) is not bool
@@ -32,6 +33,8 @@ def load_research_receiver(
         or type(functional_mode) is not bool
         or type(functional_timed_mode) is not bool
         or type(precontact_mode) is not bool
+        or type(precontact_continuation_mode) is not bool
+        or (precontact_continuation_mode and (not continuation_mode or precontact_mode))
         or (precontact_mode and not functional_timed_mode)
         or (functional_timed_mode and not functional_mode)
         or (functional_mode and (not dense_mode or motion_mode or continuation_mode))
@@ -50,7 +53,12 @@ def load_research_receiver(
     source = json.loads(dataset.read_text())
     if continuation_mode:
         if (
-            review.get("status") != "LEARNED_RECEIVER_CONTINUATION_NUMERIC_READBACK_MATCH"
+            review.get("status")
+            != (
+                "PRECONTACT_RECEIVER_CONTINUATION_NUMERIC_READBACK_MATCH"
+                if precontact_continuation_mode
+                else "LEARNED_RECEIVER_CONTINUATION_NUMERIC_READBACK_MATCH"
+            )
             or review.get("checkpoint_hash") != checkpoint_hash
             or review.get("dataset_hash") != dataset_hash
             or review.get("episodes") != 24
@@ -59,7 +67,16 @@ def load_research_receiver(
             or review.get("independent_new_physics") is not False
             or review.get("promotion_authorized") is not False
             or review.get("hardware_authorized") is not False
-            or source.get("status") != "LEARNED_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED"
+            or source.get("status")
+            != (
+                "PRECONTACT_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED"
+                if precontact_continuation_mode
+                else "LEARNED_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED"
+            )
+            or (
+                precontact_continuation_mode
+                and review.get("feedback_profile") != "precontact-force-timed-v1"
+            )
             or source.get("model_identity")
             != [
                 str(setup.velocity_path),
@@ -72,6 +89,10 @@ def load_research_receiver(
         state = torch.load(checkpoint, map_location="cpu", weights_only=True)
         if (
             state.get("dataset_hash") != dataset_hash
+            or (
+                precontact_continuation_mode
+                and state.get("feedback_profile") != "precontact-force-timed-v1"
+            )
             or state.get("dataset_audit_hash") != review.get("dataset_audit_hash")
             or state.get("parent_hash") != review.get("parent_hash")
             or any(
@@ -85,6 +106,14 @@ def load_research_receiver(
         ):
             raise ValueError("exact unpromoted SIM continuation checkpoint required")
         actor = zero_receiver_actor(setup)
+        if precontact_continuation_mode:
+            from rosclaw_soccer.rsi.precontact_receiving_motor import PrecontactReceivingMotor
+
+            actor = (
+                PrecontactReceivingMotor(actor.plastic, actor.action_scale)
+                .eval()
+                .requires_grad_(False)
+            )
         actor.plastic.load_state_dict(state["actor"], strict=True)
         if any(not torch.isfinite(p).all() for p in actor.parameters()):
             raise ValueError("finite candidate required")

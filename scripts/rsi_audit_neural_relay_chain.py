@@ -98,7 +98,10 @@ def main():
         )
         or precontact_exploration
     )
-    continuation_pair = (
+    precontact_continuation = (
+        dec["protocol"] == "soccer.neural_relay_receiver_precontact_continuation.development.v43"
+    )
+    continuation_pair = precontact_continuation or (
         dec["protocol"] == "soccer.neural_relay_receiver_continuation_pair.development.v21"
     )
     motion_pair = dec["protocol"] in (
@@ -237,6 +240,8 @@ def main():
         if adaptive_intercept
         else "NEURAL_RELAY_RECEIVER_LATERAL_AUTHORITY32_PENDING_OWN_REPLAY"
         if lateral_authority
+        else "NEURAL_RELAY_RECEIVER_PRECONTACT_CONTINUATION16_PENDING_OWN_REPLAY"
+        if precontact_continuation
         else "NEURAL_RELAY_RECEIVER_CONTINUATION_PAIR16_PENDING_OWN_REPLAY"
         if continuation_pair
         else "NEURAL_RELAY_RECEIVER_PRECONTACT_EXPLORATION32_PENDING_OWN_REPLAY"
@@ -294,6 +299,7 @@ def main():
             "soccer.neural_relay_receiver_functional_timed_pair.development.v40",
             "soccer.neural_relay_receiver_precontact_pair.development.v41",
             "soccer.neural_relay_receiver_precontact_exploration.development.v42",
+            "soccer.neural_relay_receiver_precontact_continuation.development.v43",
             "soccer.neural_relay_receiver_motion_pair.development.v18",
             "soccer.neural_relay_receiver_dense_exploration.development.v19",
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
@@ -869,6 +875,7 @@ def main():
                 functional_mode=functional_pair,
                 functional_timed_mode=functional_timed_pair,
                 precontact_mode=precontact_pair,
+                precontact_continuation_mode=precontact_continuation,
             )
             if learned_pair
             else None
