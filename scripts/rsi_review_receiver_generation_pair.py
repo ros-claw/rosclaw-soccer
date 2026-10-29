@@ -14,6 +14,29 @@ from scripts.rsi_review_receiver_match_prepared import physical_outcome
 from scripts.rsi_review_relay_balance_counterfactual import bind, report
 
 
+def observed_body_margins(root, row, horizon, a_layout, b_layout):
+    """Measured threshold margins, not predictions or physical safety proof."""
+    path = bind(root, row, "physics")
+    with np.load(path, allow_pickle=False) as z:
+        positions = z["qpos"][:horizon]
+    if positions.ndim != 3 or len(positions) != horizon or not np.isfinite(positions).all():
+        raise ValueError("complete finite common-horizon physics required")
+    result = {}
+    for name, layout in (("a", a_layout), ("b", b_layout)):
+        root_pose = positions[:, :, layout.rq : layout.rq + 7].reshape(-1, 7)
+        height = root_pose[:, 2]
+        upright = 1 - 2 * (root_pose[:, 4] ** 2 + root_pose[:, 5] ** 2)
+        bad = np.flatnonzero((height < 0.65) | (upright < 0.9))
+        result[name] = dict(
+            minimum_root_height_m=float(height.min()),
+            minimum_height_margin_m=float(height.min() - 0.65),
+            minimum_upright_cosine=float(upright.min()),
+            minimum_upright_margin=float(upright.min() - 0.9),
+            first_failed_substep=int(bad[0]) if len(bad) else None,
+        )
+    return result
+
+
 def team_followup(root, row, horizon, model, a_layout):
     """Observe A after B's real directed strike, within the specified exposure."""
     handoff = row["handoff"]
@@ -139,6 +162,8 @@ def main():
                 child_full=physical_outcome(a.source, child, child["controls"], model, lb),
                 parent_common=physical_outcome(a.source, parent, common, model, lb),
                 child_common=physical_outcome(a.source, child, common, model, lb),
+                parent_body_margins_common=observed_body_margins(a.source, parent, common, la, lb),
+                child_body_margins_common=observed_body_margins(a.source, child, common, la, lb),
                 parent_team_common=team_followup(a.source, parent, common, model, la),
                 child_team_common=team_followup(a.source, child, common, model, la),
                 parent_result=parent["result"],

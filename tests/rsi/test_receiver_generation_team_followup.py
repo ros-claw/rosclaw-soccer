@@ -32,3 +32,21 @@ def test_followup_only_counts_actual_a_contacts_after_directed_b_strike(monkeypa
 
 def test_no_handoff_is_not_a_team_pass():
     assert review.team_followup(None, {"handoff": None}, 1, None, None) is None
+
+
+def test_body_margins_report_threshold_crossing_and_respect_common_horizon(monkeypatch, tmp_path):
+    q = np.zeros((2, 10, 14))
+    q[:, :, 2] = 0.8
+    q[:, :, 9] = 0.7
+    q[1, 8, 9] = 0.649
+    path = tmp_path / "physics.npz"
+    np.savez(path, qpos=q)
+    monkeypatch.setattr(review, "bind", lambda *args: path)
+    a, b = SimpleNamespace(rq=0), SimpleNamespace(rq=7)
+    shorter = review.observed_body_margins(tmp_path, {}, 1, a, b)
+    assert shorter["b"]["first_failed_substep"] is None
+    assert shorter["b"]["minimum_height_margin_m"] > 0
+    whole = review.observed_body_margins(tmp_path, {}, 2, a, b)
+    assert whole["a"]["first_failed_substep"] is None
+    assert whole["b"]["first_failed_substep"] == 18
+    assert whole["b"]["minimum_height_margin_m"] < 0
