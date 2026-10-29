@@ -30,6 +30,7 @@ def evaluate_episode(
     post_contact_exit: bool = False,
     protect_passing_entry_prediction: bool = False,
     velocity_boundary_probe: Callable[..., None] | None = None,
+    research_knee_offset_rad: float | None = None,
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     """No copied rollout state or action playback; every call creates fresh NN state.
 
@@ -47,6 +48,13 @@ def evaluate_episode(
         or (protect_passing_entry_prediction and not post_contact_exit)
         or (velocity_boundary_probe is not None and not callable(velocity_boundary_probe))
         or (velocity_boundary_probe is not None and post_contact_exit)
+        or (
+            research_knee_offset_rad is not None
+            and (
+                type(research_knee_offset_rad) is not float
+                or research_knee_offset_rad not in (-0.04, 0.0, 0.04)
+            )
+        )
     ):
         raise ValueError("explicit post-contact exit research switch required")
     fast = assets.get("experimental_fast", False)
@@ -108,7 +116,7 @@ def evaluate_episode(
     contacted = False
     entry_state = None
     continuation = None
-    if post_contact_exit:
+    if post_contact_exit or research_knee_offset_rad is not None:
         from rosclaw_soccer.rsi.observed_velocity_continuation import (
             ObservedVelocityContinuation,
         )
@@ -117,6 +125,28 @@ def evaluate_episode(
     exit_frame = None
     observed_foot = False
     continuation_receipts, shadow_observations = [], []
+    knee_state = None
+    knee_scratch = None
+    knee_ball_geom = None
+    knee_geoms: list[np.ndarray] = []
+    knee_deltas: list[np.ndarray] = []
+    knee_gaps: list[tuple[float, float]] = []
+    knee_fired: list[bool] = []
+    if research_knee_offset_rad is not None:
+        from rosclaw_soccer.rsi.precontact_knee_intervention import KneeInterventionState
+
+        knee_state = KneeInterventionState()
+        knee_scratch = mujoco.MjData(model)
+        ball_geoms = np.flatnonzero(model.geom_bodyid == lo.ball)
+        if len(ball_geoms) != 1:
+            raise ValueError("one actual ball geometry required for research signal")
+        knee_ball_geom = int(ball_geoms[0])
+        for side in ("left", "right"):
+            body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"a/{side}_knee_link")
+            geoms = np.flatnonzero(model.geom_bodyid == body)
+            if body <= 0 or not len(geoms):
+                raise ValueError("both actual knee geometries required for research signal")
+            knee_geoms.append(geoms)
     for frame in range(360):
         q, v = lo.canonical(d)
         rot = d.xmat[lo.pelvis].reshape(3, 3)
@@ -199,9 +229,42 @@ def evaluate_episode(
             target = stream.propose(q, v, lo.angular_velocity_body(d), command, frame=frame)
         else:
             target = kick.propose()[0]
+        if knee_state is not None:
+            from rosclaw_soccer.rsi.precontact_knee_intervention import research_knee_target
+
+            assert knee_scratch is not None and knee_ball_geom is not None
+            knee_scratch.qpos[:] = d.qpos
+            knee_scratch.qvel[:] = d.qvel
+            mujoco.mj_forward(model, knee_scratch)
+            gaps = tuple(
+                float(
+                    min(
+                        mujoco.mj_geomDistance(
+                            model, knee_scratch, knee_ball_geom, int(g), 3.0, None
+                        )
+                        for g in geoms
+                    )
+                )
+                for geoms in knee_geoms
+            )
+            prior_target = target.copy()
+            knee_state, target = research_knee_target(
+                knee_state,
+                control=frame,
+                target=target,
+                knee_ball_surface_gaps_m=(gaps[0], gaps[1]),
+                actual_foot_contact=observed_foot,
+                offset_rad=research_knee_offset_rad,
+            )
+            knee_deltas.append(target - prior_target)
+            knee_gaps.append((gaps[0], gaps[1]))
+            knee_fired.append(knee_state.fired)
         result = w.advance({"a/": target})
         if kick is not None and exit_frame is None:
-            kick.commit()
+            if knee_state is not None:
+                kick.commit_observed_target()
+            else:
+                kick.commit()
         if continuation is not None:
             continuation_receipts.append(
                 continuation.observe_executed(target, completed_control=w.control_steps)
@@ -230,6 +293,10 @@ def evaluate_episode(
     )
     if continuation is not None:
         arrays["velocity_shadow_observations"] = np.stack(shadow_observations)
+    if knee_state is not None:
+        arrays["research_knee_target_delta_rad"] = np.stack(knee_deltas)
+        arrays["research_knee_surface_gaps_m"] = np.asarray(knee_gaps, dtype=np.float64)
+        arrays["research_knee_fired"] = np.asarray(knee_fired, dtype=bool)
     if w.control_steps >= 300:
         # All non-foot bodies are aggregated in measured force slot2. Empty
         # slots3..5 denote no extra disjoint body categories, not missing data.
