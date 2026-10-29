@@ -29,6 +29,7 @@ def main():
     p.add_argument("--receiver-coordinated-intercept", action="store_true")
     p.add_argument("--passer-return-pair", action="store_true")
     p.add_argument("--passer-return-align-pair", action="store_true")
+    p.add_argument("--passer-successor-pair", action="store_true")
     p.add_argument("--receiver-longitudinal-authority", action="store_true")
     p.add_argument("--receiver-foot-teacher-pair", action="store_true")
     p.add_argument("--receiver-predictive-foot-shin", action="store_true")
@@ -131,6 +132,8 @@ def main():
         )
     ):
         p.error("passer strike teacher requires one isolated development block")
+    if a.passer_successor_pair and not a.passer_return_align_pair:
+        p.error("passer successor requires the return alignment protocol")
     if a.passer_return_align_pair and not a.passer_return_pair:
         p.error("return alignment requires the passer return pair")
     if a.passer_return_pair and not (
@@ -607,7 +610,12 @@ def main():
                 receiver_foot_teacher_strength=0.5,
                 receiver_adaptive_intercept=True,
                 passer_velocity_recovery=True if a.passer_return_align_pair else enabled,
-                **({"passer_return_align": enabled} if a.passer_return_align_pair else {}),
+                **(
+                    {"passer_return_align": True if a.passer_successor_pair else enabled}
+                    if a.passer_return_align_pair
+                    else {}
+                ),
+                **({"passer_successor": enabled} if a.passer_successor_pair else {}),
             )
             for enabled in (False, True)
         ]
@@ -703,7 +711,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_passer_return_alignment.development.v36"
+                "soccer.neural_relay_passer_successor.development.v37"
+                if a.passer_successor_pair
+                else "soccer.neural_relay_passer_return_alignment.development.v36"
                 if a.passer_return_align_pair
                 else "soccer.neural_relay_passer_return_pair.development.v35"
                 if a.passer_return_pair
@@ -857,6 +867,8 @@ def main():
             else 0,
             passer_return_role_is_unlearned=a.passer_return_pair,
             passer_return_alignment_is_unlearned=a.passer_return_align_pair,
+            passer_successor_selection_is_unlearned=a.passer_successor_pair,
+            passer_successor_direct_profile_switch=a.passer_successor_pair,
             precontact_fullbody_is_unlearned_teacher=a.precontact_fullbody_pair,
             precontact_smooth_controls=10 if a.precontact_smooth else 0,
             receiver_sampling_profile="contact-v1"
@@ -883,6 +895,8 @@ def main():
         counts["passer_velocity_inferences"] = 0
     if a.passer_velocity_blend or a.passer_return_pair:
         counts["passer_blend_actor_inferences"] = 0
+    if a.passer_successor_pair:
+        counts["passer_successor_shadow_inferences"] = 0
     if a.receiver_whole_identity or a.receiver_exploration or a.receiver_learned_pair:
         counts.update(receiver_onnx_calls=0, receiver_plastic_calls=0, receiver_anchor_calls=0)
     if a.receiver_exploration or a.receiver_learned_exploration:
@@ -1125,6 +1139,22 @@ def main():
                 scale=ep.scale,
                 order=ep.order,
             )
+            successor_shadow = (
+                SharedShadowMotor(
+                    w,
+                    "a/",
+                    actor,
+                    clip=segment,
+                    torso_index=ep.torso_index,
+                    build_observation=ep.build_observation,
+                    goal=receiving_target_for_player(w, "b/"),
+                    offset=ep.offset,
+                    scale=ep.scale,
+                    order=ep.order,
+                )
+                if a.passer_successor_pair
+                else None
+            )
             readiness = OnlineReceivingBoundary(w, "b/")
             foot_teacher = (
                 NativeFootContactTeacher(
@@ -1158,11 +1188,16 @@ def main():
             return_seen = False
             return_readiness = None
             return_alignment_active = False
+            successor_motor = None
+            successor_ready_count = 0
+            successor_handoff = None
+            successor_previous_target = None
             passer_exit_gate = PasserContactExitGate()
             passer_strike_teacher = None
             folder = a.output / f"trial{index}"
             folder.mkdir()
             physical, nn_a, nn_b, nn_v, nn_shadow, nn_passer_velocity = [], [], [], [], [], []
+            nn_successor_shadow = []
             ready = False
             handoff = None
             return_goal = kick_origin = None
@@ -1175,6 +1210,44 @@ def main():
             transition_start_action = None
             largest_jump = 0.0
             for step in range(600):
+                if (
+                    course["arm"].get("passer_successor", False)
+                    and successor_motor is None
+                    and successor_ready_count >= 10
+                ):
+                    assert successor_shadow is not None
+                    successor_previous_target = w.last_applied_target("a/").copy()
+                    profile_s = w.switch_pd_profile(
+                        "a/", NativePDParameters(ep.kp, ep.kd, ep.effort)
+                    )
+                    goal_s = receiving_target_for_player(w, "b/")
+                    successor_boundary = folder / "passer_successor_boundary.npz"
+                    np.savez_compressed(
+                        successor_boundary,
+                        **{"before_" + k: v for k, v in profile_s["before"].items()},
+                        **{"after_" + k: v for k, v in profile_s["after"].items()},
+                        shadow_h=successor_shadow.state[0].numpy(),
+                        shadow_c=successor_shadow.state[1].numpy(),
+                        previous_executed_action=successor_shadow.previous_action,
+                    )
+                    successor_motor = successor_shadow.handoff(goal=goal_s, carry_memory=True)
+                    successor_handoff = dict(
+                        control=step,
+                        goal=goal_s.tolist(),
+                        shadow_observations=successor_shadow.observations,
+                        profile={
+                            k: v for k, v in profile_s.items() if k not in ("before", "after")
+                        },
+                        boundary=dict(
+                            path=str(successor_boundary.relative_to(a.output)),
+                            hash=digest(successor_boundary),
+                        ),
+                    )
+                successor_shadow_trace = None
+                if successor_shadow is not None and successor_motor is None:
+                    successor_shadow_trace = successor_shadow.observe()
+                    successor_shadow_trace["control"] = np.array(step)
+                    counts["passer_successor_shadow_inferences"] += 1
                 if receiver is None and ready:
                     # This switch is before mj_forward/proposals, at the exact
                     # preceding physical receipt. No mjData field is assigned.
@@ -1264,7 +1337,7 @@ def main():
                     else:
                         passer.begin_standing()
                 recovery_trace = None
-                if passer_recovery is not None:
+                if passer_recovery is not None and successor_motor is None:
                     q_a, v_a = w.layouts["a/"].canonical(w.data)
                     recovery_command = (
                         return_receive_command(
@@ -1302,7 +1375,19 @@ def main():
                     else -1
                 )
                 blend_active = 0 <= blend_index < 20
-                if passer_recovery is not None and passer_recovery.active and not blend_active:
+                if successor_motor is not None:
+                    if successor_motor.phase == "MOTION_COMPLETE":
+                        successor_motor.begin_standing()
+                    target_a, trace_a = successor_motor.propose()
+                    if (
+                        successor_handoff is not None
+                        and "first_target_jump_rad" not in successor_handoff
+                    ):
+                        assert successor_previous_target is not None
+                        successor_handoff["first_target_jump_rad"] = float(
+                            np.max(np.abs(target_a - successor_previous_target))
+                        )
+                elif passer_recovery is not None and passer_recovery.active and not blend_active:
                     if (a.passer_velocity_blend or a.passer_return_pair) and blend_index == 20:
                         w.switch_pd_profile("a/", passer_new_pd)
                     target_a, trace_a = recovery_target, None
@@ -1520,21 +1605,34 @@ def main():
                     if blend_active:
                         passer.commit_sim_transition(executed_action=executed_a, target=target_a)
                     else:
-                        passer.commit(
+                        (successor_motor if successor_motor is not None else passer).commit(
                             executed_action=executed_a if teacher_arm and active else None
                         )
-                if passer_recovery is not None:
+                if passer_recovery is not None and successor_motor is None:
                     recovery_row = passer_recovery.commit(
                         transition_target=np.asarray(target_a, np.float64) if blend_active else None
                     )
                     assert recovery_trace is not None
                     recovery_trace.update({k: np.asarray(v) for k, v in recovery_row.items()})
                     nn_passer_velocity.append(recovery_trace)
+                if successor_shadow_trace is not None:
+                    assert successor_shadow is not None
+                    successor_shadow.commit_actual()
+                    nn_successor_shadow.append(successor_shadow_trace)
                 passer_foot_seen = passer_foot_seen or bool(
                     (row["ball_forces"][:, 0, :2] > 10).any()
                 )
                 if return_readiness is not None:
                     return_alignment_active = return_readiness.update()
+                if a.passer_successor_pair and successor_motor is None:
+                    qa_gate, va_gate = w.layouts["a/"].canonical(w.data)
+                    aligned = (
+                        return_alignment_active
+                        and successor_alignment(
+                            qa_gate, va_gate, receiving_target_for_player(w, "b/")
+                        ).geometry_ready
+                    )
+                    successor_ready_count = successor_ready_count + 1 if aligned else 0
                 if a.passer_return_pair and receiver is not None:
                     return_seen = return_seen or return_strike_seen(
                         row["ball_forces"],
@@ -1623,6 +1721,7 @@ def main():
                     ("physics", physical),
                     ("passer_nn", nn_a),
                     ("passer_velocity", nn_passer_velocity),
+                    ("passer_successor_shadow", nn_successor_shadow),
                     ("receiver_velocity", nn_v),
                     ("receiver_shadow", nn_shadow),
                     ("receiver_return_nn", nn_b),
@@ -1691,6 +1790,7 @@ def main():
                 original_clean_foot_grade_not_changed=True,
                 whole_game_verified=False,
                 passer_velocity_recovery_boundary=passer_recovery_boundary,
+                passer_successor_handoff=successor_handoff,
                 passer_strike_teacher_commands=passer_strike_teacher.commands
                 if passer_strike_teacher is not None
                 else 0,
@@ -1721,7 +1821,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_PASSER_SUCCESSOR16_PENDING_OWN_REPLAY"
+                    if a.passer_successor_pair
+                    else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
                     if a.passer_return_align_pair
                     else "NEURAL_RELAY_PASSER_RETURN_PAIR16_PENDING_OWN_REPLAY"
                     if a.passer_return_pair

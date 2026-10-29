@@ -31,7 +31,8 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
-    return_align_pair = (
+    successor_pair = dec["protocol"] == "soccer.neural_relay_passer_successor.development.v37"
+    return_align_pair = successor_pair or (
         dec["protocol"] == "soccer.neural_relay_passer_return_alignment.development.v36"
     )
     return_pair = return_align_pair or (
@@ -168,7 +169,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_PASSER_SUCCESSOR16_PENDING_OWN_REPLAY"
+        if successor_pair
+        else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
         if return_align_pair
         else "NEURAL_RELAY_PASSER_RETURN_PAIR16_PENDING_OWN_REPLAY"
         if return_pair
@@ -268,6 +271,7 @@ def main():
             "soccer.neural_relay_receiver_coordinated_intercept.development.v34",
             "soccer.neural_relay_passer_return_pair.development.v35",
             "soccer.neural_relay_passer_return_alignment.development.v36",
+            "soccer.neural_relay_passer_successor.development.v37",
             "soccer.neural_relay_passer_velocity_recovery.development.v30",
             "soccer.neural_relay_passer_velocity_blend.development.v31",
             "soccer.neural_relay_receiver_leg_target_projection.development.v26",
@@ -305,7 +309,12 @@ def main():
                     receiver_foot_teacher_strength=0.5,
                     receiver_adaptive_intercept=True,
                     passer_velocity_recovery=True if return_align_pair else enabled,
-                    **({"passer_return_align": enabled} if return_align_pair else {}),
+                    **(
+                        {"passer_return_align": True if successor_pair else enabled}
+                        if return_align_pair
+                        else {}
+                    ),
+                    **({"passer_successor": enabled} if successor_pair else {}),
                 )
                 for enabled in (False, True)
             ]
@@ -532,6 +541,11 @@ def main():
             raise ValueError("explicit unlearned return role required")
         if return_align_pair and dec.get("passer_return_alignment_is_unlearned") is not True:
             raise ValueError("explicit unlearned return alignment required")
+        if successor_pair and (
+            dec.get("passer_successor_selection_is_unlearned") is not True
+            or dec.get("passer_successor_direct_profile_switch") is not True
+        ):
+            raise ValueError("explicit unlearned direct-switch successor required")
         if (
             longitudinal_authority
             and dec.get("longitudinal_intercept_is_unlearned_teacher") is not True
@@ -672,6 +686,8 @@ def main():
             artifacts.append(claim["handoff"]["boundary"])
         if claim.get("passer_velocity_recovery_boundary") is not None:
             artifacts.append(claim["passer_velocity_recovery_boundary"]["boundary"])
+        if claim.get("passer_successor_handoff") is not None:
+            artifacts.append(claim["passer_successor_handoff"]["boundary"])
         for artifact in artifacts:
             if artifact is None:
                 continue
@@ -705,6 +721,8 @@ def main():
         counts["passer_velocity_inferences"] = 0
     if passer_velocity_blend:
         counts["passer_blend_actor_inferences"] = 0
+    if successor_pair:
+        counts["passer_successor_shadow_inferences"] = 0
     if whole_identity or exploration or learned_pair:
         counts.update(receiver_onnx_calls=0, receiver_plastic_calls=0, receiver_anchor_calls=0)
     if exploration or learned_exploration:
@@ -847,6 +865,9 @@ def main():
             nn["passer_velocity"] = (
                 load(claim, "passer_velocity") if passer_velocity_recovery else {}
             )
+            nn["passer_successor_shadow"] = (
+                load(claim, "passer_successor_shadow") if successor_pair else {}
+            )
             segment = motion_segment(ep.clip, course["arm"]["start"])
             kwargs = dict(
                 torso_index=ep.torso_index,
@@ -870,6 +891,18 @@ def main():
                 clip=segment,
                 goal=receiving_target_for_player(w, "a/"),
                 **kwargs,
+            )
+            successor_shadow = (
+                SharedShadowMotor(
+                    w,
+                    "a/",
+                    actor,
+                    clip=segment,
+                    goal=receiving_target_for_player(w, "b/"),
+                    **kwargs,
+                )
+                if successor_pair
+                else None
             )
             velocity = setup.velocity()
             passer_recovery = None
@@ -932,6 +965,9 @@ def main():
             return_seen = False
             return_readiness = None
             return_alignment_active = False
+            successor_motor = None
+            successor_ready_count = 0
+            successor_previous_target = None
             passer_exit_gate = PasserContactExitGate()
             handoff_control = None
             transition_start_action = None
@@ -942,8 +978,47 @@ def main():
             passer_recovery_start = None
             largest_jump = 0.0
             physical = []
-            vi = bi = ai = pvi = 0
+            vi = bi = ai = pvi = ssi = 0
             for step in range(len(raw["qpos"])):
+                if (
+                    course["arm"].get("passer_successor", False)
+                    and successor_motor is None
+                    and successor_ready_count >= 10
+                ):
+                    assert successor_shadow is not None
+                    successor_previous_target = w.last_applied_target("a/").copy()
+                    boundary_s = w.switch_pd_profile(
+                        "a/", NativePDParameters(ep.kp, ep.kd, ep.effort)
+                    )
+                    h_s = claim.get("passer_successor_handoff")
+                    goal_s = receiving_target_for_player(w, "b/")
+                    if (
+                        h_s is None
+                        or h_s["control"] != step
+                        or h_s["goal"] != goal_s.tolist()
+                        or h_s["shadow_observations"] != successor_shadow.observations
+                    ):
+                        raise ValueError("own successor handoff differs")
+                    with np.load(a.source_root / h_s["boundary"]["path"], allow_pickle=False) as z:
+                        for side in ("before", "after"):
+                            for k, value in boundary_s[side].items():
+                                if not np.array_equal(value, z[side + "_" + k]):
+                                    raise ValueError("successor profile differs")
+                        for k, value in dict(
+                            shadow_h=successor_shadow.state[0].numpy(),
+                            shadow_c=successor_shadow.state[1].numpy(),
+                            previous_executed_action=successor_shadow.previous_action,
+                        ).items():
+                            if not np.array_equal(value, z[k]):
+                                raise ValueError("successor private history differs")
+                    successor_motor = successor_shadow.handoff(goal=goal_s, carry_memory=True)
+                successor_shadow_trace = None
+                if successor_shadow is not None and successor_motor is None:
+                    successor_shadow_trace = successor_shadow.observe()
+                    successor_shadow_trace["control"] = np.array(step)
+                    equal_trace(successor_shadow_trace, nn["passer_successor_shadow"], ssi)
+                    ssi += 1
+                    counts["passer_successor_shadow_inferences"] += 1
                 if receiver is None and ready:
                     boundary = w.switch_pd_profile(
                         "b/", NativePDParameters(ep.kp, ep.kd, ep.effort)
@@ -1024,7 +1099,7 @@ def main():
                     else:
                         passer.begin_standing()
                 recovery_trace = None
-                if passer_recovery is not None:
+                if passer_recovery is not None and successor_motor is None:
                     q_a, v_a = w.layouts["a/"].canonical(w.data)
                     recovery_command = (
                         return_receive_command(
@@ -1061,7 +1136,18 @@ def main():
                     else -1
                 )
                 blend_active = 0 <= blend_index < 20
-                if passer_recovery is not None and passer_recovery.active and not blend_active:
+                if successor_motor is not None:
+                    if successor_motor.phase == "MOTION_COMPLETE":
+                        successor_motor.begin_standing()
+                    target_a, trace = successor_motor.propose()
+                    if step == claim["passer_successor_handoff"]["control"]:
+                        assert successor_previous_target is not None
+                        if (
+                            float(np.max(np.abs(target_a - successor_previous_target)))
+                            != claim["passer_successor_handoff"]["first_target_jump_rad"]
+                        ):
+                            raise ValueError("own successor first target jump differs")
+                elif passer_recovery is not None and passer_recovery.active and not blend_active:
                     if passer_velocity_blend and blend_index == 20:
                         w.switch_pd_profile("a/", passer_new_pd)
                     target_a, trace = recovery_target, None
@@ -1276,10 +1362,10 @@ def main():
                     if blend_active:
                         passer.commit_sim_transition(executed_action=executed_a, target=target_a)
                     else:
-                        passer.commit(
+                        (successor_motor if successor_motor is not None else passer).commit(
                             executed_action=executed_a if teacher_arm and active else None
                         )
-                if passer_recovery is not None:
+                if passer_recovery is not None and successor_motor is None:
                     recovery_row = passer_recovery.commit(
                         transition_target=np.asarray(target_a, np.float64) if blend_active else None
                     )
@@ -1287,11 +1373,23 @@ def main():
                     recovery_trace.update({k: np.asarray(v) for k, v in recovery_row.items()})
                     equal_trace(recovery_trace, nn["passer_velocity"], pvi)
                     pvi += 1
+                if successor_shadow_trace is not None:
+                    assert successor_shadow is not None
+                    successor_shadow.commit_actual()
                 passer_foot_seen = passer_foot_seen or bool(
                     (row["ball_forces"][:, 0, :2] > 10).any()
                 )
                 if return_readiness is not None:
                     return_alignment_active = return_readiness.update()
+                if successor_pair and successor_motor is None:
+                    qa_gate, va_gate = w.layouts["a/"].canonical(w.data)
+                    aligned = (
+                        return_alignment_active
+                        and successor_alignment(
+                            qa_gate, va_gate, receiving_target_for_player(w, "b/")
+                        ).geometry_ready
+                    )
+                    successor_ready_count = successor_ready_count + 1 if aligned else 0
                 if return_pair and receiver is not None:
                     return_seen = return_seen or return_strike_seen(
                         row["ball_forces"],
@@ -1375,12 +1473,26 @@ def main():
                 or len(nn["receiver_velocity"].get("control", [])) != vi
                 or len(nn["receiver_shadow"].get("control", [])) != vi
                 or len(nn["receiver_return_nn"].get("control", [])) != bi
+                or (successor_pair and len(nn["passer_successor_shadow"].get("control", [])) != ssi)
+                or (
+                    successor_pair
+                    and bool(claim.get("passer_successor_handoff"))
+                    != bool(successor_motor is not None)
+                )
             ):
                 raise ValueError("complete neural horizons or final online transition differ")
             if passer_velocity_recovery and (
                 bool(claim.get("passer_velocity_recovery_boundary"))
                 != bool(passer_recovery is not None and passer_recovery.active)
-                or (passer_recovery is not None and pvi != w.control_steps)
+                or (
+                    passer_recovery is not None
+                    and pvi
+                    != (
+                        w.control_steps
+                        if successor_motor is None
+                        else claim["passer_successor_handoff"]["control"]
+                    )
+                )
                 or (passer_recovery is None and pvi != 0)
             ):
                 raise ValueError("complete own passer shadow and actual handoff required")
