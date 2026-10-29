@@ -6,7 +6,17 @@ from pathlib import Path
 
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_mjlab_stage1_training_smoke import file_digest
-from scripts.rsi_native_fresh_common import clean
+from scripts.rsi_native_context_recovery_common import check_pins
+from scripts.rsi_native_fresh_common import clean, source_pins
+
+
+def ball_fixture(fixture, *, standard_ball: bool):
+    """Opt in to jointly changed ball size and mass; leave legacy default intact."""
+    if type(standard_ball) is not bool:
+        raise ValueError("explicit boolean standard-ball selector required")
+    if not standard_ball:
+        return fixture
+    return replace(fixture, goal=replace(fixture.goal, ball_radius_m=0.110, ball_mass_kg=0.430))
 
 
 def main():
@@ -23,6 +33,7 @@ def main():
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--exploration-seed", type=int, choices=(24001, 24002))
     p.add_argument("--only-explore-after-return", action="store_true")
+    p.add_argument("--standard-ball", action="store_true")
     a = p.parse_args()
     if bool(a.returned_policy) != bool(a.returned_policy_hash):
         raise ValueError("returned candidate and exact digest required together")
@@ -30,6 +41,8 @@ def main():
         raise ValueError("gated candidate comparison must be deterministic")
     if a.only_explore_after_return and a.exploration_seed is None:
         raise ValueError("returned-live exploration requires an explicit seed")
+    if a.standard_ball and a.core_source is None:
+        raise ValueError("standard-ball experiment requires pinned ROSClaw core source")
     clean(a.expected_head)
     if a.output.resolve().is_relative_to(Path.cwd()) or a.output.resolve().is_relative_to(
         a.asset_root.resolve()
@@ -50,6 +63,18 @@ def main():
         if not (core / "__init__.py").is_file():
             raise ValueError("explicit ROSClaw core source required")
         core_pins = {str(path): file_digest(path) for path in core.rglob("*.py")}
+    experiment_pins = {}
+    if a.standard_ball:
+        files = [path for path in a.asset_root.rglob("*") if path.is_file()]
+        if not files or any(path.is_symlink() for path in files):
+            raise ValueError("standard-ball smoke requires ordinary pinned asset files")
+        experiment_pins = {str(path): file_digest(path) for path in files}
+        experiment_pins.update(core_pins)
+        experiment_pins.update({str(a.protocol): a.protocol_hash, str(a.policy): a.policy_hash})
+        if a.returned_policy is not None:
+            experiment_pins[str(a.returned_policy)] = a.returned_policy_hash
+        source_pins(experiment_pins)
+        check_pins(experiment_pins)
     a.output.mkdir(parents=True, exist_ok=False)
     write_once(
         a.output / "declaration.json",
@@ -60,6 +85,8 @@ def main():
             returned_policy_hash=a.returned_policy_hash,
             core_source_hashes=core_pins,
             mode="ASSISTED_TRAINING_ONLY",
+            standard_ball=a.standard_ball,
+            standard_ball_input_pins=experiment_pins,
             exploration_seed=a.exploration_seed,
             only_explore_after_return=a.only_explore_after_return,
             exploration_agent_ids=(
@@ -95,7 +122,10 @@ def main():
         from rosclaw_soccer.training.returned_ball_learning import returned_ball_segments
         from rosclaw_soccer.world.training_ball_return import TrainingBallReturnConfig
 
-        fixture = build_four_vs_four_fixture(a.asset_root, basic_ball_play=True)
+        fixture = ball_fixture(
+            build_four_vs_four_fixture(a.asset_root, basic_ball_play=True),
+            standard_ball=a.standard_ball,
+        )
         fixture = replace(
             fixture,
             cells=tuple(
@@ -126,6 +156,31 @@ def main():
         world, teacher = ContactControlProfile(strike_residual_enabled=True).apply(
             world, G1LocomotionContactTeacherConfig()
         )
+        dimensions = None
+        model_hash = None
+        if a.standard_ball:
+            import mujoco
+
+            from rosclaw_soccer.physics.native_ball_dimensions import inspect_native_ball_dimensions
+            from rosclaw_soccer.sim.physical_checkpoint import compiled_model_hash
+            from rosclaw_soccer.world.multi_player import build_g1_multi_player_stadium_model
+
+            model = build_g1_multi_player_stadium_model(
+                a.asset_root,
+                players=fixture.players,
+                spec=fixture.goal,
+                left_goal_plane_x_m=world.left_goal_plane_x_m,
+            )
+            model.opt.timestep = 0.002
+            if world.glove_material is not None:
+                for player in fixture.players:
+                    if player.goalkeeper_gloves:
+                        world.glove_material.apply(model, prefix=player.body_prefix)
+            geom = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "ball_geom")
+            dimensions = inspect_native_ball_dimensions(model, geom_id=geom)
+            if dimensions.radius_m != 0.110 or dimensions.body_mass_kg != 0.430:
+                raise ValueError("compiled standard-sized sphere mismatch")
+            model_hash = compiled_model_hash(model)
         option = default_continuous_match_options(world)
         policy = NearBallResidualPolicy.load(a.policy)
         returned_policy = (
@@ -152,7 +207,10 @@ def main():
                     ("blue.playmaker", "red.finisher") if a.exploration_seed is not None else None
                 ),
                 near_ball_explore_after_return=a.only_explore_after_return,
+                capture_initial_physics=a.standard_ball,
             )
+            if a.standard_ball and trace["initial_physics_hash"][0] != model_hash:
+                raise ValueError("actual physical model differs from compiled preflight")
             sampled_by_role = None
             if a.exploration_seed is not None:
                 _validate_on_policy(policy, trace)
@@ -205,6 +263,8 @@ def main():
             raise ValueError("input changed during simulation")
         if any(file_digest(Path(path)) != h for path, h in core_pins.items()):
             raise ValueError("pinned core changed during simulation")
+        if a.standard_ball:
+            check_pins(experiment_pins)
         clean(a.expected_head)
         write_once(
             a.output / "complete.json",
@@ -226,6 +286,9 @@ def main():
                 ),
                 external_ball_state_write=True,
                 external_returns_are_player_passes=False,
+                standard_ball=a.standard_ball,
+                ball_dimensions=None if dimensions is None else asdict(dimensions),
+                compiled_model_hash=model_hash,
                 promotion_authorized=False,
                 hardware_authorized=False,
             ),
