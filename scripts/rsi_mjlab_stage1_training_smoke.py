@@ -72,6 +72,9 @@ def main():
     agent.seed = 20261029
     agent.num_steps_per_env = 24
     agent.max_iterations = 2
+    # Local-only logs; the reference default WandB adapter is incompatible
+    # with the installed WandB Settings API and is unnecessary for this smoke.
+    agent.logger = "tensorboard"
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
