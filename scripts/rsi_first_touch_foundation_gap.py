@@ -21,6 +21,8 @@ def main():
         p.add_argument("--" + key, required=True)
     p.add_argument("--source", type=Path, action="append", required=True)
     p.add_argument("--declaration-hash", required=True)
+    p.add_argument("--experimental-evidence", type=Path)
+    p.add_argument("--experimental-evidence-hash")
     a = p.parse_args()
     clean(a.expected_head)
     if len(a.source) != 4 or a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
@@ -41,6 +43,17 @@ def main():
             raise ValueError("original source mismatch")
         sources.append(json.loads(path.read_text()))
     pins = json.loads(declaration.read_text())["input_file_hashes"]
+    if (a.experimental_evidence is None) != (a.experimental_evidence_hash is None):
+        raise ValueError("experimental codec requires explicit evidence and hash")
+    fast_assets, fast_pins = {}, {}
+    if a.experimental_evidence is not None:
+        from rosclaw_soccer.rsi.experimental_velocity_evidence import admit_heading_evidence
+
+        if pins.get(str(a.experimental_evidence)) != a.experimental_evidence_hash:
+            raise ValueError("source-bound experimental codec evidence required")
+        fast_assets, fast_pins = admit_heading_evidence(
+            a.experimental_evidence, a.experimental_evidence_hash
+        )
 
     def asset(suffix):
         found = [(Path(path), digest) for path, digest in pins.items() if path.endswith(suffix)]
@@ -54,6 +67,9 @@ def main():
     import mujoco
 
     from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
+    from rosclaw_soccer.providers.g1.experimental_velocity_envelope import (
+        ExperimentalVelocityEnvelopeStream,
+    )
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.observed_velocity_continuation import ObservedVelocityContinuation
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
@@ -96,13 +112,23 @@ def main():
             if not admitted:
                 continue
             try:
-                stream = ContinuousVelocityStream(
-                    velocity,
-                    config,
+                stream_kwargs = dict(
                     expected_model_hash=velocity_hash,
                     expected_config_hash=config_hash,
                     horizon_controls=360,
                 )
+                if info["experimental_fast_approach"]:
+                    if not fast_assets:
+                        raise ValueError("source-bound experimental codec not admitted")
+                    stream = ExperimentalVelocityEnvelopeStream(
+                        velocity,
+                        config,
+                        **stream_kwargs,
+                        reference_source=fast_assets["reference_source"],
+                        expected_reference_hash=fast_assets["reference_hash"],
+                    )
+                else:
+                    stream = ContinuousVelocityStream(velocity, config, **stream_kwargs)
                 shadow = ObservedVelocityContinuation(stream)
                 data = mujoco.MjData(model)
                 lo = NativeVelocityLayout(model, robot_prefix="a/", ball_body_name="soccer_ball")
@@ -180,6 +206,7 @@ def main():
             file_digest(path) != h
             for path, h in ((scene, scene_hash), (velocity, velocity_hash), (config, config_hash))
         )
+        or any(file_digest(Path(path)) != digest for path, digest in fast_pins.items())
     ):
         raise ValueError("source changed during audit")
     write_once(
