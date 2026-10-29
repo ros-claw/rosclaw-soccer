@@ -7,7 +7,9 @@ import sys
 from pathlib import Path
 
 
-def validate_replay_binding(root, replay, pins, *, source_head, external_head, early_cftrack=False):
+def validate_replay_binding(
+    root, replay, pins, *, source_head, external_head, early_cftrack=False, protocol_hash=None
+):
     """Reject missing or changed completed source commitments before replay."""
     from scripts.rsi_native_context_recovery_common import digest
 
@@ -26,6 +28,7 @@ def validate_replay_binding(root, replay, pins, *, source_head, external_head, e
         or source_declaration.get("source_head") != source_head
         or source_declaration.get("external_head") != external_head
         or source_declaration.get("early_cftrack", False) is not early_cftrack
+        or source_declaration.get("protocol_hash") != protocol_hash
     ):
         raise ValueError("exact original source and external asset pins required for replay")
 
@@ -39,6 +42,8 @@ def main():
     p.add_argument("--replay-source", type=Path)
     p.add_argument("--replay-source-hash")
     p.add_argument("--early-cftrack", action="store_true")
+    p.add_argument("--protocol-file", type=Path)
+    p.add_argument("--protocol-hash")
     a = p.parse_args()
     if (a.replay_source is None) != (a.replay_source_hash is None):
         p.error("replay requires the exact source receipt hash")
@@ -47,6 +52,16 @@ def main():
     from scripts.rsi_native_fresh_common import admit_frontier, clean, receipt, source_pins
 
     clean(a.expected_head)
+    if a.early_cftrack:
+        if (
+            a.protocol_file is None
+            or a.protocol_hash is None
+            or a.protocol_file.is_symlink()
+            or digest(a.protocol_file) != a.protocol_hash
+        ):
+            raise ValueError("early study requires exact frozen protocol bytes")
+    elif a.protocol_file is not None or a.protocol_hash is not None:
+        raise ValueError("protocol commitment is exclusive to the early study")
     external = a.external_source.resolve()
     if (
         a.output.exists()
@@ -103,6 +118,7 @@ def main():
             source_head=a.expected_head,
             external_head=a.external_head,
             early_cftrack=a.early_cftrack,
+            protocol_hash=a.protocol_hash,
         )
     import numpy as np
 
@@ -176,6 +192,7 @@ def main():
         dict(
             protocol="soccer.shared_cftrack_relay.development.v1",
             early_cftrack=a.early_cftrack,
+            protocol_hash=a.protocol_hash,
             source_head=a.expected_head,
             external_head=a.external_head,
             input_file_hashes=pins,
@@ -280,6 +297,8 @@ def main():
             flush=True,
         )
     check_pins(pins)
+    if a.early_cftrack and digest(a.protocol_file) != a.protocol_hash:
+        raise ValueError("early study protocol changed during collection")
     clean(a.expected_head)
     write_once(
         a.output / "complete.json",

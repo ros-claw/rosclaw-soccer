@@ -40,7 +40,7 @@ def compare_prefix(left, right, fields, controls):
             raise ValueError("actual paired prefix differs")
 
 
-def own_report(source, audit, source_hash, audit_hash, *, early_cftrack=False):
+def own_report(source, audit, source_hash, audit_hash, *, early_cftrack=False, protocol_hash=None):
     source_path, audit_path = source / "complete.json", audit / "complete.json"
     if (
         any(x.is_symlink() for x in (source_path, audit_path))
@@ -91,6 +91,7 @@ def own_report(source, audit, source_hash, audit_hash, *, early_cftrack=False):
         declarations[0].get("input_file_hashes") != declarations[1].get("input_file_hashes")
         or original["scene_hash"] != replay["scene_hash"]
         or any(d.get("early_cftrack", False) is not early_cftrack for d in declarations)
+        or any(d.get("protocol_hash") != protocol_hash for d in declarations)
     ):
         raise ValueError("exact original source assets and compiled scene required")
     for i, (x, y) in enumerate(zip(original["records"], replay["records"], strict=True)):
@@ -177,12 +178,29 @@ def main():
     for flag in ("source-hash", "audit-hash", "prior-audit-hash", "expected-head"):
         p.add_argument("--" + flag, required=True)
     p.add_argument("--early-cftrack", action="store_true")
+    p.add_argument("--protocol-file", type=Path)
+    p.add_argument("--protocol-hash")
     a = p.parse_args()
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("unused external output required")
+    if a.early_cftrack:
+        if (
+            a.protocol_file is None
+            or a.protocol_hash is None
+            or a.protocol_file.is_symlink()
+            or digest(a.protocol_file) != a.protocol_hash
+        ):
+            raise ValueError("exact frozen early study protocol required")
+    elif a.protocol_file is not None or a.protocol_hash is not None:
+        raise ValueError("protocol commitment is exclusive to the early study")
     current = own_report(
-        a.source, a.audit, a.source_hash, a.audit_hash, early_cftrack=a.early_cftrack
+        a.source,
+        a.audit,
+        a.source_hash,
+        a.audit_hash,
+        early_cftrack=a.early_cftrack,
+        protocol_hash=a.protocol_hash,
     )
     prior, _, ph = report(
         a.prior,
@@ -252,6 +270,8 @@ def main():
         )
     if digest(scene) != scene_hash:
         raise ValueError("scene changed during review")
+    if a.early_cftrack and digest(a.protocol_file) != a.protocol_hash:
+        raise ValueError("early study protocol changed during review")
     clean(a.expected_head)
     a.output.parent.mkdir(parents=True, exist_ok=True)
     write_once(
@@ -265,6 +285,7 @@ def main():
             prior_hash=ph,
             prior_audit_hash=a.prior_audit_hash,
             scene_hash=scene_hash,
+            protocol_hash=a.protocol_hash,
             code_head=a.expected_head,
             rows=rows,
             hardware_authorized=False,

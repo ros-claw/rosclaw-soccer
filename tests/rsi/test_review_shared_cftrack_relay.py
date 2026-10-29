@@ -37,6 +37,15 @@ def test_replay_rejects_unbound_or_mutated_source_scene(tmp_path):
             external_head="external",
             early_cftrack=True,
         )
+    with pytest.raises(ValueError, match="exact original"):
+        validate_replay_binding(
+            tmp_path,
+            receipt,
+            pins,
+            source_head="head",
+            external_head="external",
+            protocol_hash="sha256:unexpected",
+        )
     with pytest.raises(ValueError, match="bound"):
         validate_replay_binding(tmp_path, {}, pins, source_head="head", external_head="external")
     scene.write_text("<mujoco model='changed'/>")
