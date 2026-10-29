@@ -20,6 +20,7 @@ from rosclaw_soccer.providers.g1.velocity_policy import (
 )
 from rosclaw_soccer.rsi.anchored_receiving_motor import AnchoredReceivingMotor
 from rosclaw_soccer.rsi.bounded_motor_exploration import motor_box
+from rosclaw_soccer.rsi.precontact_receiving_motor import PrecontactReceivingMotor
 from rosclaw_soccer.rsi.receiver_body_context import receiver_context14
 from rosclaw_soccer.rsi.relay_audit_clock import RelayAuditClock
 from rosclaw_soccer.rsi.shared_native_motor_world import SharedNativeMotorWorld
@@ -47,7 +48,7 @@ class SharedNativeReceivingPlayer:
             or world.control_steps != 0
             or type(horizon_controls) is not int
             or not 1 <= horizon_controls <= 400
-            or type(actor) is not AnchoredReceivingMotor
+            or type(actor) not in (AnchoredReceivingMotor, PrecontactReceivingMotor)
             or actor.training
             or any(p.requires_grad or p.device.type != "cpu" for p in actor.parameters())
         ):

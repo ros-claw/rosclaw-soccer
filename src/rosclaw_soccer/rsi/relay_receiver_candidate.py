@@ -23,6 +23,7 @@ def load_research_receiver(
     continuation_mode: bool = False,
     functional_mode: bool = False,
     functional_timed_mode: bool = False,
+    precontact_mode: bool = False,
 ):
     if (
         type(dense_mode) is not bool
@@ -30,6 +31,8 @@ def load_research_receiver(
         or type(continuation_mode) is not bool
         or type(functional_mode) is not bool
         or type(functional_timed_mode) is not bool
+        or type(precontact_mode) is not bool
+        or (precontact_mode and not functional_timed_mode)
         or (functional_timed_mode and not functional_mode)
         or (functional_mode and (not dense_mode or motion_mode or continuation_mode))
         or (motion_mode and not dense_mode)
@@ -98,7 +101,9 @@ def load_research_receiver(
     if (
         review.get("status")
         != (
-            "FUNCTIONAL_TIMED_RECEIVER_CANDIDATE_READBACK_MATCH"
+            "PRECONTACT_RECEIVER_CANDIDATE_READBACK_MATCH"
+            if precontact_mode
+            else "FUNCTIONAL_TIMED_RECEIVER_CANDIDATE_READBACK_MATCH"
             if functional_timed_mode
             else "FUNCTIONAL_RECEIVER_CANDIDATE_READBACK_MATCH"
             if functional_mode
@@ -142,13 +147,17 @@ def load_research_receiver(
             and (
                 state.get("feedback_profile")
                 != (
-                    "functional-receive-timed-proxy-v2"
+                    "precontact-force-timed-v1"
+                    if precontact_mode
+                    else "functional-receive-timed-proxy-v2"
                     if functional_timed_mode
                     else "functional-receive-proxy-v1"
                 )
                 or review.get("feedback_profile")
                 != (
-                    "functional-receive-timed-proxy-v2"
+                    "precontact-force-timed-v1"
+                    if precontact_mode
+                    else "functional-receive-timed-proxy-v2"
                     if functional_timed_mode
                     else "functional-receive-proxy-v1"
                 )
@@ -171,6 +180,12 @@ def load_research_receiver(
     ):
         raise ValueError("unpromoted SIM research checkpoint required")
     actor = zero_receiver_actor(setup)
+    if precontact_mode:
+        from rosclaw_soccer.rsi.precontact_receiving_motor import PrecontactReceivingMotor
+
+        actor = (
+            PrecontactReceivingMotor(actor.plastic, actor.action_scale).eval().requires_grad_(False)
+        )
     actor.plastic.load_state_dict(state["actor"], strict=True)
     if any(not torch.isfinite(p).all() for p in actor.parameters()):
         raise ValueError("finite candidate required")
