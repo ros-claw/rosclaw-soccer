@@ -70,7 +70,7 @@ def main():
     from rosclaw_soccer.training.continuous_match_residual_ppo import collection_fixture
     from rosclaw_soccer.training.receiving_classroom import (
         coached_receiving_cells,
-        r0_receiving_configuration,
+        r1_contact_tap_receiving_configuration,
     )
     from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
     from rosclaw_soccer.training.receiving_experiment import simulate_r0_receiving_course
@@ -83,7 +83,7 @@ def main():
     courses = airborne_receiving_course_bank()
     bank_hash = preflight_receiving_courses(courses)
     fixture = collection_fixture(assets, keeper_preview=True)
-    world, _ = r0_receiving_configuration()
+    world, _ = r1_contact_tap_receiving_configuration()
     qualification = qualify_g1_assets(assets)
     qualification.require_eligible()
     model = build_g1_multi_player_stadium_model(
@@ -152,6 +152,7 @@ def main():
             ball_dimensions=asdict(dimensions),
             input_file_hashes=pins,
             coach_assigned_receive=True,
+            classroom_profile="R1_CONTACT_TAP",
             promotion_authorized=False,
             hardware_authorized=False,
         ),
@@ -167,6 +168,7 @@ def main():
                     reference_policy_path=a.policy,
                     course=course,
                     scenario_id=f"s199.airborne-receive-{course.seed}",
+                    configuration_profile="R1_CONTACT_TAP",
                 )
                 if str(trace["initial_integration_hash"][0]) != starts[course.seed]:
                     raise ValueError("actual initial state differs from whole-bank preflight")
@@ -201,6 +203,7 @@ def main():
                 shard=a.shard,
                 records=records,
                 coach_assigned_receive=True,
+                classroom_profile="R1_CONTACT_TAP",
                 promotion_authorized=False,
                 hardware_authorized=False,
             ),
