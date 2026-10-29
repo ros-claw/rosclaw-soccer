@@ -29,6 +29,7 @@ def main():
     p.add_argument("--parent-hash", required=True)
     p.add_argument("--anchor-data", type=Path, required=True)
     p.add_argument("--anchor-data-hash", required=True)
+    p.add_argument("--safe-continuation", action="store_true")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
@@ -77,7 +78,13 @@ def main():
     for group, ah in zip(a.group, a.audit_hash, strict=True):
         root, audit = map(Path, group)
         source, _, sh = report(
-            root, audit, ah, "NEURAL_RELAY_CHILD_VELOCITY_SAMPLING32_PENDING_OWN_REPLAY", worlds=32
+            root,
+            audit,
+            ah,
+            "NEURAL_RELAY_CHILD_VELOCITY_CANDIDATE_SAMPLING32_PENDING_OWN_REPLAY"
+            if a.safe_continuation
+            else "NEURAL_RELAY_CHILD_VELOCITY_SAMPLING32_PENDING_OWN_REPLAY",
+            worlds=32,
         )
         blocks = tuple(sorted({r["course"]["context"] for r in source["records"]}))
         if blocks not in ((2, 3, 5, 7), (8, 9, 11, 13)) or blocks in seen:
@@ -90,6 +97,20 @@ def main():
             or input_pins.get(config) != ch
         ):
             raise ValueError("same actual behavior parent and motor identity required")
+        if a.safe_continuation:
+            import mujoco
+
+            from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+
+            scene = root / "scene.xml"
+            scene_hash = digest(scene)
+            if scene.is_symlink():
+                raise ValueError("exact native physics scene required")
+            native_model = mujoco.MjModel.from_xml_path(str(scene))
+            ball_v = NativeVelocityLayout(
+                native_model, robot_prefix="b/", ball_body_name="soccer_ball", player_count=2
+            ).bv
+            pins.append((scene, scene_hash))
         for row in source["records"]:
             seed = row["course"]["arm"]["exploration_seed"]
             if seed is None:
@@ -103,20 +124,57 @@ def main():
                 n = len(v["control"])
                 if not np.array_equal(v["control"], np.arange(n)) or not 1 <= n <= 300:
                     raise ValueError("exact complete sampled own control sequence required")
+                if a.safe_continuation and not v["candidate_actor_selected"].all():
+                    raise ValueError("all behavior actions must come from the exact candidate")
                 for index in range(n):
                     if not np.array_equal(
                         target29(v["SAM_executed_action"][index], params), raw["target_b"][index]
                     ):
                         raise ValueError("sampled B action must equal actual native target")
-                reward, events = full_history_precontact_feedback(
-                    raw["ball_forces"][:, :, 1, :], raw["body_failed"], controls=n
-                )
+                if a.safe_continuation:
+                    from rosclaw_soccer.rsi.receiver_safe_continuation_credit import (
+                        receiver_safe_continuation_credit,
+                    )
+
+                    h = row["handoff"]
+                    direction = (
+                        np.asarray(h["return_goal"][:2]) - np.asarray(h["kick_origin"][:2])
+                        if h is not None
+                        else np.array([1.0, 0.0])
+                    )
+                    direction /= np.linalg.norm(direction)
+                    reward, events = receiver_safe_continuation_credit(
+                        raw["ball_forces"],
+                        raw["qvel"],
+                        raw["body_failed"],
+                        termination=row["termination"],
+                        controls=n,
+                        handoff_control=h["control"] if h is not None else None,
+                        ball_velocity_index=ball_v,
+                        return_direction=direction,
+                        excluded_contact_observed=bool(row["result"]["excluded_contact_bodies"]),
+                    )
+                else:
+                    reward, events = full_history_precontact_feedback(
+                        raw["ball_forces"][:, :, 1, :], raw["body_failed"], controls=n
+                    )
                 returns, running = np.empty(n, np.float32), 0.0
                 for index in range(n - 1, -1, -1):
                     running = float(reward[index]) + 0.99 * running
                     returns[index] = running
+                if (
+                    a.safe_continuation
+                    and (
+                        row["termination"] == "BODY_FAILURE"
+                        or row["result"]["excluded_contact_bodies"]
+                    )
+                    and (returns > 1e-7).any()
+                ):
+                    raise ValueError("observed failed episodes cannot receive positive returns")
+
                 def t(x):
                     return torch.from_numpy(np.asarray(x, np.float32).copy())
+
                 e = dict(
                     observations=t(np.concatenate((v["obs"], v["context14"]), axis=1)),
                     actions=t(v["SAM_executed_action"]),
@@ -135,7 +193,8 @@ def main():
                 )
                 episodes.append(e)
                 for event in events["events"]:
-                    event_counts[event] += 1
+                    if not a.safe_continuation or events["events"][event]["accepted"]:
+                        event_counts[event] += 1
                 rows.append(
                     dict(
                         context=row["course"]["context"],
@@ -144,6 +203,9 @@ def main():
                         controls=n,
                         termination=row["termination"],
                         events=events,
+                        initial_return=float(returns[0]),
+                        full_600_safety_censored=row["termination"]
+                        == "NO_RECEIVING_HANDOFF_WITHIN_ORIGINAL_VELOCITY_H300",
                         source_physics_hash=digest(pp),
                         source_velocity_hash=digest(vp),
                     )
@@ -227,6 +289,7 @@ def main():
             checkpoint_hash=digest(dest),
             episodes=len(episodes),
             sampled_controls=len(observations),
+            reward_contract="safe-continuation-v2" if a.safe_continuation else "precontact-v1",
             gated_controls=gated_controls,
             event_counts=dict(event_counts),
             critic_updates=3,
