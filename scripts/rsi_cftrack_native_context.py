@@ -5,6 +5,7 @@ initial state is a new declared episode, never a reset of a running world.
 """
 
 import sys
+from pathlib import Path
 
 
 def build_cold_cftrack(scene_text, external, *, direct_approach):
@@ -67,10 +68,21 @@ def build_cold_cftrack(scene_text, external, *, direct_approach):
     return player, commitment, receipt
 
 
-def build_reference_cftrack(scene_text, external, reference_path, *, ground_zero_spin):
+def build_reference_cftrack(
+    scene_text, external, reference_path, *, ground_zero_spin, reuse_qualified_imports=False
+):
     """Construct one cold reference-initialized private SIM world after source admission."""
-    if any(name in sys.modules for name in ("common", "policy", "FSM")):
+    loaded = any(name in sys.modules for name in ("common", "policy", "FSM"))
+    if type(reuse_qualified_imports) is not bool or (loaded and not reuse_qualified_imports):
         raise ValueError("isolated source-qualified CFtrack import namespace required")
+    if loaded:
+        required = ("common.ctrlcomp", "policy.omnicontact.OmniContact")
+        if any(
+            name not in sys.modules
+            or not Path(sys.modules[name].__file__).resolve().is_relative_to(external.resolve())
+            for name in required
+        ):
+            raise ValueError("reused imports must originate in the exact qualified checkout")
     if type(ground_zero_spin) is not bool:
         raise ValueError("explicit initial ball factor required")
     import mujoco
