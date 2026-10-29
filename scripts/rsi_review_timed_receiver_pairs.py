@@ -30,7 +30,7 @@ def main() -> None:
     clean(a.expected_head)
     if len(a.group) != 9 or a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("nine complete paired groups and unused external output required")
-    results, pins, seen = [], [], set()
+    results, pins, provenance, seen = [], [], [], set()
     for seed_s, block_s, root_s, audit_s, audit_hash in a.group:
         seed, block = int(seed_s), int(block_s)
         if seed not in (92401, 92402, 92403) or block not in (0, 1, 2) or (seed, block) in seen:
@@ -65,6 +65,19 @@ def main() -> None:
         if scene.is_symlink():
             raise ValueError("physical scene must not be a symlink")
         scene_hash = digest(scene)
+        provenance.append(
+            dict(
+                seed=seed,
+                block=block,
+                source_root=str(root),
+                source_hash=source_hash,
+                audit_path=str(audit),
+                audit_hash=audit_hash,
+                declaration_hash=source["declaration_hash"],
+                scene_hash=scene_hash,
+                candidate_audit_hash=decl["receiver_candidate_audit_hash"],
+            )
+        )
         model = mujoco.MjModel.from_xml_path(str(scene))
         layout = NativeVelocityLayout(
             model, robot_prefix="b/", ball_body_name="soccer_ball", player_count=2
@@ -170,6 +183,7 @@ def main() -> None:
             status="TIMED_RECEIVER_PAIR_REPLAYED_DEVELOPMENT_NOT_PROMOTED",
             source_head=a.expected_head,
             summaries=summaries,
+            provenance=provenance,
             records=results,
             own_replay_not_independent_simulator=True,
             reused_development_contexts=True,
