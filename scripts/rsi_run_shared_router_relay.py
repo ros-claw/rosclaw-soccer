@@ -44,8 +44,40 @@ def main():
     p.add_argument("--recovery-world-hash", required=True)
     p.add_argument("--recovery-protocol", type=Path, required=True)
     p.add_argument("--recovery-protocol-hash", required=True)
+    p.add_argument("--passer-recovery-pair", action="store_true")
+    p.add_argument("--study-protocol", type=Path)
+    p.add_argument("--study-protocol-hash")
+    p.add_argument("--baseline-root", type=Path)
+    p.add_argument("--baseline-hash")
     a = p.parse_args()
     clean(a.expected_head)
+    study_fields = (a.study_protocol, a.study_protocol_hash, a.baseline_root, a.baseline_hash)
+    if a.passer_recovery_pair != all(study_fields) or (
+        not a.passer_recovery_pair and any(study_fields)
+    ):
+        raise ValueError("passer recovery requires exact study protocol and baseline")
+    if a.passer_recovery_pair:
+        if (
+            a.study_protocol_hash
+            != "sha256:0a0ec2f59e9f94461b2a1f728cb4fb5d60f63fe33fcf34c54b42d484cdbd4b88"
+            or a.baseline_hash
+            != "sha256:93bf688c6e35c302c4a61be0e86f690227fe5a1084d04a08e127c8d27571f8bd"
+        ):
+            raise ValueError("exact preregistration and historical baseline required")
+        baseline_file = a.baseline_root / "complete.json"
+        if (
+            a.study_protocol.is_symlink()
+            or digest(a.study_protocol) != a.study_protocol_hash
+            or baseline_file.is_symlink()
+            or digest(baseline_file) != a.baseline_hash
+        ):
+            raise ValueError("study evidence mismatch")
+        baseline_receipt = json.loads(baseline_file.read_text())
+        if (
+            baseline_receipt.get("status") != "ROUTER_SHARED_RELAY_SOURCE_PENDING_REPLAY"
+            or len(baseline_receipt["records"]) != 16
+        ):
+            raise ValueError("complete historical baseline required")
     if (
         a.output.exists()
         or a.output.resolve().is_relative_to(Path.cwd())
@@ -134,6 +166,9 @@ def main():
         if path.is_symlink() or path.resolve().parent != (a.recovery_root / "trial0").resolve():
             raise ValueError("confined old world evidence required")
         pins[str(path.resolve())] = artifact["hash"]
+    if a.passer_recovery_pair:
+        pins[str(a.study_protocol.resolve())] = a.study_protocol_hash
+        pins[str(baseline_file.resolve())] = a.baseline_hash
     source_pins(pins)
     check_pins(pins)
     import rosclaw
@@ -188,9 +223,8 @@ def main():
         raise ValueError("exact frozen router required")
     router = freeze_router(router)
     setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor, context_indices=indices)
-    courses = [
-        (i, side, arm) for i in indices for side in (-0.35, 0.35) for arm in ("dual", "router")
-    ]
+    arms = ("router", "router_recovery") if a.passer_recovery_pair else ("dual", "router")
+    courses = [(i, side, arm) for i in indices for side in (-0.35, 0.35) for arm in arms]
     typed = []
     for i in indices:
         for side in (-0.35, 0.35):
@@ -215,6 +249,9 @@ def main():
             preflight=qualification,
             ball_dimensions=setup.ball_dimensions,
             own_replay_source_hash=a.replay_source_hash,
+            passer_recovery_pair=a.passer_recovery_pair,
+            study_protocol_hash=a.study_protocol_hash,
+            baseline_hash=a.baseline_hash,
             hardware_authorized=False,
             promotion_authorized=False,
         ),
@@ -231,7 +268,8 @@ def main():
                 use_cftrack=False,
                 policy_factory=lambda: None,
                 expected_policy_type=object,
-                receiver_actor=router if arm == "router" else None,
+                receiver_actor=router if arm in ("router", "router_recovery") else None,
+                passer_velocity_recovery=arm == "router_recovery",
             )
             folder = a.output / f"trial{index}"
             folder.mkdir()
@@ -245,6 +283,7 @@ def main():
                 "receiver_shadow",
                 "receiver_velocity",
                 "cftrack",
+                *(("passer_velocity",) if arm == "router_recovery" else ()),
             ):
                 arrays = result.pop(key)
                 arrays_all[key] = arrays
@@ -266,7 +305,7 @@ def main():
                 index=index, context=context, lateral_m=side, arm=arm, **result, artifacts=artifacts
             )
             write_once(folder / "complete.json", record)
-            if index == 0:
+            if index == 0 and not a.passer_recovery_pair:
                 if {k: v for k, v in record.items() if k != "artifacts"} != {
                     k: v for k, v in prior_world.items() if k != "artifacts"
                 } or set(artifacts) != set(prior_world["artifacts"]):
@@ -286,7 +325,27 @@ def main():
                     k: v for k, v in saved.items() if k != "artifacts"
                 } or set(artifacts) != set(saved["artifacts"]):
                     raise ValueError("source metadata or artifacts differ")
-            if arm == "dual":
+            if a.passer_recovery_pair and arm == "router":
+                (previous,) = [
+                    r
+                    for r in baseline_receipt["records"]
+                    if r["context"] == context and r["lateral_m"] == side and r["arm"] == "router"
+                ]
+                if {k: v for k, v in record.items() if k != "artifacts"} != {
+                    k: v for k, v in previous.items() if k != "artifacts"
+                } or set(artifacts) != set(previous["artifacts"]):
+                    raise ValueError("historical router baseline metadata mismatch")
+                for key, saved in previous["artifacts"].items():
+                    path = a.baseline_root / saved["path"]
+                    if path.is_symlink() or digest(path) != saved["hash"]:
+                        raise ValueError("historical baseline artifact mismatch")
+                    with np.load(path, allow_pickle=False) as archive:
+                        if set(archive.files) != set(arrays_all[key]) or any(
+                            not np.array_equal(archive[k], arrays_all[key][k])
+                            for k in archive.files
+                        ):
+                            raise ValueError("historical router baseline trajectory differs")
+            if arm == arms[0]:
                 prior = (result, arrays_all)
             else:
                 prior_result, prior_arrays = prior
@@ -295,17 +354,24 @@ def main():
                     for k in ("qpos", "qvel")
                 ):
                     raise ValueError("paired initial states differ")
-                handoff_a, handoff_b = prior_result["handoff"], result["handoff"]
-                if (handoff_a is None) != (handoff_b is None) or (
-                    handoff_a and handoff_a["control"] != handoff_b["control"]
-                ):
-                    raise ValueError("paired readiness/handoff differs")
-                common = (
-                    handoff_a["control"]
-                    if handoff_a
-                    else min(prior_result["controls"], result["controls"])
-                )
-                for key in ("physics", "passer_nn", "receiver_velocity"):
+                if a.passer_recovery_pair:
+                    common = result["passer_recovery_boundary"]
+                    observed = min(prior_result["controls"], result["controls"])
+                    common = observed if common is None else min(common, observed)
+                    compare_keys = ("physics", "passer_nn")
+                else:
+                    handoff_a, handoff_b = prior_result["handoff"], result["handoff"]
+                    if (handoff_a is None) != (handoff_b is None) or (
+                        handoff_a and handoff_a["control"] != handoff_b["control"]
+                    ):
+                        raise ValueError("paired readiness/handoff differs")
+                    common = (
+                        handoff_a["control"]
+                        if handoff_a
+                        else min(prior_result["controls"], result["controls"])
+                    )
+                    compare_keys = ("physics", "passer_nn", "receiver_velocity")
+                for key in compare_keys:
                     x, y = prior_arrays[key], arrays_all[key]
                     if set(x) != set(y) or any(
                         not np.array_equal(x[k][:common], y[k][:common]) for k in x
