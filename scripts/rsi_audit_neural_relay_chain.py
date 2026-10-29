@@ -41,7 +41,10 @@ def main():
     return_align_pair = successor_pair or (
         dec["protocol"] == "soccer.neural_relay_passer_return_alignment.development.v36"
     )
-    return_player_identity = (
+    return_player_sampling = (
+        dec["protocol"] == "soccer.neural_relay_return_player_own_sampling.development.v46"
+    )
+    return_player_identity = return_player_sampling or (
         dec["protocol"] == "soccer.neural_relay_return_player_adaptive_identity.development.v45"
     )
     child_return_role = return_player_identity or (
@@ -210,6 +213,8 @@ def main():
         if successor_pair
         else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
         if return_align_pair
+        else "NEURAL_RELAY_RETURN_PLAYER_OWN_SAMPLING16_PENDING_OWN_REPLAY"
+        if return_player_sampling
         else "NEURAL_RELAY_RETURN_PLAYER_ADAPTIVE_IDENTITY16_PENDING_OWN_REPLAY"
         if return_player_identity
         else "NEURAL_RELAY_CHILD_RETURN_ROLE16_PENDING_OWN_REPLAY"
@@ -314,6 +319,7 @@ def main():
             "soccer.neural_relay_receiver_precontact_continuation.development.v43",
             "soccer.neural_relay_receiver_child_return_role.development.v44",
             "soccer.neural_relay_return_player_adaptive_identity.development.v45",
+            "soccer.neural_relay_return_player_own_sampling.development.v46",
             "soccer.neural_relay_receiver_motion_pair.development.v18",
             "soccer.neural_relay_receiver_dense_exploration.development.v19",
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
@@ -392,6 +398,11 @@ def main():
                     receiver_learned=True,
                     passer_velocity_recovery=True,
                     passer_adaptive=enabled,
+                    **(
+                        {"passer_sampling_seed": 94111 if enabled else None}
+                        if return_player_sampling
+                        else {}
+                    ),
                 )
                 for enabled in (False, True)
             ]
@@ -814,6 +825,8 @@ def main():
         counts["passer_blend_actor_inferences"] = 0
     if return_player_identity:
         counts["passer_adaptive_calls"] = 0
+    if return_player_sampling:
+        counts["passer_sampled_controls"] = 0
     if successor_pair:
         counts["passer_successor_shadow_inferences"] = 0
     if whole_identity or exploration or learned_pair:
@@ -863,6 +876,7 @@ def main():
         from rosclaw_soccer.rsi.relay_post_touch_follow import post_touch_follow
         from rosclaw_soccer.rsi.relay_receiver_candidate import load_research_receiver
         from rosclaw_soccer.rsi.relay_whole_receiver_identity import zero_receiver_actor
+        from rosclaw_soccer.rsi.return_player_sampling_trace import return_player_sampling_trace
         from rosclaw_soccer.rsi.return_role_intent import return_receive_command, return_strike_seen
         from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
         from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
@@ -1021,7 +1035,12 @@ def main():
                         .requires_grad_(False)
                     )
                     passer_recovery = AdaptivePasserVelocityRecovery(
-                        w, "a/", "b/", stream, adapted_actor
+                        w,
+                        "a/",
+                        "b/",
+                        stream,
+                        adapted_actor,
+                        sampling_seed=course["arm"].get("passer_sampling_seed"),
                     )
                 else:
                     passer_recovery = PasserVelocityRecovery(w, "a/", stream)
@@ -1552,6 +1571,12 @@ def main():
                             ),
                         )
                         counts["passer_adaptive_calls"] += int(adapted is not None)
+                        if return_player_sampling:
+                            sampled_trace = return_player_sampling_trace(adapted)
+                            recovery_trace.update(sampled_trace)
+                            counts["passer_sampled_controls"] += int(
+                                sampled_trace["sampling_active"]
+                            )
                     equal_trace(recovery_trace, nn["passer_velocity"], pvi)
                     pvi += 1
                 if successor_shadow_trace is not None:

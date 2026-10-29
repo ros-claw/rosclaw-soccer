@@ -11,6 +11,7 @@ from test_velocity_prior_actor import tensors
 from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
 from rosclaw_soccer.rsi.adaptive_passer_velocity import AdaptivePasserVelocityRecovery
 from rosclaw_soccer.rsi.precontact_receiving_motor import PrecontactReceivingMotor
+from rosclaw_soccer.rsi.return_player_sampling_trace import return_player_sampling_trace
 from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
 
 
@@ -87,3 +88,8 @@ def test_sampled_player_commits_own_actual_actions_after_blend(monkeypatch):
             assert np.isfinite(trace["sampling_trace"]["logp"])
             np.testing.assert_array_equal(stream.last_action, trace["action"])
             np.testing.assert_array_equal(w._last_targets["a/"], trace["target"])
+            saved = return_player_sampling_trace(trace)
+            assert saved["sampling_active"]
+            np.testing.assert_array_equal(saved["sampling_action"], stream.last_action)
+            assert saved["sampling_inputs"].shape == (112,)
+    assert not return_player_sampling_trace(None)["sampling_active"]
