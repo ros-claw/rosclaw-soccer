@@ -33,12 +33,30 @@ def main():
     p.add_argument("--causal-ball-reference", action="store_true")
     p.add_argument("--causal-protocol", type=Path)
     p.add_argument("--causal-protocol-hash")
+    p.add_argument("--projected-target", action="store_true")
+    p.add_argument("--projection-protocol", type=Path)
+    p.add_argument("--projection-protocol-hash")
     p.add_argument("--reference-phase-start", type=int, default=0)
     p.add_argument("--ankle-roll-reference", action="store_true")
     p.add_argument("--motor-pilot", type=Path)
     p.add_argument("--motor-pilot-hash")
     a = p.parse_args()
     factorial = a.ground_reference_ball or a.zero_reference_ball_spin
+    if a.projected_target != (a.projection_protocol is not None) or a.projected_target != (
+        a.projection_protocol_hash is not None
+    ):
+        p.error("target projection requires its exact predeclared protocol")
+    if a.projected_target and (
+        not a.reference_all_initial_velocities
+        or a.reference_phase_start != 0
+        or a.motion_reference_receipt is None
+        or a.ground_reference_ball != a.zero_reference_ball_spin
+        or a.causal_ball_reference
+        or a.direct_approach_reference
+        or a.ankle_roll_reference
+        or a.motor_pilot is not None
+    ):
+        p.error("projection requires one of the two declared full-velocity NPZ states")
     if a.causal_ball_reference != (a.causal_protocol is not None) or a.causal_ball_reference != (
         a.causal_protocol_hash is not None
     ):
@@ -68,6 +86,11 @@ def main():
     from scripts.rsi_native_fresh_common import clean, source_pins
 
     clean(a.expected_head)
+    if a.projected_target and (
+        a.projection_protocol.is_symlink()
+        or digest(a.projection_protocol) != a.projection_protocol_hash
+    ):
+        raise ValueError("exact predeclared projection protocol required")
     if factorial and (
         a.factorial_protocol.is_symlink()
         or digest(a.factorial_protocol) != a.factorial_protocol_hash
@@ -246,6 +269,8 @@ def main():
             factorial_protocol_hash=a.factorial_protocol_hash,
             causal_ball_reference=a.causal_ball_reference,
             causal_protocol_hash=a.causal_protocol_hash,
+            projected_target=a.projected_target,
+            projection_protocol_hash=a.projection_protocol_hash,
             direct_approach_reference=a.direct_approach_reference,
             ankle_roll_reference=a.ankle_roll_reference,
             motor_plan=asdict(motor_plan) if motor_plan else None,
@@ -349,6 +374,7 @@ def main():
     world = SharedNativeMotorWorld(
         model, data, players={"a/": params}, ball_body_name="soccer_ball"
     )
+    projection_initial = data.qpos[lo.qi].copy()
     captured_obs, captured_actions = [], []
     original_session = policy.ort_session
 
@@ -375,7 +401,12 @@ def main():
     reference_conditioning = None
     foot_frame_conditioning = None
     try:
-        player = SharedOmniContactPlayer(
+        player_class = SharedOmniContactPlayer
+        if a.projected_target:
+            from rosclaw_soccer.rsi.sim_target_feasibility import ProjectedSharedOmniContactPlayer
+
+            player_class = ProjectedSharedOmniContactPlayer
+        player = player_class(
             world,
             "a/",
             policy,
@@ -479,10 +510,30 @@ def main():
         raise ValueError("factorial protocol changed during actual physics")
     if a.causal_ball_reference and digest(a.causal_protocol) != a.causal_protocol_hash:
         raise ValueError("causal protocol changed during actual physics")
+    if a.projected_target and digest(a.projection_protocol) != a.projection_protocol_hash:
+        raise ValueError("projection protocol changed during actual physics")
     clean(a.expected_head)
     forces = arrays.get("ball_forces", np.zeros((0, 1, 3)))[:, 0]
     foot = np.flatnonzero((forces[:, :2] > 1).any(axis=1))
     nonfoot = np.flatnonzero(forces[:, 2] > 1)
+    projection_stats = None
+    if a.projected_target and targets:
+        target_array, decoded_array = np.asarray(targets), np.asarray(decoded)
+        limits = model.jnt_range[lo.joints]
+        rates = np.diff(np.vstack((projection_initial, target_array)), axis=0)
+        projection_stats = dict(
+            initial_hg=projection_initial.tolist(),
+            physical_limits_hg=limits.tolist(),
+            maximum_absolute_step_rad=float(np.max(np.abs(rates))),
+            maximum_target_distortion_rad=float(np.max(np.abs(target_array - decoded_array))),
+            decoded_range_violations=int(
+                ((decoded_array < limits[:, 0]) | (decoded_array > limits[:, 1])).sum()
+            ),
+            projected_range_violations=int(
+                ((target_array < limits[:, 0]) | (target_array > limits[:, 1])).sum()
+            ),
+            executed_target_feedback_in_nn_history=False,
+        )
     write_once(
         a.output / "complete.json",
         dict(
@@ -504,6 +555,9 @@ def main():
             factorial_protocol_hash=a.factorial_protocol_hash,
             causal_ball_reference=a.causal_ball_reference,
             causal_protocol_hash=a.causal_protocol_hash,
+            projected_target=a.projected_target,
+            projection_protocol_hash=a.projection_protocol_hash,
+            projection_stats=projection_stats,
             reference_phase_start=a.reference_phase_start,
             controls=world.control_steps,
             native_steps=world.native_steps,
