@@ -199,6 +199,26 @@ def _returned_live_exploration_state(current: bool, event_code: int) -> bool:
     return current
 
 
+def _returned_live_policy(
+    parent: NearBallResidualPolicy,
+    candidate: NearBallResidualPolicy,
+    returned_live: bool,
+) -> NearBallResidualPolicy:
+    """Choose a lineage-bound candidate only during an observed training return."""
+    if (
+        not isinstance(parent, NearBallResidualPolicy)
+        or not isinstance(candidate, NearBallResidualPolicy)
+        or type(returned_live) is not bool
+        or candidate.parent_hash != parent.policy_hash
+        or candidate.agent_ids != parent.agent_ids
+        or candidate.body_hash != parent.body_hash
+        or candidate.observation_contract != parent.observation_contract
+        or candidate.generation != parent.generation + 1
+    ):
+        raise ValueError("lineage-bound matching returned-live residual policy required")
+    return candidate if returned_live else parent
+
+
 @dataclass(frozen=True)
 class IndependentTeamWorldConfig:
     simulation_duration_sec: float = 10.0
@@ -1102,6 +1122,7 @@ def simulate_independent_team_world(
     strike_coordination_actor: DynamicStrikeCoordinationActor | None = None,
     contextual_strike_memory: ContextualStrikeExpertMemory | None = None,
     near_ball_policy: NearBallResidualPolicy | None = None,
+    near_ball_returned_policy: NearBallResidualPolicy | None = None,
     near_ball_seed: int = 0,
     near_ball_explore: bool = False,
     near_ball_exploration_agent_ids: tuple[str, ...] | None = None,
@@ -1263,6 +1284,12 @@ def simulate_independent_team_world(
         and (active.training_ball_return is None or exploration_mask is None)
     ):
         raise ValueError("returned-live exploration requires training return and scoped policy")
+    if near_ball_returned_policy is not None:
+        if near_ball_policy is None or active.training_ball_return is None or near_ball_explore:
+            raise ValueError(
+                "deterministic returned-live candidate requires parent and training return"
+            )
+        _returned_live_policy(near_ball_policy, near_ball_returned_policy, False)
     motors = dict(motor_options or {})
     from rosclaw_soccer.providers.g1.receiving_sonic import (
         ReceivingSonicBallFollowOption,
@@ -3270,7 +3297,16 @@ def simulate_independent_team_world(
                 if exploration_mask is not None
                 else None
             )
-            latent, log_probability, values = near_ball_policy.act(
+            active_policy = (
+                near_ball_returned_policy
+                if near_ball_returned_policy is not None and returned_live_exploration
+                else near_ball_policy
+            )
+            if near_ball_returned_policy is not None:
+                trace.setdefault("residual_returned_candidate_selected", []).append(
+                    returned_live_exploration
+                )
+            latent, log_probability, values = active_policy.act(
                 observations_np,
                 residual_rng,
                 explore=explore_now,

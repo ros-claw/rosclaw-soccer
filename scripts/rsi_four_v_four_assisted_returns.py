@@ -14,6 +14,8 @@ def main():
     p.add_argument("--asset-root", type=Path, required=True)
     p.add_argument("--policy", type=Path, required=True)
     p.add_argument("--policy-hash", required=True)
+    p.add_argument("--returned-policy", type=Path)
+    p.add_argument("--returned-policy-hash")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--protocol", type=Path, required=True)
     p.add_argument("--protocol-hash", required=True)
@@ -21,6 +23,10 @@ def main():
     p.add_argument("--exploration-seed", type=int, choices=(24001, 24002))
     p.add_argument("--only-explore-after-return", action="store_true")
     a = p.parse_args()
+    if bool(a.returned_policy) != bool(a.returned_policy_hash):
+        raise ValueError("returned candidate and exact digest required together")
+    if a.returned_policy and a.exploration_seed is not None:
+        raise ValueError("gated candidate comparison must be deterministic")
     if a.only_explore_after_return and a.exploration_seed is None:
         raise ValueError("returned-live exploration requires an explicit seed")
     clean(a.expected_head)
@@ -28,7 +34,14 @@ def main():
         a.asset_root.resolve()
     ):
         raise ValueError("external output required")
-    if file_digest(a.protocol) != a.protocol_hash or file_digest(a.policy) != a.policy_hash:
+    if (
+        file_digest(a.protocol) != a.protocol_hash
+        or file_digest(a.policy) != a.policy_hash
+        or (
+            a.returned_policy is not None
+            and file_digest(a.returned_policy) != a.returned_policy_hash
+        )
+    ):
         raise ValueError("exact protocol and private policy required")
     a.output.mkdir(parents=True, exist_ok=False)
     write_once(
@@ -37,6 +50,7 @@ def main():
             source_head=a.expected_head,
             protocol_hash=a.protocol_hash,
             policy_hash=a.policy_hash,
+            returned_policy_hash=a.returned_policy_hash,
             mode="ASSISTED_TRAINING_ONLY",
             exploration_seed=a.exploration_seed,
             only_explore_after_return=a.only_explore_after_return,
@@ -100,6 +114,9 @@ def main():
         )
         option = default_continuous_match_options(world)
         policy = NearBallResidualPolicy.load(a.policy)
+        returned_policy = (
+            NearBallResidualPolicy.load(a.returned_policy) if a.returned_policy else None
+        )
         results = []
         artifacts = []
         for label in ("primary", "replay"):
@@ -114,6 +131,7 @@ def main():
                 contact_teacher_config=teacher,
                 option_bridge_config=option,
                 near_ball_policy=policy,
+                near_ball_returned_policy=returned_policy,
                 near_ball_explore=a.exploration_seed is not None,
                 near_ball_seed=a.exploration_seed or 0,
                 near_ball_exploration_agent_ids=(
@@ -162,7 +180,14 @@ def main():
                     returned_live_active_exploration_frames=sampled_by_role,
                 )
             )
-        if file_digest(a.protocol) != a.protocol_hash or file_digest(a.policy) != a.policy_hash:
+        if (
+            file_digest(a.protocol) != a.protocol_hash
+            or file_digest(a.policy) != a.policy_hash
+            or (
+                a.returned_policy is not None
+                and file_digest(a.returned_policy) != a.returned_policy_hash
+            )
+        ):
             raise ValueError("input changed during simulation")
         clean(a.expected_head)
         write_once(
@@ -172,6 +197,7 @@ def main():
                 source_head=a.expected_head,
                 protocol_hash=a.protocol_hash,
                 policy_hash=a.policy_hash,
+                returned_policy_hash=a.returned_policy_hash,
                 exploration_seed=a.exploration_seed,
                 only_explore_after_return=a.only_explore_after_return,
                 fixture_hash=fixture.fixture_hash,
