@@ -181,7 +181,9 @@ def main():
                 smooth_body_margins=observed_body_margins(a.source, new, common, la, lb),
                 direct_team=team_followup(a.source, old, common, model, la),
                 smooth_team=team_followup(a.source, new, common, model, la),
-                direct_target=transition_target_metrics(a.source, old, codec),
+                # The direct arm does not record reference_nominal. Do not
+                # invent it from the paired arm after trajectories diverge.
+                direct_target=transition_target_metrics(a.source, old),
                 smooth_target=transition_target_metrics(a.source, new, codec),
             )
         )
