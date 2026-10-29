@@ -14,6 +14,7 @@ from rosclaw_soccer.rsi.committed_neural_motor import CommittedNeuralMotor
 from rosclaw_soccer.rsi.consolidated_motor_adapter import ConsolidatedMotorAdapter
 from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
 from rosclaw_soccer.rsi.motor_option_state import MotorOptionState
+from rosclaw_soccer.rsi.paid_ancestor_router_student import FrozenAncestralRouterActor
 from rosclaw_soccer.rsi.private_motor_history import (
     MotorHistory,
     clone_history,
@@ -66,7 +67,8 @@ class SharedNativeNeuralPlayer:
         | ConsolidatedMotorAdapter
         | RefinementMotorAdapter
         | SupportedRefinementMotor
-        | CommittedNeuralMotor,
+        | CommittedNeuralMotor
+        | FrozenAncestralRouterActor,
         *,
         clip: Any,
         torso_index: int,
@@ -89,6 +91,7 @@ class SharedNativeNeuralPlayer:
                 RefinementMotorAdapter,
                 SupportedRefinementMotor,
                 CommittedNeuralMotor,
+                FrozenAncestralRouterActor,
             )
             or actor.training
             or any(p.requires_grad or p.device.type != "cpu" for p in actor.parameters())
@@ -106,8 +109,16 @@ class SharedNativeNeuralPlayer:
             raise ValueError(
                 "frozen explicit Dual256 motor, real reference and HG29 codec required"
             )
+        router = type(actor) is FrozenAncestralRouterActor
+        width = 128 if router else 256
+        if router and not np.array_equal(
+            actor.action_scale.detach().numpy(), scale[np.argsort(order)].astype(np.float32)
+        ):
+            raise ValueError("router policy-order action scale must match actual HG29 codec")
+        if router and world.control_steps and initial_state is None:
+            raise ValueError("live router requires explicitly supplied own 128-wide history")
         if initial_state is not None:
-            recurrent_history(initial_state)
+            recurrent_history(initial_state, hidden_width=width)
             if (type(actor) is CommittedNeuralMotor) != (type(initial_state) is MotorOptionState):
                 raise ValueError("explicit actor-bound private history representation required")
             if (
@@ -141,6 +152,7 @@ class SharedNativeNeuralPlayer:
         ):
             raise ValueError("explicit finite static-reference handoff context required")
         self.world, self.prefix, self.actor, self.clip = world, prefix, actor, clip
+        self.hidden_width = width
         self.view = PlayerObservationView(world, prefix)
         if type(reference_bridge_controls) is not int or not 0 <= reference_bridge_controls <= 50:
             raise ValueError("explicit bounded0..50 reference teacher controls required")
@@ -155,9 +167,13 @@ class SharedNativeNeuralPlayer:
         self.goal, self.offset, self.scale, self.order = (
             a.copy() for a in (goal, offset, scale, order)
         )
-        self.state = clone_history(
-            actor.initial_state() if initial_state is None else initial_state
-        )
+        if initial_state is None:
+            initial_state = (
+                (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128))
+                if router
+                else actor.initial_state()
+            )
+        self.state = clone_history(initial_state, hidden_width=width)
         self.last_action = (
             np.zeros(29, np.float32) if previous_action is None else previous_action.copy()
         )
@@ -199,6 +215,8 @@ class SharedNativeNeuralPlayer:
             reference = self.reference_bridge.reference(*reference, frame=self.decisions)
         if type(with_reference_evidence) is not bool:
             raise ValueError("explicit simulation teacher evidence mode required")
+        if type(self.actor) is FrozenAncestralRouterActor and with_reference_evidence:
+            raise ValueError("router adapter has no qualified motor teacher authority")
         obs = self.build_observation(
             self.view,
             None,
@@ -245,7 +263,7 @@ class SharedNativeNeuralPlayer:
                 mean, state = self.actor(torch.from_numpy(obs).reshape(1, 1, 160), self.state)
         if mean.shape != (1, 1, 29) or not torch.isfinite(mean).all():
             raise ValueError("finite own HG29 action and private Dual256 history required")
-        private_trace = history_trace(self.state, state)
+        private_trace = history_trace(self.state, state, hidden_width=self.hidden_width)
         action = mean[0, 0].numpy().copy()
         trace = dict(
             NN_obs=obs.copy(),
@@ -258,7 +276,7 @@ class SharedNativeNeuralPlayer:
             trace["NN_support_activation"] = support_activation
         self.pending = dict(
             action=action,
-            state=clone_history(state),
+            state=clone_history(state, hidden_width=self.hidden_width),
             reference_nominal=nominal,
         )
         return self.offset + action[self.order] * self.scale, trace
