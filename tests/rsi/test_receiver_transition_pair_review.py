@@ -17,6 +17,27 @@ def test_target_jump_measures_actual_executed_targets(monkeypatch, tmp_path):
     assert result["observed_transition_controls"] == 10
 
 
+def test_feasibility_uses_recorded_reference_and_actual_previous_target(monkeypatch, tmp_path):
+    target = np.zeros((5, 29))
+    target[:3, 0] = 0.7
+    target[3:, 0] = 0.2
+    physics = tmp_path / "physics.npz"
+    neural = tmp_path / "neural.npz"
+    np.savez(physics, target_b=target)
+    np.savez(neural, control=np.array([3]), NN_reference_nominal=np.zeros((1, 29)))
+    monkeypatch.setattr(
+        review, "bind", lambda root, row, key: physics if key == "physics" else neural
+    )
+    codec = (np.zeros(29), np.ones(29), np.arange(29))
+    result = review.transition_target_metrics(tmp_path, {"handoff": {"control": 3}}, codec)
+    assert result["first_target_jump_rad"] == pytest.approx(0.5)
+    assert result["unavoidable_first_jump_lower_bound_rad"] == pytest.approx(0.49998)
+    assert result["limiting_joint"] == review.G1_DDS_JOINT_NAMES[0]
+    np.savez(neural, control=np.array([4]), NN_reference_nominal=np.zeros((1, 29)))
+    with pytest.raises(ValueError, match="first handoff"):
+        review.transition_target_metrics(tmp_path, {"handoff": {"control": 3}}, codec)
+
+
 def test_no_handoff_cannot_hide_a_different_physical_history():
     base = {
         "handoff": None,
