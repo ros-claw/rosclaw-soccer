@@ -23,6 +23,13 @@ def student_observation(q, v, previous):
     return result
 
 
+def phase_entry(frame, delta):
+    delta = np.asarray(delta)
+    if type(frame) is not int or delta.shape != (3,) or not np.isfinite(delta).all():
+        raise ValueError("actual finite ball-relative entry state required")
+    return bool(50 <= frame <= 239 and 0 < delta[0] <= 0.9 and abs(delta[1]) <= 0.25)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for key in ("model", "training-receipt", "protocol", "output"):
@@ -34,6 +41,7 @@ def main():
     p.add_argument("--declaration-hash", action="append", required=True)
     p.add_argument("--student-reference", type=Path)
     p.add_argument("--student-reference-hash")
+    p.add_argument("--phase-policy", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if len(a.source) != 4 or len(a.source_hash) != 4 or len(a.declaration_hash) != 4:
@@ -52,6 +60,8 @@ def main():
         raise ValueError("student training provenance mismatch")
     if (a.student_reference is None) != (a.student_reference_hash is None):
         raise ValueError("reference and exact receipt hash must be supplied together")
+    if a.phase_policy and (a.student_reference is not None or not trained.get("kick_phase_only")):
+        raise ValueError("phase-only trained model and no takeover reference required")
     reference_report = None
     if a.student_reference is not None:
         reference_receipt = a.student_reference / "complete.json"
@@ -84,10 +94,11 @@ def main():
     velocity, velocity_hash = asset("/velocity/v0/exported/policy.onnx")
     config, config_hash = asset("/velocity/v0/params/deploy.yaml")
     checkpoint = torch.load(a.model, map_location="cpu", weights_only=True)
-    if checkpoint["feature_dim"] != 104:
+    dimension = 105 if a.phase_policy else 104
+    if checkpoint["feature_dim"] != dimension:
         raise ValueError("qualified observation dimension required")
     net = torch.nn.Sequential(
-        torch.nn.Linear(104, 128),
+        torch.nn.Linear(dimension, 128),
         torch.nn.Tanh(),
         torch.nn.Linear(128, 128),
         torch.nn.Tanh(),
@@ -97,8 +108,8 @@ def main():
     net.eval()
     mean, scale = checkpoint["mean"].numpy(), checkpoint["scale"].numpy()
     if (
-        mean.shape != (104,)
-        or scale.shape != (104,)
+        mean.shape != (dimension,)
+        or scale.shape != (dimension,)
         or not np.isfinite(mean).all()
         or not np.isfinite(scale).all()
         or np.any(scale <= 0)
@@ -118,6 +129,14 @@ def main():
     from rosclaw_soccer.rsi.walk_kick_approach_command import approach_command
 
     model = mujoco.MjModel.from_xml_string(shared_native_scene(scene.read_text(), prefixes=("a/",)))
+    kick_types = None
+    kick_path = None
+    kick_hash = None
+    if a.phase_policy:
+        from rosclaw.simforge.backends.unitree_mujoco_backend import _load_robonaldo
+
+        kick_path, kick_hash = asset("/policy/robonaldo/FreeKick.py")
+        kick_types = _load_robonaldo(kick_path.parents[2])
     a.output.mkdir(parents=True)
     write_once(
         a.output / "declaration.json",
@@ -132,6 +151,8 @@ def main():
             config_hash=config_hash,
             student_reference_hash=a.student_reference_hash,
             student_prefix_controls=20 if reference_report is not None else None,
+            phase_policy=a.phase_policy,
+            kick_source_hash=kick_hash,
             courses=list(range(0, 40, 5)),
             promotion_authorized=False,
             hardware_authorized=False,
@@ -221,6 +242,7 @@ def main():
             previous_command = command.copy()
             shadow_targets = [target.copy()] if shadow is not None else []
             shadow_commands = [command.copy()] if shadow is not None else []
+            switch_frame = None
             recorded = {k: [first[k]] for k in ("qpos", "qvel", "torque", "ball_forces")}
             targets = [target.copy()]
             inputs = []
@@ -228,6 +250,16 @@ def main():
                 if world.failed:
                     break
                 q, v = lo.canonical(data)
+                if a.phase_policy and switch_frame is None:
+                    delta = data.xmat[lo.pelvis].reshape(3, 3).T @ (data.xpos[lo.ball] - q[:3])
+                    if phase_entry(frame, delta):
+                        assert kick_types is not None
+                        state_type, output_type, policy_type, _ = kick_types
+                        kick = policy_type(state_type(29), output_type(29))
+                        kp = NativePDParameters(np.array(kick.kps), np.array(kick.kds), pd.effort)
+                        if not world.switch_pd_profile("a/", kp)["physics_unchanged"]:
+                            raise ValueError("kick gain transition changed physical state")
+                        switch_frame = frame
                 if shadow is not None:
                     command = approach_command(
                         q=q,
@@ -247,18 +279,47 @@ def main():
                     shadow_targets.append(proposal.copy())
                     shadow_commands.append(command.copy())
                 observation = student_observation(q, v, world.last_applied_target("a/"))
-                with torch.no_grad():
-                    target = (
-                        net(torch.tensor((observation - mean) / scale, dtype=torch.float32))
-                        .numpy()
-                        .astype(np.float64)
+                if a.phase_policy and switch_frame is None:
+                    command = approach_command(
+                        q=q,
+                        v=v,
+                        rotation=data.xmat[lo.pelvis].reshape(3, 3),
+                        cached_ball_position=data.xpos[lo.ball],
+                        previous=previous_command,
+                        parameters=parent["result"]["parameters"],
+                        fast=False,
+                        feedback=False,
+                        halt=False,
                     )
+                    previous_command = command.copy()
+                    target = stream.propose(
+                        q, v, lo.angular_velocity_body(data), command, frame=frame
+                    )
+                else:
+                    if a.phase_policy:
+                        observation = np.r_[observation, (frame - switch_frame) * 0.02]
+                    with torch.no_grad():
+                        target = (
+                            net(torch.tensor((observation - mean) / scale, dtype=torch.float32))
+                            .numpy()
+                            .astype(np.float64)
+                        )
                 if shadow is not None and frame >= 20:
                     target = proposal
                 if target.shape != (29,) or not np.isfinite(target).all():
                     raise ValueError("finite student target required")
-                inputs.append(observation)
+                if not a.phase_policy or switch_frame is not None:
+                    inputs.append(observation)
                 result = world.advance({"a/": target})
+                if a.phase_policy and switch_frame is None:
+                    with np.load(parent_path, allow_pickle=False) as original:
+                        if not np.array_equal(target, original["joint_targets"][frame]):
+                            raise ValueError("original approach target mismatch")
+                        for key in ("qpos", "qvel", "torque", "ball_forces"):
+                            if not np.array_equal(
+                                result[key], original[key][frame * 10 : (frame + 1) * 10]
+                            ):
+                                raise ValueError("original approach physics mismatch")
                 if shadow is not None:
                     shadow.observe_executed(target.astype(np.float64), completed_control=frame + 1)
                     if frame < 20:
@@ -281,7 +342,7 @@ def main():
                     :, -1, lo.bq : lo.bq + 3
                 ],
                 pelvis_z_per_substep_m=arrays["qpos"].reshape(n, 10, 43)[:, :, lo.rq + 2],
-                student_observations=np.asarray(inputs).reshape(-1, 104),
+                student_observations=np.asarray(inputs).reshape(-1, dimension),
             )
             if shadow is not None:
                 arrays["shadow_targets"] = np.stack(shadow_targets)
@@ -295,6 +356,7 @@ def main():
                     source_parent_hash=parent["raw_hash"],
                     parent_outcome=parent["result"]["outcome"],
                     controls=n,
+                    phase_switch_frame=switch_frame,
                     healthy_full_horizon=not world.failed and n == 360,
                     student_outcome=label,
                     artifact_hash=file_digest(path),
@@ -307,6 +369,7 @@ def main():
             or file_digest(a.protocol) != a.protocol_hash
             or any(file_digest(path) != digest for path, digest in parent_pins)
             or any(file_digest(path) != digest for path, digest in reference_pins)
+            or (kick_path is not None and file_digest(kick_path) != kick_hash)
             or (
                 a.student_reference is not None
                 and file_digest(a.student_reference / "complete.json") != a.student_reference_hash
