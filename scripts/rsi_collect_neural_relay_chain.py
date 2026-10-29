@@ -49,6 +49,7 @@ def main():
     p.add_argument("--receiver-motion-pair", action="store_true")
     p.add_argument("--receiver-continuation-pair", action="store_true")
     p.add_argument("--receiver-precontact-continuation-pair", action="store_true")
+    p.add_argument("--receiver-child-return-role-pair", action="store_true")
     p.add_argument("--passer-residual-pair", action="store_true")
     p.add_argument("--passer-strike-teacher-pair", action="store_true")
     p.add_argument("--passer-reference-tempo-pair", action="store_true")
@@ -78,6 +79,15 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.receiver_child_return_role_pair and (
+        not a.receiver_precontact_continuation_pair
+        or a.receiver_learned_exploration
+        or a.passer_return_pair
+        or a.passer_velocity_recovery_pair
+        or a.passer_velocity_blend
+    ):
+        p.error("child return-role pair requires isolated precontact continuation")
+    return_role_study = a.passer_return_pair or a.receiver_child_return_role_pair
     if a.passer_reference_tempo_pair and (
         a.new_context_block is None
         or a.reference_bridge_controls != [0]
@@ -697,6 +707,18 @@ def main():
             )
             for seed in (None, 92117, 92143, 92171)
         ]
+    if a.receiver_child_return_role_pair:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                receiver_whole=True,
+                receiver_learned=True,
+                passer_velocity_recovery=enabled,
+            )
+            for enabled in (False, True)
+        ]
     if a.receiver_exploration:
         arms = [
             dict(
@@ -742,6 +764,8 @@ def main():
                 if a.passer_successor_pair
                 else "soccer.neural_relay_passer_return_alignment.development.v36"
                 if a.passer_return_align_pair
+                else "soccer.neural_relay_receiver_child_return_role.development.v44"
+                if a.receiver_child_return_role_pair
                 else "soccer.neural_relay_passer_return_pair.development.v35"
                 if a.passer_return_pair
                 else "soccer.neural_relay_passer_reference_tempo.development.v1"
@@ -898,11 +922,11 @@ def main():
                 a.receiver_exploration or a.receiver_learned_exploration
             ),
             passer_residual_is_unlearned_teacher=a.passer_residual_pair,
-            passer_velocity_recovery_pair=a.passer_velocity_recovery_pair or a.passer_return_pair,
+            passer_velocity_recovery_pair=a.passer_velocity_recovery_pair or return_role_study,
             passer_velocity_blend_controls=20
-            if a.passer_velocity_blend or a.passer_return_pair
+            if a.passer_velocity_blend or return_role_study
             else 0,
-            passer_return_role_is_unlearned=a.passer_return_pair,
+            passer_return_role_is_unlearned=return_role_study,
             passer_return_alignment_is_unlearned=a.passer_return_align_pair,
             passer_successor_selection_is_unlearned=a.passer_successor_pair,
             passer_successor_direct_profile_switch=a.passer_successor_pair
@@ -930,9 +954,9 @@ def main():
         ),
     )
     counts = dict(native_steps=0, actual_actor_calls=0, shadow_actor_calls=0)
-    if a.passer_velocity_recovery_pair or a.passer_return_pair:
+    if a.passer_velocity_recovery_pair or return_role_study:
         counts["passer_velocity_inferences"] = 0
-    if a.passer_velocity_blend or a.passer_return_pair:
+    if a.passer_velocity_blend or return_role_study:
         counts["passer_blend_actor_inferences"] = 0
     if a.passer_successor_pair:
         counts["passer_successor_shadow_inferences"] = 0
@@ -1340,12 +1364,12 @@ def main():
                         body_or_ball_reset=False,
                     )
                 mujoco.mj_forward(w.model, w.data)
-                if a.passer_return_pair and passer.phase == "MOTION_COMPLETE":
+                if return_role_study and passer.phase == "MOTION_COMPLETE":
                     passer.begin_standing()
                 if (
-                    (passer.phase == "MOTION_COMPLETE" and not a.passer_return_pair)
+                    (passer.phase == "MOTION_COMPLETE" and not return_role_study)
                     or (
-                        a.passer_return_pair
+                        return_role_study
                         and passer_recovery is not None
                         and passer.phase == "STANDING"
                         and return_seen
@@ -1362,7 +1386,7 @@ def main():
                         profile_a = w.switch_pd_profile(
                             "a/",
                             passer_old_pd
-                            if a.passer_velocity_blend or a.passer_return_pair
+                            if a.passer_velocity_blend or return_role_study
                             else passer_new_pd,
                         )
                         boundary_a = folder / "passer_recovery_boundary.npz"
@@ -1401,7 +1425,7 @@ def main():
                         return_receive_command(
                             q_a, v_a, return_direction=-forward, launch_seen=return_seen
                         )
-                        if a.passer_return_pair
+                        if return_role_study
                         else np.zeros(3, np.float32)
                     )
                     if course["arm"].get("passer_return_align", False) and return_alignment_active:
@@ -1428,7 +1452,7 @@ def main():
                 teacher_arm = fraction != 1.0
                 blend_index = (
                     step - passer_recovery_boundary["control"]
-                    if (a.passer_velocity_blend or a.passer_return_pair)
+                    if (a.passer_velocity_blend or return_role_study)
                     and passer_recovery_boundary is not None
                     else -1
                 )
@@ -1443,7 +1467,7 @@ def main():
                         successor_motor.begin_standing()
                     target_a, trace_a = successor_motor.propose()
                 elif passer_recovery is not None and passer_recovery.active and not blend_active:
-                    if (a.passer_velocity_blend or a.passer_return_pair) and blend_index == 20:
+                    if (a.passer_velocity_blend or return_role_study) and blend_index == 20:
                         w.switch_pd_profile("a/", passer_new_pd)
                     target_a, trace_a = recovery_target, None
                 else:
@@ -1486,7 +1510,7 @@ def main():
                     # recurrent policy's own last-action history.
                     target_a = passer.offset + executed_a[passer.order] * passer.scale
                     counts["passer_blend_actor_inferences"] += 1
-                if recovery_trace is not None and (a.passer_velocity_blend or a.passer_return_pair):
+                if recovery_trace is not None and (a.passer_velocity_blend or return_role_study):
                     recovery_trace["blend_index"] = np.array(blend_index)
                     if a.passer_successor_blend_pair:
                         recovery_trace["successor_blend_index"] = np.array(successor_blend_index)
@@ -1727,7 +1751,7 @@ def main():
                         ).geometry_ready
                     )
                     successor_ready_count = successor_ready_count + 1 if aligned else 0
-                if a.passer_return_pair and receiver is not None:
+                if return_role_study and receiver is not None:
                     return_seen = return_seen or return_strike_seen(
                         row["ball_forces"],
                         row["qvel"],
@@ -1921,6 +1945,8 @@ def main():
                     if a.passer_successor_pair
                     else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
                     if a.passer_return_align_pair
+                    else "NEURAL_RELAY_CHILD_RETURN_ROLE16_PENDING_OWN_REPLAY"
+                    if a.receiver_child_return_role_pair
                     else "NEURAL_RELAY_PASSER_RETURN_PAIR16_PENDING_OWN_REPLAY"
                     if a.passer_return_pair
                     else "NEURAL_RELAY_PASSER_REFERENCE_TEMPO16_PENDING_OWN_REPLAY"

@@ -41,8 +41,13 @@ def main():
     return_align_pair = successor_pair or (
         dec["protocol"] == "soccer.neural_relay_passer_return_alignment.development.v36"
     )
-    return_pair = return_align_pair or (
-        dec["protocol"] == "soccer.neural_relay_passer_return_pair.development.v35"
+    child_return_role = (
+        dec["protocol"] == "soccer.neural_relay_receiver_child_return_role.development.v44"
+    )
+    return_pair = (
+        child_return_role
+        or return_align_pair
+        or (dec["protocol"] == "soccer.neural_relay_passer_return_pair.development.v35")
     )
     passer_velocity_blend = return_pair or (
         dec["protocol"] == "soccer.neural_relay_passer_velocity_blend.development.v31"
@@ -56,7 +61,7 @@ def main():
     leg_limit_pair = projected_memory or (
         dec["protocol"] == "soccer.neural_relay_receiver_leg_target_projection.development.v26"
     )
-    coordinated_intercept = return_pair or (
+    coordinated_intercept = (return_pair and not child_return_role) or (
         dec["protocol"] == "soccer.neural_relay_receiver_coordinated_intercept.development.v34"
     )
     contact_lead = coordinated_intercept or (
@@ -98,7 +103,7 @@ def main():
         )
         or precontact_exploration
     )
-    precontact_continuation = (
+    precontact_continuation = child_return_role or (
         dec["protocol"] == "soccer.neural_relay_receiver_precontact_continuation.development.v43"
     )
     continuation_pair = precontact_continuation or (
@@ -202,6 +207,8 @@ def main():
         if successor_pair
         else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
         if return_align_pair
+        else "NEURAL_RELAY_CHILD_RETURN_ROLE16_PENDING_OWN_REPLAY"
+        if child_return_role
         else "NEURAL_RELAY_PASSER_RETURN_PAIR16_PENDING_OWN_REPLAY"
         if return_pair
         else "NEURAL_RELAY_PASSER_VELOCITY_BLEND16_PENDING_OWN_REPLAY"
@@ -300,6 +307,7 @@ def main():
             "soccer.neural_relay_receiver_precontact_pair.development.v41",
             "soccer.neural_relay_receiver_precontact_exploration.development.v42",
             "soccer.neural_relay_receiver_precontact_continuation.development.v43",
+            "soccer.neural_relay_receiver_child_return_role.development.v44",
             "soccer.neural_relay_receiver_motion_pair.development.v18",
             "soccer.neural_relay_receiver_dense_exploration.development.v19",
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
@@ -368,7 +376,19 @@ def main():
                 )
                 for enabled in (False, True)
             ]
-            if return_pair
+            if return_pair and not child_return_role
+            else [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_whole=True,
+                    receiver_learned=True,
+                    passer_velocity_recovery=enabled,
+                )
+                for enabled in (False, True)
+            ]
+            if child_return_role
             else [
                 dict(
                     start=80,
