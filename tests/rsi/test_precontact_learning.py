@@ -3,7 +3,10 @@ import pytest
 import torch
 from test_velocity_prior_actor import tensors
 
-from rosclaw_soccer.rsi.precontact_feedback import precontact_feedback
+from rosclaw_soccer.rsi.precontact_feedback import (
+    full_history_precontact_feedback,
+    precontact_feedback,
+)
 from rosclaw_soccer.rsi.precontact_receiving_motor import PrecontactReceivingMotor, precontact_gate
 from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
 
@@ -49,3 +52,16 @@ def test_trainable_motor_preserves_reference_outside_gate():
     out[0].sum().backward()
     assert actor.plastic.mlp[6].bias.grad.abs().sum() > 0
     assert all(p.grad is None for p in actor.baseline.parameters())
+
+
+def test_full_history_credits_delayed_contact_and_failure_at_actual_time():
+    force = np.zeros((8, 10, 3))
+    failure = np.zeros((8, 2), bool)
+    force[2, 3, 0] = 11
+    force[5, 0, 2] = 2
+    failure[7, 0] = True
+    reward, evidence = full_history_precontact_feedback(force, failure, controls=4, gamma=0.9)
+    assert reward[2] == pytest.approx(0.5)
+    assert reward[3] == pytest.approx(-(0.9**2) - 2 * 0.9**4)
+    assert evidence["events"]["body_failure"]["delay"] == 4
+    assert evidence["physical_success_proven"] is False

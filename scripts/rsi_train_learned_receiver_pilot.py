@@ -43,7 +43,10 @@ def main() -> None:
     ):
         p.add_argument("--" + name, required=True)
     p.add_argument("--event-rewards", action="store_true")
+    p.add_argument("--precontact", action="store_true")
     a = p.parse_args()
+    if a.precontact and a.event_rewards:
+        p.error("precontact and legacy event feedback are distinct protocols")
     clean(a.expected_head)
     pins = (
         (a.dataset / "complete.json", a.dataset_hash),
@@ -66,18 +69,40 @@ def main() -> None:
     ]
     anchors = a.anchor_admission.parent / "healthy-anchors.npz"
     if (
-        data.get("status") != "LEARNED_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED"
+        data.get("status")
+        != (
+            "PRECONTACT_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED"
+            if a.precontact
+            else "LEARNED_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED"
+        )
         or data.get("receiver_checkpoint_hash") != a.parent_hash
         or data.get("episodes") != 24
         or data.get("conditions") != 8
-        or audit.get("status") != "LEARNED_RECEIVER_PILOT_DATA_READBACK_AUDITED"
+        or audit.get("status")
+        != (
+            "PRECONTACT_RECEIVER_PILOT_DATA_READBACK_AUDITED"
+            if a.precontact
+            else "LEARNED_RECEIVER_PILOT_DATA_READBACK_AUDITED"
+        )
         or audit.get("dataset_hash") != a.dataset_hash
         or audit.get("episodes") != 24
         or audit.get("controls") != data.get("sampled_controls")
         or data.get("event_reward_profile")
         != ("strict-event-redistribution-v1" if a.event_rewards else None)
         or audit.get("event_reward_profile") != data.get("event_reward_profile")
-        or parent_audit.get("status") != "DENSE_RECEIVER_CANDIDATE_READBACK_MATCH"
+        or (
+            a.precontact
+            and (
+                data.get("precontact_reward_profile") != "full-history-contact-timed-v1"
+                or audit.get("precontact_reward_profile") != data.get("precontact_reward_profile")
+            )
+        )
+        or parent_audit.get("status")
+        != (
+            "PRECONTACT_RECEIVER_CANDIDATE_READBACK_MATCH"
+            if a.precontact
+            else "DENSE_RECEIVER_CANDIDATE_READBACK_MATCH"
+        )
         or parent_audit.get("checkpoint_hash") != a.parent_hash
         or parent_audit.get("dataset_hash") != a.parent_dataset_hash
         or parent_data.get("model_identity") != data.get("model_identity")
@@ -95,16 +120,26 @@ def main() -> None:
     ):
         raise ValueError("own audited pilot, exact behavior parent and retention anchors required")
     state = torch.load(a.parent, map_location="cpu", weights_only=True)
-    if state.get("dataset_hash") != a.parent_dataset_hash or any(
-        state.get(k) is not False
-        for k in ("physical_retention_proven", "promotion_authorized", "hardware_authorized")
+    if (
+        state.get("dataset_hash") != a.parent_dataset_hash
+        or (a.precontact and state.get("feedback_profile") != "precontact-force-timed-v1")
+        or any(
+            state.get(k) is not False
+            for k in ("physical_retention_proven", "promotion_authorized", "hardware_authorized")
+        )
     ):
         raise ValueError("exact unpromoted behavior checkpoint required")
     torch.set_num_threads(2)
     model, mh, config, ch = data["model_identity"]
     params = VelocityPolicyParameters.load(Path(config), expected_hash=ch)
     scale = torch.tensor(params.action_scale, dtype=torch.float32)
-    actor = AnchoredReceivingMotor(
+    if a.precontact:
+        from rosclaw_soccer.rsi.precontact_receiving_motor import PrecontactReceivingMotor
+
+        motor_class = PrecontactReceivingMotor
+    else:
+        motor_class = AnchoredReceivingMotor
+    actor = motor_class(
         VelocityPriorActor.from_onnx(Path(model), expected_hash=mh, reference_features=14), scale
     ).eval()
     critic = ReceiverCritic()
@@ -138,8 +173,16 @@ def main() -> None:
                 or not np.array_equal(ep["action_scale"], scale.numpy())
             ):
                 raise ValueError("exact actual sampled motor data and aligned rewards required")
-            reward_key = "event_rewards" if a.event_rewards else "rewards"
-            reward = ep[reward_key].astype(np.float32) + np.float32(0.2) * ep["dense_rewards"]
+            reward_key = (
+                "precontact_rewards"
+                if a.precontact
+                else "event_rewards"
+                if a.event_rewards
+                else "rewards"
+            )
+            reward = ep[reward_key].astype(np.float32)
+            if not a.precontact:
+                reward += np.float32(0.2) * ep["dense_rewards"]
             returns, running = np.empty(n, np.float32), 0.0
             for i in range(n - 1, -1, -1):
                 running = float(reward[i]) + 0.99 * running
@@ -213,6 +256,8 @@ def main() -> None:
             dataset_hash=a.dataset_hash,
             dataset_audit_hash=a.dataset_audit_hash,
             event_reward_profile="strict-event-redistribution-v1" if a.event_rewards else None,
+            precontact_reward_profile="full-history-contact-timed-v1" if a.precontact else None,
+            feedback_profile="precontact-force-timed-v1" if a.precontact else None,
             physical_retention_proven=False,
             promotion_authorized=False,
             hardware_authorized=False,
@@ -222,9 +267,17 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="LEARNED_RECEIVER_PILOT_CONTINUATION_CANDIDATE"
+            status=(
+                "PRECONTACT_RECEIVER_PILOT_CONTINUATION_CANDIDATE"
+                if a.precontact
+                else "LEARNED_RECEIVER_PILOT_CONTINUATION_CANDIDATE"
+            )
             if result["accepted"]
-            else "LEARNED_RECEIVER_PILOT_CONTINUATION_REJECTED",
+            else (
+                "PRECONTACT_RECEIVER_PILOT_CONTINUATION_REJECTED"
+                if a.precontact
+                else "LEARNED_RECEIVER_PILOT_CONTINUATION_REJECTED"
+            ),
             source_head=a.expected_head,
             parent_hash=a.parent_hash,
             dataset_hash=a.dataset_hash,
@@ -235,8 +288,10 @@ def main() -> None:
             sampled_controls=data["sampled_controls"],
             critic_updates=3,
             critic_losses=losses,
-            dense_weight=0.2,
+            dense_weight=0.0 if a.precontact else 0.2,
             event_reward_profile="strict-event-redistribution-v1" if a.event_rewards else None,
+            precontact_reward_profile="full-history-contact-timed-v1" if a.precontact else None,
+            feedback_profile="precontact-force-timed-v1" if a.precontact else None,
             gamma=0.99,
             **result,
             fresh_holdout=False,

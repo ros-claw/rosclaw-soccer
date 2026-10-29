@@ -30,6 +30,7 @@ def main() -> None:
     for name in ("dataset-hash", "review-hash", "expected-head"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--event-rewards", action="store_true")
+    p.add_argument("--precontact", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     manifest = a.dataset / "complete.json"
@@ -44,11 +45,18 @@ def main() -> None:
         raise ValueError("exact dataset and review and unused external audit required")
     data, review = json.loads(manifest.read_text()), json.loads(a.review.read_text())
     if (
-        data.get("status") != "LEARNED_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED"
+        data.get("status")
+        != (
+            "PRECONTACT_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED"
+            if a.precontact
+            else "LEARNED_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED"
+        )
         or data.get("review_hash") != a.review_hash
         or data.get("episodes") != 24
         or data.get("event_reward_profile")
         != ("strict-event-redistribution-v1" if a.event_rewards else None)
+        or data.get("precontact_reward_profile")
+        != ("full-history-contact-timed-v1" if a.precontact else None)
         or len(data.get("records", [])) != 24
         or review.get("sampled_source_hash") != data.get("source_hash")
         or any(
@@ -69,7 +77,9 @@ def main() -> None:
         root,
         audit,
         data["source_audit_hash"],
-        "NEURAL_RELAY_RECEIVER_LEARNED_EXPLORATION32_PENDING_OWN_REPLAY",
+        "NEURAL_RELAY_RECEIVER_PRECONTACT_EXPLORATION32_PENDING_OWN_REPLAY"
+        if a.precontact
+        else "NEURAL_RELAY_RECEIVER_LEARNED_EXPLORATION32_PENDING_OWN_REPLAY",
         worlds=32,
     )
     if source_hash != data["source_hash"]:
@@ -135,8 +145,10 @@ def main() -> None:
             n = len(expected["inputs"])
             if n != row["controls"] or n != reviewed[key]["stochastic_controls"]:
                 raise ValueError("exact contiguous executed sample count required")
-            extra = {"action_scale", "dense_rewards"} | (
-                {"event_rewards"} if a.event_rewards else set()
+            extra = (
+                {"action_scale", "dense_rewards"}
+                | ({"event_rewards"} if a.event_rewards else set())
+                | ({"precontact_rewards"} if a.precontact else set())
             )
             if set(ep.files) != set(expected) | extra or any(
                 not np.array_equal(ep[k], val) for k, val in expected.items()
@@ -154,6 +166,17 @@ def main() -> None:
                     or row["event_reward_evidence"] != evidence
                 ):
                     raise ValueError("measured event timing and score redistribution differ")
+            if a.precontact:
+                from rosclaw_soccer.rsi.precontact_feedback import full_history_precontact_feedback
+
+                contact_rewards, contact_evidence = full_history_precontact_feedback(
+                    raw["ball_forces"][:, :, 1, :], raw["body_failed"], controls=n
+                )
+                if (
+                    not np.array_equal(ep["precontact_rewards"], contact_rewards)
+                    or row["precontact_reward_evidence"] != contact_evidence
+                ):
+                    raise ValueError("actual full-history contact or failure timing differs")
             if not np.array_equal(ep["action_scale"], expected_scale):
                 raise ValueError("sampled motor scale must match pinned policy codec")
             q = raw["qpos"][:n, -1, :]
@@ -193,7 +216,9 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="LEARNED_RECEIVER_PILOT_DATA_READBACK_AUDITED",
+            status="PRECONTACT_RECEIVER_PILOT_DATA_READBACK_AUDITED"
+            if a.precontact
+            else "LEARNED_RECEIVER_PILOT_DATA_READBACK_AUDITED",
             source_head=a.expected_head,
             dataset_hash=a.dataset_hash,
             review_hash=a.review_hash,
@@ -203,6 +228,8 @@ def main() -> None:
             strict_reward_and_physical_history_recomputed=True,
             dense_feedback_uses_shared_reward_function=True,
             event_reward_profile="strict-event-redistribution-v1" if a.event_rewards else None,
+            precontact_reward_profile="full-history-contact-timed-v1" if a.precontact else None,
+            precontact_feedback_uses_shared_reward_function=a.precontact,
             fresh_holdout=False,
             training_performed=False,
             promotion_authorized=False,

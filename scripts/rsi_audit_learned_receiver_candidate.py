@@ -31,6 +31,7 @@ def main() -> None:
         "expected-head",
     ):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--precontact", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     pins = (
@@ -51,10 +52,32 @@ def main() -> None:
     ]
     cp, anchors = a.training / "research-candidate.pt", a.admission.parent / "healthy-anchors.npz"
     if (
-        data.get("status") != "LEARNED_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED"
-        or audit.get("status") != "LEARNED_RECEIVER_PILOT_DATA_READBACK_AUDITED"
+        data.get("status")
+        != (
+            "PRECONTACT_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED"
+            if a.precontact
+            else "LEARNED_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED"
+        )
+        or audit.get("status")
+        != (
+            "PRECONTACT_RECEIVER_PILOT_DATA_READBACK_AUDITED"
+            if a.precontact
+            else "LEARNED_RECEIVER_PILOT_DATA_READBACK_AUDITED"
+        )
         or audit.get("dataset_hash") != a.dataset_hash
-        or training.get("status") != "LEARNED_RECEIVER_PILOT_CONTINUATION_CANDIDATE"
+        or training.get("status")
+        != (
+            "PRECONTACT_RECEIVER_PILOT_CONTINUATION_CANDIDATE"
+            if a.precontact
+            else "LEARNED_RECEIVER_PILOT_CONTINUATION_CANDIDATE"
+        )
+        or (
+            a.precontact
+            and (
+                training.get("feedback_profile") != "precontact-force-timed-v1"
+                or training.get("precontact_reward_profile") != "full-history-contact-timed-v1"
+            )
+        )
         or training.get("dataset_hash") != a.dataset_hash
         or training.get("dataset_audit_hash") != a.dataset_audit_hash
         or training.get("parent_hash") != a.parent_hash
@@ -80,6 +103,13 @@ def main() -> None:
     )
     if (
         state.get("parent_hash") != a.parent_hash
+        or (
+            a.precontact
+            and (
+                state.get("feedback_profile") != "precontact-force-timed-v1"
+                or parent.get("feedback_profile") != "precontact-force-timed-v1"
+            )
+        )
         or state.get("dataset_hash") != a.dataset_hash
         or state.get("dataset_audit_hash") != a.dataset_audit_hash
         or any(
@@ -91,7 +121,13 @@ def main() -> None:
     torch.set_num_threads(2)
     model, mh, config, ch = data["model_identity"]
     params = VelocityPolicyParameters.load(Path(config), expected_hash=ch)
-    actor = AnchoredReceivingMotor(
+    if a.precontact:
+        from rosclaw_soccer.rsi.precontact_receiving_motor import PrecontactReceivingMotor
+
+        motor_class = PrecontactReceivingMotor
+    else:
+        motor_class = AnchoredReceivingMotor
+    actor = motor_class(
         VelocityPriorActor.from_onnx(Path(model), expected_hash=mh, reference_features=14),
         torch.tensor(params.action_scale, dtype=torch.float32),
     ).eval()
@@ -106,7 +142,7 @@ def main() -> None:
     changed = sum(not torch.equal(before[k], state["actor"][k]) for k in before)
     if changed == 0:
         raise ValueError("accepted update must actually change parent actor")
-    parent_actor = AnchoredReceivingMotor(
+    parent_actor = motor_class(
         VelocityPriorActor.from_onnx(Path(model), expected_hash=mh, reference_features=14),
         torch.tensor(params.action_scale, dtype=torch.float32),
     ).eval()
@@ -177,7 +213,10 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="LEARNED_RECEIVER_CONTINUATION_NUMERIC_READBACK_MATCH",
+            status="PRECONTACT_RECEIVER_CONTINUATION_NUMERIC_READBACK_MATCH"
+            if a.precontact
+            else "LEARNED_RECEIVER_CONTINUATION_NUMERIC_READBACK_MATCH",
+            feedback_profile="precontact-force-timed-v1" if a.precontact else None,
             source_head=a.expected_head,
             checkpoint_hash=training["checkpoint_hash"],
             training_hash=a.training_hash,

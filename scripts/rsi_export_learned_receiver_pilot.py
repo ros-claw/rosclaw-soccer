@@ -28,6 +28,7 @@ def main() -> None:
     for name in ("review-hash", "exploration-head", "expected-head"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--event-rewards", action="store_true")
+    p.add_argument("--precontact", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if (
@@ -39,7 +40,12 @@ def main() -> None:
         raise ValueError("exact reviewed pilot and unused external output required")
     review = json.loads(a.review.read_text())
     if (
-        review.get("status") != "LEARNED_RECEIVER_EXPLORATION_PILOT_REVIEWED"
+        review.get("status")
+        != (
+            "PRECONTACT_RECEIVER_EXPLORATION_PILOT_REVIEWED"
+            if a.precontact
+            else "LEARNED_RECEIVER_EXPLORATION_PILOT_REVIEWED"
+        )
         or review.get("parent_trajectory_identical") is not True
         or not math.isfinite(review.get("maximum_density_error", float("nan")))
         or review.get("maximum_density_error", 1) > 1e-4
@@ -56,7 +62,9 @@ def main() -> None:
         root,
         audit,
         review["sampled_audit_hash"],
-        "NEURAL_RELAY_RECEIVER_LEARNED_EXPLORATION32_PENDING_OWN_REPLAY",
+        "NEURAL_RELAY_RECEIVER_PRECONTACT_EXPLORATION32_PENDING_OWN_REPLAY"
+        if a.precontact
+        else "NEURAL_RELAY_RECEIVER_LEARNED_EXPLORATION32_PENDING_OWN_REPLAY",
         worlds=32,
     )
     dec = json.loads((root / "declaration.json").read_text())
@@ -147,6 +155,14 @@ def main() -> None:
                 if a.event_rewards
                 else (None, None)
             )
+            if a.precontact:
+                from rosclaw_soccer.rsi.precontact_feedback import full_history_precontact_feedback
+
+                contact_rewards, contact_evidence = full_history_precontact_feedback(
+                    raw["ball_forces"][:, :, 1, :], raw["body_failed"], controls=n
+                )
+            else:
+                contact_rewards, contact_evidence = None, None
         target = a.output / f"episode-{len(rows):02d}.npz"
         np.savez_compressed(
             target,
@@ -154,6 +170,7 @@ def main() -> None:
             action_scale=scale,
             dense_rewards=dense,
             **({"event_rewards": events} if a.event_rewards else {}),
+            **({"precontact_rewards": contact_rewards} if a.precontact else {}),
         )
         rows.append(
             dict(
@@ -168,6 +185,7 @@ def main() -> None:
                 source_physics_hash=digest(physics),
                 physical_clean_outcome=outcome,
                 event_reward_evidence=event_evidence,
+                precontact_reward_evidence=contact_evidence,
             )
         )
     if (
@@ -181,7 +199,9 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="LEARNED_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED",
+            status="PRECONTACT_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED"
+            if a.precontact
+            else "LEARNED_RECEIVER_PILOT_PHYSICAL_DATA_NOT_TRAINED",
             source_head=a.expected_head,
             review_hash=a.review_hash,
             source_hash=source_hash,
@@ -194,6 +214,7 @@ def main() -> None:
             records=rows,
             dense_reward_profile="receiver-motion-kinematic-v2",
             event_reward_profile="strict-event-redistribution-v1" if a.event_rewards else None,
+            precontact_reward_profile="full-history-contact-timed-v1" if a.precontact else None,
             independent_export_audit=False,
             research_training_sufficiency_proven=False,
             training_performed=False,
