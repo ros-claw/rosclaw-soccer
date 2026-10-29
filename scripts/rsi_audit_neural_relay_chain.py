@@ -44,13 +44,16 @@ def main():
     return_player_seeded_sampling = (
         dec["protocol"] == "soccer.neural_relay_return_player_own_sampling_seeded.development.v47"
     )
-    child_velocity_fixed = (
+    child_candidate_sampling = (
+        dec["protocol"] == "soccer.neural_relay_child_velocity_candidate_sampling.development.v55"
+    )
+    child_velocity_fixed = child_candidate_sampling or (
         dec["protocol"] == "soccer.neural_relay_child_velocity_candidate_fixed.development.v54"
     )
     child_velocity_candidate = child_velocity_fixed or (
         dec["protocol"] == "soccer.neural_relay_child_velocity_candidate.development.v53"
     )
-    child_velocity_sampling = (
+    child_velocity_sampling = child_candidate_sampling or (
         dec["protocol"] == "soccer.neural_relay_child_velocity_sampling.development.v52"
     )
     receiver_velocity_match_prepared = (
@@ -264,6 +267,8 @@ def main():
         if successor_pair
         else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
         if return_align_pair
+        else "NEURAL_RELAY_CHILD_VELOCITY_CANDIDATE_SAMPLING32_PENDING_OWN_REPLAY"
+        if child_candidate_sampling
         else "NEURAL_RELAY_CHILD_VELOCITY_CANDIDATE_FIXED16_PENDING_OWN_REPLAY"
         if child_velocity_fixed
         else "NEURAL_RELAY_CHILD_VELOCITY_CANDIDATE16_PENDING_OWN_REPLAY"
@@ -395,6 +400,7 @@ def main():
             "soccer.neural_relay_child_velocity_sampling.development.v52",
             "soccer.neural_relay_child_velocity_candidate.development.v53",
             "soccer.neural_relay_child_velocity_candidate_fixed.development.v54",
+            "soccer.neural_relay_child_velocity_candidate_sampling.development.v55",
             "soccer.neural_relay_receiver_motion_pair.development.v18",
             "soccer.neural_relay_receiver_dense_exploration.development.v19",
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
@@ -475,6 +481,7 @@ def main():
                     passer_prepare=True,
                     receiver_adaptive_intercept=True,
                     exploration_seed=seed,
+                    **({"receiver_child_candidate": True} if child_candidate_sampling else {}),
                 )
                 for seed in (None, 92117, 92143, 92171)
             ]
