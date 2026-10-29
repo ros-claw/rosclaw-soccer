@@ -11,8 +11,10 @@ from scripts.rsi_native_context_recovery_common import check_pins, digest
 from scripts.rsi_native_fresh_common import clean, source_pins
 
 
-def arms():
+def arms(feedback=False):
     """Fixed, predeclared values; never select an arm using outcome."""
+    if feedback:
+        return (("experimental-1.5", True, 1.5), ("feedback-1.5", True, 1.5))
     return (
         ("strict-1.0", False, 1.0),
         ("experimental-1.0", True, 1.0),
@@ -39,6 +41,8 @@ def main():
     ):
         p.add_argument("--" + key, required=True)
     p.add_argument("--shard", type=int, choices=range(4), required=True)
+    p.add_argument("--feedback-reference", type=Path)
+    p.add_argument("--feedback-reference-hash")
     a = p.parse_args()
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
@@ -54,6 +58,32 @@ def main():
     declaration = json.loads(inputs[1][0].read_text())
     indices = list(range(a.shard, 40, 4))
     parents = {}
+    feedback_rows = {}
+    if bool(a.feedback_reference) != bool(a.feedback_reference_hash):
+        raise ValueError("feedback requires an exact paired baseline receipt")
+    if a.feedback_reference:
+        reference = a.feedback_reference / "complete.json"
+        if reference.is_symlink() or digest(reference) != a.feedback_reference_hash:
+            raise ValueError("exact prior speed-isolation receipt required")
+        report = json.loads(reference.read_text())
+        if report["status"] != "SPEED_ISOLATION_DEVELOPMENT_SIM_ONLY" or report["shard"] != a.shard:
+            raise ValueError("matching complete speed-isolation shard required")
+        for i in indices:
+            found = [
+                r
+                for r in report["rows"]
+                if r["course"] == i and r["arm"] == "experimental-1.5" and r["repeat"] == 0
+            ]
+            if len(found) != 1:
+                raise ValueError("one prior baseline required per course")
+            artifact = a.feedback_reference / found[0]["artifact"]
+            if (
+                artifact.is_symlink()
+                or artifact.parent != a.feedback_reference
+                or digest(artifact) != found[0]["artifact_hash"]
+            ):
+                raise ValueError("exact confined prior baseline required")
+            feedback_rows[i] = (artifact, found[0]["artifact_hash"])
     for i in indices:
         rows = [r for r in source["rows"] if r["course_index"] == i and r["arm"] == "parent"]
         if len(rows) != 1:
@@ -67,6 +97,9 @@ def main():
     fast_assets, pins = admit_heading_evidence(a.approach_config, a.approach_config_hash)
     pins.update({str(path): expected for path, expected in inputs})
     pins.update({str(path): row["raw_hash"] for row, path in parents.values()})
+    if a.feedback_reference:
+        pins[str(reference)] = a.feedback_reference_hash
+        pins.update({str(path): h for path, h in feedback_rows.values()})
     source_assets = declaration["input_file_hashes"]
 
     def asset(suffix):
@@ -127,7 +160,8 @@ def main():
             protocol_hash=a.protocol_hash,
             shard=a.shard,
             indices=indices,
-            arms=arms(),
+            arms=arms(bool(a.feedback_reference)),
+            feedback_reference_hash=a.feedback_reference_hash,
             input_file_hashes=pins,
             promotion_authorized=False,
             hardware_authorized=False,
@@ -142,8 +176,10 @@ def main():
             )
             if parent["result"]["parameters"] != expected_parameters:
                 raise ValueError("original parent parameter mismatch")
-            for name, fast, speed in arms():
+            for name, fast, speed in arms(bool(a.feedback_reference)):
                 params = dict(expected_parameters, speed_mps=speed)
+                if name == "feedback-1.5":
+                    params["approach_feedback"] = True
                 local_assets = dict(assets, experimental_fast=fast)
                 original = None
                 for repeat in range(2):
@@ -167,6 +203,10 @@ def main():
                         with np.load(parent_path, allow_pickle=False) as saved:
                             if not exact_arrays(arrays, saved):
                                 raise ValueError("strict parent native replay mismatch")
+                    if a.feedback_reference and name == "experimental-1.5":
+                        with np.load(feedback_rows[i][0], allow_pickle=False) as saved:
+                            if not exact_arrays(arrays, saved):
+                                raise ValueError("source-bound fast baseline replay mismatch")
                     if original is not None and not exact_arrays(arrays, original):
                         raise ValueError("fresh native replay mismatch")
                     if original is None:
@@ -188,7 +228,11 @@ def main():
         write_once(
             a.output / "complete.json",
             dict(
-                status="SPEED_ISOLATION_DEVELOPMENT_SIM_ONLY",
+                status=(
+                    "FEEDBACK_APPROACH_DEVELOPMENT_SIM_ONLY"
+                    if a.feedback_reference
+                    else "SPEED_ISOLATION_DEVELOPMENT_SIM_ONLY"
+                ),
                 source_head=a.expected_head,
                 protocol_hash=a.protocol_hash,
                 shard=a.shard,

@@ -11,6 +11,7 @@ def test_one_factor_arms_are_frozen():
         ("experimental-1.0", True, 1.0),
         ("experimental-1.5", True, 1.5),
     )
+    assert arms(True) == (("experimental-1.5", True, 1.5), ("feedback-1.5", True, 1.5))
 
 
 def test_replay_rejects_missing_or_changed_fields():
