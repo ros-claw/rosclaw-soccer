@@ -32,6 +32,8 @@ def main():
     p.add_argument("--source", type=Path, action="append", required=True)
     p.add_argument("--source-hash", action="append", required=True)
     p.add_argument("--declaration-hash", action="append", required=True)
+    p.add_argument("--student-reference", type=Path)
+    p.add_argument("--student-reference-hash")
     a = p.parse_args()
     clean(a.expected_head)
     if len(a.source) != 4 or len(a.source_hash) != 4 or len(a.declaration_hash) != 4:
@@ -48,6 +50,20 @@ def main():
     trained = json.loads(a.training_receipt.read_text())
     if trained["model_hash"] != a.model_hash or trained["source_hashes"] != a.source_hash:
         raise ValueError("student training provenance mismatch")
+    if (a.student_reference is None) != (a.student_reference_hash is None):
+        raise ValueError("reference and exact receipt hash must be supplied together")
+    reference_report = None
+    if a.student_reference is not None:
+        reference_receipt = a.student_reference / "complete.json"
+        if file_digest(reference_receipt) != a.student_reference_hash:
+            raise ValueError("exact prior student receipt required")
+        reference_report = json.loads(reference_receipt.read_text())
+        if (
+            reference_report["model_hash"] != a.model_hash
+            or reference_report["source_head"] != "8090e7a704fa4ad236bddd377c2bf5313822260f"
+            or [row["course"] for row in reference_report["rows"]] != list(range(0, 40, 5))
+        ):
+            raise ValueError("same student model required")
     sources = []
     for root, receipt_hash, declaration_hash in zip(
         a.source, a.source_hash, a.declaration_hash, strict=True
@@ -93,6 +109,7 @@ def main():
 
     from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+    from rosclaw_soccer.rsi.observed_velocity_continuation import ObservedVelocityContinuation
     from rosclaw_soccer.rsi.shared_native_motor_world import (
         NativePDParameters,
         SharedNativeMotorWorld,
@@ -113,6 +130,8 @@ def main():
             scene_hash=scene_hash,
             velocity_hash=velocity_hash,
             config_hash=config_hash,
+            student_reference_hash=a.student_reference_hash,
+            student_prefix_controls=20 if reference_report is not None else None,
             courses=list(range(0, 40, 5)),
             promotion_authorized=False,
             hardware_authorized=False,
@@ -120,6 +139,7 @@ def main():
     )
     rows = []
     parent_pins = []
+    reference_pins = []
     try:
         for i in range(0, 40, 5):
             shard = i % 4
@@ -141,6 +161,7 @@ def main():
                 expected_config_hash=config_hash,
                 horizon_controls=360,
             )
+            shadow = ObservedVelocityContinuation(stream) if reference_report is not None else None
             data = mujoco.MjData(model)
             lo = NativeVelocityLayout(model, robot_prefix="a/", ball_body_name="soccer_ball")
             x, y, vx = parent["result"]["course"]
@@ -170,7 +191,11 @@ def main():
                 feedback=False,
                 halt=False,
             )
-            target = stream.propose(q, v, lo.angular_velocity_body(data), command, frame=0)
+            target = (
+                shadow.propose(q, v, lo.angular_velocity_body(data), command, frame=0)
+                if shadow is not None
+                else stream.propose(q, v, lo.angular_velocity_body(data), command, frame=0)
+            )
             with np.load(parent_path, allow_pickle=False) as reference:
                 if not np.array_equal(target, reference["joint_targets"][0]):
                     raise ValueError("initial foundation action does not match source parent")
@@ -178,13 +203,49 @@ def main():
                 for key in ("qpos", "qvel", "torque", "ball_forces"):
                     if not np.array_equal(first[key], reference[key][:10]):
                         raise ValueError("initial native physical prefix differs from parent")
+            if shadow is not None:
+                shadow.observe_executed(target.astype(np.float64), completed_control=1)
+                ref_rows = [r for r in reference_report["rows"] if r["course"] == i]
+                if len(ref_rows) != 1:
+                    raise ValueError("one original student course required")
+                ref_path = a.student_reference / f"course-{i:02d}-student.npz"
+                if file_digest(ref_path) != ref_rows[0]["artifact_hash"]:
+                    raise ValueError("exact prior student trajectory required")
+                reference_pins.append((ref_path, ref_rows[0]["artifact_hash"]))
+                with np.load(ref_path, allow_pickle=False) as old:
+                    prefix = {k: old[k].copy() for k in old.files}
+                if len(prefix["joint_targets"]) < 20 or not np.array_equal(
+                    target, prefix["joint_targets"][0]
+                ):
+                    raise ValueError("original student initial action required")
+            previous_command = command.copy()
+            shadow_targets = [target.copy()] if shadow is not None else []
+            shadow_commands = [command.copy()] if shadow is not None else []
             recorded = {k: [first[k]] for k in ("qpos", "qvel", "torque", "ball_forces")}
             targets = [target.copy()]
             inputs = []
-            for _ in range(1, 360):
+            for frame in range(1, 360):
                 if world.failed:
                     break
                 q, v = lo.canonical(data)
+                if shadow is not None:
+                    command = approach_command(
+                        q=q,
+                        v=v,
+                        rotation=data.xmat[lo.pelvis].reshape(3, 3),
+                        cached_ball_position=data.xpos[lo.ball],
+                        previous=previous_command,
+                        parameters=parent["result"]["parameters"],
+                        fast=False,
+                        feedback=False,
+                        halt=False,
+                    )
+                    previous_command = command.copy()
+                    proposal = shadow.propose(
+                        q, v, lo.angular_velocity_body(data), command, frame=frame
+                    )
+                    shadow_targets.append(proposal.copy())
+                    shadow_commands.append(command.copy())
                 observation = student_observation(q, v, world.last_applied_target("a/"))
                 with torch.no_grad():
                     target = (
@@ -192,10 +253,22 @@ def main():
                         .numpy()
                         .astype(np.float64)
                     )
+                if shadow is not None and frame >= 20:
+                    target = proposal
                 if target.shape != (29,) or not np.isfinite(target).all():
                     raise ValueError("finite student target required")
                 inputs.append(observation)
                 result = world.advance({"a/": target})
+                if shadow is not None:
+                    shadow.observe_executed(target.astype(np.float64), completed_control=frame + 1)
+                    if frame < 20:
+                        if not np.array_equal(target, prefix["joint_targets"][frame]):
+                            raise ValueError("student action prefix mismatch")
+                        for key in ("qpos", "qvel", "torque", "ball_forces"):
+                            if not np.array_equal(
+                                result[key], prefix[key][frame * 10 : (frame + 1) * 10]
+                            ):
+                                raise ValueError("student native prefix mismatch")
                 for key in recorded:
                     recorded[key].append(result[key])
                 targets.append(target.copy())
@@ -210,6 +283,9 @@ def main():
                 pelvis_z_per_substep_m=arrays["qpos"].reshape(n, 10, 43)[:, :, lo.rq + 2],
                 student_observations=np.asarray(inputs).reshape(-1, 104),
             )
+            if shadow is not None:
+                arrays["shadow_targets"] = np.stack(shadow_targets)
+                arrays["shadow_commands"] = np.stack(shadow_commands)
             label = relabel_arrays(arrays, controls=n, ball_address=lo.bq, root_address=lo.rq)
             path = a.output / f"course-{i:02d}-student.npz"
             np.savez_compressed(path, **arrays)
@@ -230,6 +306,11 @@ def main():
             or file_digest(a.training_receipt) != a.training_hash
             or file_digest(a.protocol) != a.protocol_hash
             or any(file_digest(path) != digest for path, digest in parent_pins)
+            or any(file_digest(path) != digest for path, digest in reference_pins)
+            or (
+                a.student_reference is not None
+                and file_digest(a.student_reference / "complete.json") != a.student_reference_hash
+            )
             or any(
                 file_digest(root / "complete.json") != receipt_hash
                 or file_digest(root / "declaration.json") != declaration_hash
