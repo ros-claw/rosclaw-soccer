@@ -46,10 +46,13 @@ def main():
     p.add_argument("--protocol-hash", required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--synchronize-normalizers", action="store_true")
+    p.add_argument("--defer-normalizers", action="store_true")
     p.add_argument("--iterations", type=int, choices=(2, 256), default=2)
     a = p.parse_args()
     if a.iterations != 2 and not a.synchronize_normalizers:
         raise ValueError("extended training requires synchronized normalizers")
+    if a.defer_normalizers and not a.synchronize_normalizers:
+        raise ValueError("deferred distributed normalization requires synchronization")
     clean(a.expected_head)
     rank, local = validate_ranks(os.environ)
     root = a.reference_root.resolve()
@@ -112,6 +115,7 @@ def main():
             steps_per_iteration=24,
             iterations=a.iterations,
             synchronize_normalizers=a.synchronize_normalizers,
+            defer_normalizers=a.defer_normalizers,
             hardware_authorized=False,
             promotion_authorized=False,
         ),
@@ -134,7 +138,42 @@ def main():
         if a.synchronize_normalizers:
             from scripts.rsi_sync_normalizer import install_four_rank_normalizers
 
-            install_four_rank_normalizers(runner.alg)
+            normalizers = install_four_rank_normalizers(runner.alg, deferred=a.defer_normalizers)
+        drift = []
+        if a.defer_normalizers:
+            original_update = runner.alg.update
+
+            def update_and_flush():
+                storage = runner.alg.storage
+                old_mean, old_std = storage.distribution_params
+                with torch.no_grad():
+                    mean = runner.alg.actor(storage.observations.flatten(0, 1)).reshape_as(old_mean)
+                    std = runner.alg.actor.distribution.std_param.expand_as(mean)
+                    old_dist, new_dist = (
+                        torch.distributions.Normal(old_mean, old_std),
+                        torch.distributions.Normal(mean, std),
+                    )
+                    kl = torch.distributions.kl_divergence(old_dist, new_dist).sum(-1)
+                    delta = (
+                        new_dist.log_prob(storage.actions).sum(-1)
+                        - storage.actions_log_prob.squeeze(-1)
+                    ).abs()
+                    if not torch.isfinite(kl).all() or not torch.isfinite(delta).all():
+                        raise ValueError("finite within-rollout drift required")
+                    drift.append(
+                        dict(
+                            samples=kl.numel(),
+                            mean_kl=kl.mean().item(),
+                            max_kl=kl.max().item(),
+                            max_abs_logp_delta=delta.max().item(),
+                        )
+                    )
+                result = original_update()
+                for normalizer in normalizers:
+                    normalizer.flush()
+                return result
+
+            runner.alg.update = update_and_flush
         runner.alg.broadcast_parameters()
         policy = runner.alg.get_policy()
         before = {name: value.detach().clone() for name, value in policy.named_parameters()}
@@ -182,6 +221,7 @@ def main():
                 changed_parameters=changed,
                 synchronized_actor_parameters=True,
                 synchronized_normalizer_buffers=a.synchronize_normalizers,
+                within_rollout_normalizer_drift=drift if a.defer_normalizers else None,
                 native_sim_steps=env._sim_step_counter,
                 world_steps=16 * 24 * a.iterations,
                 hardware_authorized=False,
