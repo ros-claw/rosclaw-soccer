@@ -44,7 +44,10 @@ def main():
     return_player_seeded_sampling = (
         dec["protocol"] == "soccer.neural_relay_return_player_own_sampling_seeded.development.v47"
     )
-    receiver_velocity_match_prepared = (
+    child_velocity_sampling = (
+        dec["protocol"] == "soccer.neural_relay_child_velocity_sampling.development.v52"
+    )
+    receiver_velocity_match_prepared = child_velocity_sampling or (
         dec["protocol"] == "soccer.neural_relay_receiver_velocity_match_prepared.development.v51"
     )
     prepared_candidate = (
@@ -222,7 +225,7 @@ def main():
     team_entry_study = dec["protocol"] == "soccer.neural_relay_team_entry.v3"
     expected_worlds = (
         32
-        if learned_exploration
+        if learned_exploration or child_velocity_sampling
         else 16
         if whole_identity
         or learned_pair
@@ -250,6 +253,8 @@ def main():
         if successor_pair
         else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
         if return_align_pair
+        else "NEURAL_RELAY_CHILD_VELOCITY_SAMPLING32_PENDING_OWN_REPLAY"
+        if child_velocity_sampling
         else "NEURAL_RELAY_RECEIVER_VELOCITY_MATCH_PREPARED16_PENDING_OWN_REPLAY"
         if receiver_velocity_match_prepared
         else "NEURAL_RELAY_PREPARED_RETURN_CANDIDATE16_PENDING_OWN_REPLAY"
@@ -372,6 +377,7 @@ def main():
             "soccer.neural_relay_prepared_return_sampling.development.v49",
             "soccer.neural_relay_prepared_return_candidate.development.v50",
             "soccer.neural_relay_receiver_velocity_match_prepared.development.v51",
+            "soccer.neural_relay_child_velocity_sampling.development.v52",
             "soccer.neural_relay_receiver_motion_pair.development.v18",
             "soccer.neural_relay_receiver_dense_exploration.development.v19",
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
@@ -441,6 +447,21 @@ def main():
                 for enabled in (False, True)
             ]
             if return_pair and not child_return_role
+            else [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_whole=True,
+                    receiver_learned=True,
+                    passer_velocity_recovery=True,
+                    passer_prepare=True,
+                    receiver_adaptive_intercept=True,
+                    exploration_seed=seed,
+                )
+                for seed in (None, 92117, 92143, 92171)
+            ]
+            if child_velocity_sampling
             else [
                 dict(
                     start=80,
@@ -683,7 +704,7 @@ def main():
             "receiver_lateral_offsets_m"
         ) != list(sides):
             raise ValueError("exact center curriculum offsets required")
-        if (exploration or learned_exploration) and (
+        if (exploration or learned_exploration or child_velocity_sampling) and (
             dec.get("receiver_exploration_is_stochastic_not_training") is not True
             or dec.get("receiver_sampling_profile") != "contact-v1"
             or dec.get("receiver_sampling_law") != "box-truncated-ar1"
@@ -928,7 +949,7 @@ def main():
         counts["passer_successor_shadow_inferences"] = 0
     if whole_identity or exploration or learned_pair:
         counts.update(receiver_onnx_calls=0, receiver_plastic_calls=0, receiver_anchor_calls=0)
-    if exploration or learned_exploration:
+    if exploration or learned_exploration or child_velocity_sampling:
         counts["receiver_stochastic_calls"] = 0
     records = []
     try:

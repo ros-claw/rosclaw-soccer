@@ -55,6 +55,7 @@ def main():
     p.add_argument("--return-player-sampling-seed", type=int, choices=(94137, 94163))
     p.add_argument("--return-player-prepared-pair", action="store_true")
     p.add_argument("--receiver-velocity-match-prepared-pair", action="store_true")
+    p.add_argument("--receiver-child-velocity-sampling", action="store_true")
     p.add_argument("--return-player-candidate", type=Path)
     p.add_argument("--return-player-candidate-hash")
     p.add_argument("--return-player-training-receipt", type=Path)
@@ -88,6 +89,8 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.receiver_child_velocity_sampling and not a.receiver_velocity_match_prepared_pair:
+        p.error("child velocity sampling requires prepared velocity-match pair")
     if a.receiver_velocity_match_prepared_pair and (
         not a.receiver_child_return_role_pair
         or a.return_player_prepared_pair
@@ -835,6 +838,21 @@ def main():
             )
             for enabled in (False, True)
         ]
+    if a.receiver_child_velocity_sampling:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                receiver_whole=True,
+                receiver_learned=True,
+                passer_velocity_recovery=True,
+                passer_prepare=True,
+                receiver_adaptive_intercept=True,
+                exploration_seed=seed,
+            )
+            for seed in (None, 92117, 92143, 92171)
+        ]
     if a.receiver_exploration:
         arms = [
             dict(
@@ -880,6 +898,8 @@ def main():
                 if a.passer_successor_pair
                 else "soccer.neural_relay_passer_return_alignment.development.v36"
                 if a.passer_return_align_pair
+                else "soccer.neural_relay_child_velocity_sampling.development.v52"
+                if a.receiver_child_velocity_sampling
                 else "soccer.neural_relay_receiver_velocity_match_prepared.development.v51"
                 if a.receiver_velocity_match_prepared_pair
                 else "soccer.neural_relay_prepared_return_candidate.development.v50"
@@ -1023,6 +1043,7 @@ def main():
             joint_targets_remain_actual_neural_outputs=a.balance_teacher_pair is None
             and not a.receiver_exploration
             and not a.receiver_learned_exploration
+            and not a.receiver_child_velocity_sampling
             and not a.passer_residual_pair
             and not a.precontact_smooth
             and not a.receiver_foot_teacher_pair
@@ -1058,7 +1079,9 @@ def main():
             longitudinal_intercept_is_unlearned_teacher=a.receiver_longitudinal_authority,
             whole_receiver_identity_not_trained=a.receiver_whole_identity,
             receiver_exploration_is_stochastic_not_training=(
-                a.receiver_exploration or a.receiver_learned_exploration
+                a.receiver_exploration
+                or a.receiver_learned_exploration
+                or a.receiver_child_velocity_sampling
             ),
             passer_residual_is_unlearned_teacher=a.passer_residual_pair,
             passer_velocity_recovery_pair=a.passer_velocity_recovery_pair or return_role_study,
@@ -1074,10 +1097,14 @@ def main():
             precontact_fullbody_is_unlearned_teacher=a.precontact_fullbody_pair,
             precontact_smooth_controls=10 if a.precontact_smooth else 0,
             receiver_sampling_profile="contact-v1"
-            if a.receiver_exploration or a.receiver_learned_exploration
+            if a.receiver_exploration
+            or a.receiver_learned_exploration
+            or a.receiver_child_velocity_sampling
             else None,
             receiver_sampling_law="box-truncated-ar1"
-            if a.receiver_exploration or a.receiver_learned_exploration
+            if a.receiver_exploration
+            or a.receiver_learned_exploration
+            or a.receiver_child_velocity_sampling
             else None,
             actual_actor_calls_are_body_proposals_not_auxiliary_forward_passes=True,
             receiver_velocity_original_H300_preserved=True,
@@ -1105,7 +1132,11 @@ def main():
         counts["passer_successor_shadow_inferences"] = 0
     if a.receiver_whole_identity or a.receiver_exploration or a.receiver_learned_pair:
         counts.update(receiver_onnx_calls=0, receiver_plastic_calls=0, receiver_anchor_calls=0)
-    if a.receiver_exploration or a.receiver_learned_exploration:
+    if (
+        a.receiver_exploration
+        or a.receiver_learned_exploration
+        or a.receiver_child_velocity_sampling
+    ):
         counts["receiver_stochastic_calls"] = 0
     records = []
     try:
@@ -2140,6 +2171,8 @@ def main():
                     if a.passer_successor_pair
                     else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
                     if a.passer_return_align_pair
+                    else "NEURAL_RELAY_CHILD_VELOCITY_SAMPLING32_PENDING_OWN_REPLAY"
+                    if a.receiver_child_velocity_sampling
                     else "NEURAL_RELAY_RECEIVER_VELOCITY_MATCH_PREPARED16_PENDING_OWN_REPLAY"
                     if a.receiver_velocity_match_prepared_pair
                     else "NEURAL_RELAY_PREPARED_RETURN_CANDIDATE16_PENDING_OWN_REPLAY"
