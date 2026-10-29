@@ -45,6 +45,7 @@ def main():
     p.add_argument("--protocol", type=Path, required=True)
     p.add_argument("--protocol-hash", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--synchronize-normalizers", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     rank, local = validate_ranks(os.environ)
@@ -107,6 +108,7 @@ def main():
             environments=16,
             steps_per_iteration=24,
             iterations=2,
+            synchronize_normalizers=a.synchronize_normalizers,
             hardware_authorized=False,
             promotion_authorized=False,
         ),
@@ -124,6 +126,12 @@ def main():
         )
         if not dist.is_initialized() or dist.get_world_size() != 4 or dist.get_rank() != rank:
             raise ValueError("NCCL initialized with exact ranks required")
+        if dist.get_backend() != "nccl":
+            raise ValueError("NCCL backend required")
+        if a.synchronize_normalizers:
+            from scripts.rsi_sync_normalizer import install_four_rank_normalizers
+
+            install_four_rank_normalizers(runner.alg)
         runner.alg.broadcast_parameters()
         policy = runner.alg.get_policy()
         before = {name: value.detach().clone() for name, value in policy.named_parameters()}
@@ -142,6 +150,13 @@ def main():
         dist.all_gather(gathered, vector)
         if any(not torch.equal(vector, other) for other in gathered):
             raise ValueError("post-update actor trainable parameters differ across ranks")
+        if a.synchronize_normalizers:
+            for model in (runner.alg.actor, runner.alg.critic):
+                for buffer in model.obs_normalizer.state_dict().values():
+                    copies = [torch.empty_like(buffer) for _ in range(4)]
+                    dist.all_gather(copies, buffer.contiguous())
+                    if any(not torch.equal(buffer, other) for other in copies):
+                        raise ValueError("normalizer buffer differs across ranks")
         checkpoint = folder / "candidate.pt"
         runner.save(str(checkpoint))
         if (
@@ -160,6 +175,7 @@ def main():
                 checkpoint_hash=file_digest(checkpoint),
                 changed_parameters=changed,
                 synchronized_actor_parameters=True,
+                synchronized_normalizer_buffers=a.synchronize_normalizers,
                 native_sim_steps=env._sim_step_counter,
                 world_steps=16 * 24 * 2,
                 hardware_authorized=False,
@@ -179,7 +195,9 @@ def main():
                     gpu_uuids=[gpu_map[i] for i in range(4)],
                     world_steps=4 * 16 * 24 * 2,
                     trainable_actor_synchronized=True,
-                    normalizer_buffer_synchronization="NOT_VERIFIED",
+                    normalizer_buffer_synchronization=(
+                        "VERIFIED_ACTOR_AND_CRITIC" if a.synchronize_normalizers else "NOT_VERIFIED"
+                    ),
                     kick_skill_proven=False,
                     team_game_verified=False,
                     hardware_authorized=False,
