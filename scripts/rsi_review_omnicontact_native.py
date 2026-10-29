@@ -7,6 +7,34 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
+def validate_scope(report, *, derived_moving_partial):
+    """Admit actual complete control boundaries, including early body failure."""
+    controls = report.get("controls")
+    if (
+        type(derived_moving_partial) is not bool
+        or report.get("status") != "CFTRACK_NATIVE_BASELINE_RECORDED_NOT_PROMOTED"
+        or report.get("runtime_failure") is not None
+        or report.get("promotion_authorized") is not False
+        or report.get("hardware_authorized") is not False
+        or type(controls) is not int
+        or not 1 <= controls <= 600
+        or (not derived_moving_partial and controls != 600)
+        or report.get("native_steps") != controls * 10
+        or report.get("new_neural_calls") != controls
+        or (
+            derived_moving_partial
+            and (
+                report.get("reference_source") != "NPZmotion"
+                or report.get("reference_all_initial_velocities") is not True
+                or report.get("reference_ball_initial_velocity") is not False
+                or report.get("reference_phase_start") != 0
+            )
+        )
+    ):
+        raise ValueError("actual unpromoted bounded native controls required")
+    return controls
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--qualification", type=Path, required=True)
@@ -14,6 +42,7 @@ def main():
     p.add_argument("--external-source", type=Path, required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--derived-moving-partial", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -29,14 +58,7 @@ def main():
     ):
         raise ValueError("unused isolated readback and exact producer required")
     report = json.loads(complete.read_text())
-    if (
-        report["status"] != "CFTRACK_NATIVE_BASELINE_RECORDED_NOT_PROMOTED"
-        or report["runtime_failure"] is not None
-        or report["controls"] != 600
-        or report["native_steps"] != 6000
-        or report["new_neural_calls"] != 600
-    ):
-        raise ValueError("complete native baseline required; preserve partial trials separately")
+    controls = validate_scope(report, derived_moving_partial=a.derived_moving_partial)
     pins = dict(report["input_file_hashes"])
     pins[str(complete)] = a.qualification_hash
     artifact = a.qualification / report["artifact"]["path"]
@@ -59,14 +81,31 @@ def main():
         from rosclaw_soccer.rsi.cftrack_motion_reference import load_cftrack_motion
 
         motion_path = Path(report["motion_source"])
+        derived_receipt = motion_path.parent / "complete.json"
         if (
             str(motion_path) not in pins
-            or not motion_path.is_relative_to(external)
+            or motion_path.is_symlink()
+            or (not a.derived_moving_partial and not motion_path.is_relative_to(external))
             or report.get("reference_conditioning") is not None
             or report.get("foot_frame_conditioning") is not None
             or report.get("motor_plan") is not None
         ):
             raise ValueError("pinned complete motion without procedural conditioning required")
+        if a.derived_moving_partial:
+            if (
+                derived_receipt.is_symlink()
+                or str(derived_receipt) not in pins
+                or digest(derived_receipt) != pins[str(derived_receipt)]
+            ):
+                raise ValueError("producer-bound derived reference receipt required")
+            derived = json.loads(derived_receipt.read_text())
+            if (
+                derived.get("status") != "RETARGETED_TRAIN_RECEIVING_REFERENCE_NOT_PHYSICS"
+                or derived.get("artifact_hash") != digest(motion_path)
+                or derived.get("physics_steps") != 0
+                or derived.get("promotion_authorized") is not False
+            ):
+                raise ValueError("exact unpromoted derived reference required")
         motion = load_cftrack_motion(motion_path)
     elif reference_source != "CFgen" or report.get("motion_source") is not None:
         raise ValueError("explicit qualified CFtrack reference source required")
@@ -76,7 +115,7 @@ def main():
         dict(
             source_head=a.expected_head,
             input_file_hashes=pins,
-            maximum_new_neural_calls=600,
+            maximum_new_neural_calls=controls,
             constructor_warmups=0,
             new_physical_steps=0,
             neural_optimizer_updates=0,
@@ -97,13 +136,13 @@ def main():
     with np.load(artifact, allow_pickle=False) as saved:
         raw = {k: saved[k].copy() for k in saved.files}
     for key, shape in (
-        ("qpos", (6000, 43)),
-        ("qvel", (6000, 41)),
-        ("torque", (6000, 29)),
-        ("ball_forces", (6000, 1, 3)),
-        ("joint_targets", (600, 29)),
-        ("neural_obs", (600, 1, 1244)),
-        ("neural_actions", (600, 1, 29)),
+        ("qpos", (controls * 10, 43)),
+        ("qvel", (controls * 10, 41)),
+        ("torque", (controls * 10, 29)),
+        ("ball_forces", (controls * 10, 1, 3)),
+        ("joint_targets", (controls, 29)),
+        ("neural_obs", (controls, 1, 1244)),
+        ("neural_actions", (controls, 1, 29)),
     ):
         if raw[key].shape != shape or not np.isfinite(raw[key]).all():
             raise ValueError("full finite actual trace required: " + key)
@@ -150,6 +189,15 @@ def main():
         data.qpos[lo.bq : lo.bq + 3] = motion["object_pos_w"][0]
         data.qpos[lo.bq + 2] = max(0.11, float(data.qpos[lo.bq + 2]))
         data.qpos[lo.bq + 3 : lo.bq + 7] = motion["object_quat_w"][0]
+        if a.derived_moving_partial:
+            from rosclaw_soccer.rsi.omnicontact_initial_velocity import reference_initial_velocities
+
+            initial = reference_initial_velocities(motion, np.asarray(policy.lab2mj))
+            data.qvel[lo.rv : lo.rv + 3] = initial["root_linear"]
+            data.qvel[lo.rv + 3 : lo.rv + 6] = initial["root_angular_local"]
+            data.qvel[lo.vi] = initial["joints"]
+            data.qvel[lo.bv : lo.bv + 3] = initial["ball_linear"]
+            data.qvel[lo.bv + 3 : lo.bv + 6] = initial["ball_angular_local"]
     mujoco.mj_kinematics(model, data)
     mujoco.mj_comPos(model, data)
     # A view of scratch measurements, NOT a SharedNativeMotorWorld. Assigning
@@ -207,7 +255,7 @@ def main():
         def run(self, outputs, inputs):
             tick = len(calls)
             if (
-                tick >= 600
+                tick >= controls
                 or not np.array_equal(inputs["obs"], raw["neural_obs"][tick])
                 or not np.array_equal(inputs["time_step"], np.zeros((1, 1), np.float32))
             ):
@@ -219,7 +267,7 @@ def main():
             return result
 
     policy.ort_session = VerifySession()
-    for tick in range(600):
+    for tick in range(controls):
         if tick:
             # Preserve author's mixed-time object cache, as in native mj_step.
             data.qpos[:] = raw["qpos"][tick * 10 - 2]
@@ -256,16 +304,18 @@ def main():
         or float(forces[:, 2].max()) != report["maximum_nonfoot_force_n"]
     ):
         raise ValueError("native contact summary differs")
-    grouped = np.zeros((300, 1, 6))
-    grouped[:, 0, :3] = forces[:3000].reshape(300, 10, 3).max(axis=1)
-    q = raw["qpos"].reshape(600, 10, 43)
-    exam = label_first_touch(
-        dict(
-            force_n=grouped,
-            pelvis_z_per_substep_m=q[:300, :, lo.rq + 2][:, None],
-            ball_position_after_step_m=q[:300, -1, lo.bq : lo.bq + 3][:, None],
-        )
-    ).to_dict()
+    exam = None
+    if controls >= 300:
+        grouped = np.zeros((300, 1, 6))
+        grouped[:, 0, :3] = forces[:3000].reshape(300, 10, 3).max(axis=1)
+        q = raw["qpos"].reshape(controls, 10, 43)
+        exam = label_first_touch(
+            dict(
+                force_n=grouped,
+                pelvis_z_per_substep_m=q[:300, :, lo.rq + 2][:, None],
+                ball_position_after_step_m=q[:300, -1, lo.bq : lo.bq + 3][:, None],
+            )
+        ).to_dict()
     if data.time != 0:
         raise ValueError("readback unexpectedly advanced native time")
     check_pins(pins)
@@ -273,7 +323,9 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="CFTRACK_ACTUAL_NN1244_HISTORY_AND_TARGETS_VERIFIED",
+            status="CFTRACK_PARTIAL_DERIVED_NN_HISTORY_AND_TARGETS_VERIFIED"
+            if a.derived_moving_partial
+            else "CFTRACK_ACTUAL_NN1244_HISTORY_AND_TARGETS_VERIFIED",
             source_head=a.expected_head,
             input_file_hashes=pins,
             qualification_hash=a.qualification_hash,
