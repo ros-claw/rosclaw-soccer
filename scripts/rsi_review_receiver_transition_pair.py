@@ -5,8 +5,12 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
+import onnx
 
+from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+from rosclaw_soccer.rsi.paid_teacher_policy import strict_parameters
+from rosclaw_soccer.rsi.transition_feasibility import transition_feasibility
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
 from scripts.rsi_native_fresh_common import clean
@@ -48,7 +52,7 @@ def verify_before_handoff(root, direct, smooth):
     return count
 
 
-def transition_target_metrics(root, row):
+def transition_target_metrics(root, row, codec=None):
     if row["handoff"] is None:
         return None
     step = row["handoff"]["control"]
@@ -59,11 +63,31 @@ def transition_target_metrics(root, row):
         jumps = np.max(
             np.abs(np.diff(targets[step - 1 : min(len(targets), step + 10)], axis=0)), axis=1
         )
-        return dict(
+        metrics = dict(
             first_target_jump_rad=float(jumps[0]),
             transition_max_target_jump_rad=float(jumps.max()),
             observed_transition_controls=len(jumps),
         )
+        if codec is not None:
+            offset, scale, order = codec
+            with np.load(bind(root, row, "receiver_return_nn"), allow_pickle=False) as nn:
+                if not len(nn["control"]) or int(nn["control"][0]) != step:
+                    raise ValueError("reference must belong to actual first handoff control")
+                reference = offset + nn["NN_reference_nominal"][0][order] * scale
+            bound = transition_feasibility(
+                targets[step - 1], reference, reference_radius=0.20002, max_step=0.0
+            )
+            minimum = bound["maximum_minimum_jump_rad"]
+            if jumps[0] + 1e-6 < minimum:
+                raise ValueError("executed first jump contradicts reference-envelope geometry")
+            joint = bound["limiting_joint_index"]
+            metrics.update(
+                reference_envelope_radius_rad=0.20002,
+                unavoidable_first_jump_lower_bound_rad=minimum,
+                limiting_joint=G1_DDS_JOINT_NAMES[joint],
+                lower_bound_is_not_a_safety_certificate=True,
+            )
+        return metrics
 
 
 def main():
@@ -94,6 +118,17 @@ def main():
         "NEURAL_RELAY_CHILD_VELOCITY_GENERATION_PAIR16_PENDING_OWN_REPLAY",
         worlds=16,
     )
+    policies = [
+        Path(path)
+        for path in source["input_file_hashes"]
+        if path.endswith("/ckp/policy_30000.onnx")
+    ]
+    if len(policies) != 1 or digest(policies[0]) != source["input_file_hashes"][str(policies[0])]:
+        raise ValueError("one hash-bound original reference policy required")
+    graph = onnx.load(policies[0], load_external_data=False)
+    names, params = strict_parameters({x.key: x.value for x in graph.metadata_props})
+    order = np.array([names.index(name) for name in G1_DDS_JOINT_NAMES])
+    codec = (params["default_joint_pos"][order], params["action_scale"][order], order)
     scene = a.source / "scene.xml"
     scene_hash = digest(scene)
     if scene.is_symlink() or digest(a.prior / "scene.xml") != scene_hash:
@@ -146,12 +181,15 @@ def main():
                 smooth_body_margins=observed_body_margins(a.source, new, common, la, lb),
                 direct_team=team_followup(a.source, old, common, model, la),
                 smooth_team=team_followup(a.source, new, common, model, la),
-                direct_target=transition_target_metrics(a.source, old),
-                smooth_target=transition_target_metrics(a.source, new),
+                direct_target=transition_target_metrics(a.source, old, codec),
+                smooth_target=transition_target_metrics(a.source, new, codec),
             )
         )
-    if digest(scene) != scene_hash:
-        raise ValueError("scene changed during review")
+    if (
+        digest(scene) != scene_hash
+        or digest(policies[0]) != source["input_file_hashes"][str(policies[0])]
+    ):
+        raise ValueError("scene or reference policy changed during review")
     clean(a.expected_head)
     a.output.parent.mkdir(parents=True, exist_ok=True)
     write_once(
