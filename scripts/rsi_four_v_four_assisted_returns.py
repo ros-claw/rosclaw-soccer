@@ -16,6 +16,7 @@ def main():
     p.add_argument("--policy-hash", required=True)
     p.add_argument("--returned-policy", type=Path)
     p.add_argument("--returned-policy-hash")
+    p.add_argument("--core-source", type=Path)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--protocol", type=Path, required=True)
     p.add_argument("--protocol-hash", required=True)
@@ -43,6 +44,12 @@ def main():
         )
     ):
         raise ValueError("exact protocol and private policy required")
+    core_pins = {}
+    if a.core_source is not None:
+        core = a.core_source.resolve() / "rosclaw"
+        if not (core / "__init__.py").is_file():
+            raise ValueError("explicit ROSClaw core source required")
+        core_pins = {str(path): file_digest(path) for path in core.rglob("*.py")}
     a.output.mkdir(parents=True, exist_ok=False)
     write_once(
         a.output / "declaration.json",
@@ -51,6 +58,7 @@ def main():
             protocol_hash=a.protocol_hash,
             policy_hash=a.policy_hash,
             returned_policy_hash=a.returned_policy_hash,
+            core_source_hashes=core_pins,
             mode="ASSISTED_TRAINING_ONLY",
             exploration_seed=a.exploration_seed,
             only_explore_after_return=a.only_explore_after_return,
@@ -63,6 +71,12 @@ def main():
     )
     try:
         import numpy as np
+
+        if a.core_source is not None:
+            import rosclaw
+
+            if Path(rosclaw.__file__).resolve() != a.core_source.resolve() / "rosclaw/__init__.py":
+                raise ValueError("imported core does not match pinned source")
 
         from rosclaw_soccer.growth.near_ball_residual import NearBallResidualPolicy
         from rosclaw_soccer.skills.team.independent_team_world import (
@@ -189,6 +203,8 @@ def main():
             )
         ):
             raise ValueError("input changed during simulation")
+        if any(file_digest(Path(path)) != h for path, h in core_pins.items()):
+            raise ValueError("pinned core changed during simulation")
         clean(a.expected_head)
         write_once(
             a.output / "complete.json",
