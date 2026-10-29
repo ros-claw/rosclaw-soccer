@@ -86,3 +86,20 @@ def test_passer_recovery_must_be_explicit_boolean_before_world_allocation():
             policy_factory=lambda: None,
             expected_policy_type=object,
         )
+
+
+def test_historical_baseline_identity_ignores_only_local_index_and_paths():
+    from scripts.rsi_run_shared_router_relay import same_baseline_metadata
+
+    previous = dict(
+        index=1,
+        context=2,
+        lateral_m=-0.35,
+        arm="router",
+        controls=300,
+        artifacts={"physics": "old"},
+    )
+    same = dict(previous, index=0, artifacts={"physics": "new"})
+    assert same_baseline_metadata(same, previous)
+    assert not same_baseline_metadata(dict(same, context=3), previous)
+    assert not same_baseline_metadata(dict(same, controls=299), previous)

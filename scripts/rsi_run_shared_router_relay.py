@@ -9,6 +9,13 @@ from scripts.rsi_native_context_recovery_common import check_pins, digest
 from scripts.rsi_native_fresh_common import admit_frontier, clean, receipt, source_pins
 
 
+def same_baseline_metadata(current, historical):
+    """Ignore storage-local indices only; context, arm and outcomes still match."""
+    return {k: v for k, v in current.items() if k not in ("artifacts", "index")} == {
+        k: v for k, v in historical.items() if k not in ("artifacts", "index")
+    }
+
+
 def freeze_router(actor):
     import torch
 
@@ -331,9 +338,9 @@ def main():
                     for r in baseline_receipt["records"]
                     if r["context"] == context and r["lateral_m"] == side and r["arm"] == "router"
                 ]
-                if {k: v for k, v in record.items() if k != "artifacts"} != {
-                    k: v for k, v in previous.items() if k != "artifacts"
-                } or set(artifacts) != set(previous["artifacts"]):
+                if not same_baseline_metadata(record, previous) or set(artifacts) != set(
+                    previous["artifacts"]
+                ):
                     raise ValueError("historical router baseline metadata mismatch")
                 for key, saved in previous["artifacts"].items():
                     path = a.baseline_root / saved["path"]
