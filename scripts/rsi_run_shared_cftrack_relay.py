@@ -7,6 +7,28 @@ import sys
 from pathlib import Path
 
 
+def validate_replay_binding(root, replay, pins, *, source_head, external_head):
+    """Reject missing or changed completed source commitments before replay."""
+    from scripts.rsi_native_context_recovery_common import digest
+
+    declaration, scene = root / "declaration.json", root / "scene.xml"
+    if (
+        declaration.is_symlink()
+        or scene.is_symlink()
+        or digest(declaration) != replay.get("declaration_hash")
+        or digest(scene) != replay.get("scene_hash")
+        or (root / "failed.json").exists()
+    ):
+        raise ValueError("source declaration and scene must be bound to terminal receipt")
+    source_declaration = json.loads(declaration.read_text())
+    if (
+        source_declaration.get("input_file_hashes") != pins
+        or source_declaration.get("source_head") != source_head
+        or source_declaration.get("external_head") != external_head
+    ):
+        raise ValueError("exact original source and external asset pins required for replay")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for flag in ("frontier-root", "external-source", "output"):
@@ -67,6 +89,13 @@ def main():
             or len(replay["records"]) != 16
         ):
             raise ValueError("matching source run and exact source code required")
+        validate_replay_binding(
+            a.replay_source,
+            replay,
+            pins,
+            source_head=a.expected_head,
+            external_head=a.external_head,
+        )
     import numpy as np
 
     from rosclaw_soccer.rsi.cftrack_shared_relay_trial import run_shared_cftrack_trial
@@ -251,6 +280,8 @@ def main():
             source_head=a.expected_head,
             external_head=a.external_head,
             producer_hash=a.replay_source_hash,
+            declaration_hash=digest(a.output / "declaration.json"),
+            scene_hash=digest(a.output / "scene.xml"),
             records=records,
             hardware_authorized=False,
             promotion_authorized=False,
