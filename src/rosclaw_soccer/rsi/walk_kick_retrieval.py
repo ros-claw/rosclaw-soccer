@@ -7,6 +7,22 @@ Only initial observable course features are accepted at inference.
 import numpy as np
 
 
+def course_in_training_domain(query):
+    """Check declared initial-course support; not a safety or success claim.
+
+    The first-touch experiments use initial world-frame ball x/y/vx with a
+    stationary robot at the origin. A transformed moving-teammate state is
+    not automatically equivalent, even if the numerical range happens to fit.
+    """
+    query = np.asarray(query, dtype=np.float64)
+    if query.shape != (3,) or not np.isfinite(query).all():
+        raise ValueError("finite initial course required")
+    x, y, vx = query
+    return bool(
+        ((2.2 <= x <= 2.4) or (2.6 <= x <= 2.8)) and abs(y) <= 0.16 and 0.25 <= abs(vx) <= 0.7
+    )
+
+
 def prospective_courses(*, extended=False):
     """Fixed public diagnostic banks balanced across the original four classes."""
     from rosclaw_soccer.training.receiving_course_preflight import FirstTouchCourse
@@ -40,6 +56,8 @@ def nearest_teacher(query, courses, eligible):
         or not eligible.any()
     ):
         raise ValueError("finite course and nonempty explicitly eligible teachers required")
+    if not course_in_training_domain(query):
+        raise ValueError("outside declared first-touch training course domain")
     # Fixed physical scales; no outcome-dependent normalization or tuning.
     scale = np.array([0.5, 0.3, 0.8])
     distances = np.sum(((courses - query) / scale) ** 2, axis=1)

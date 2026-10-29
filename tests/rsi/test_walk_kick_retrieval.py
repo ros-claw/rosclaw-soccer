@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.rsi.walk_kick_retrieval import (
+    course_in_training_domain,
     nearest_teacher,
     outcome_model_teacher,
     prospective_courses,
@@ -61,3 +62,12 @@ def test_outcome_model_ranks_fixed_donors_without_claiming_safety():
     scores[0, 1, 1] = np.nan
     with pytest.raises(ValueError):
         outcome_model_teacher(scores, np.array([3, 9]))
+
+
+def test_out_of_domain_team_pass_is_not_silently_extrapolated():
+    assert course_in_training_domain([2.3, 0.1, -0.5])
+    assert not course_in_training_domain([2.3, 0.1, -3.1])
+    assert not course_in_training_domain([2.5, 0.1, -0.5])
+    assert not course_in_training_domain([2.3, 0.17, -0.5])
+    with pytest.raises(ValueError, match="outside declared"):
+        nearest_teacher([2.3, 0.1, -3.1], [[2.3, 0.1, -0.5]], np.array([True]))
