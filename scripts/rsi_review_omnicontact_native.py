@@ -7,6 +7,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
+def rebuild_projected_target(decoded, previous, limits):
+    """Independent readback math; no source controller or actuator use."""
+    import numpy as np
+
+    bounded = np.maximum(limits[:, 0], np.minimum(limits[:, 1], decoded))
+    return np.maximum(previous - 0.08, np.minimum(previous + 0.08, bounded))
+
+
 def validate_scope(report, *, derived_moving_partial):
     """Admit actual complete control boundaries, including early body failure."""
     controls = report.get("controls")
@@ -45,6 +53,7 @@ def main():
     p.add_argument("--derived-moving-partial", action="store_true")
     p.add_argument("--factorial-protocol", type=Path)
     p.add_argument("--causal-protocol", type=Path)
+    p.add_argument("--projection-protocol", type=Path)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -61,6 +70,20 @@ def main():
         raise ValueError("unused isolated readback and exact producer required")
     report = json.loads(complete.read_text())
     controls = validate_scope(report, derived_moving_partial=a.derived_moving_partial)
+    projected = report.get("projected_target", False)
+    if (
+        type(projected) is not bool
+        or projected != (a.projection_protocol is not None)
+        or (projected and not a.derived_moving_partial)
+        or (
+            projected
+            and (
+                a.projection_protocol.is_symlink()
+                or digest(a.projection_protocol) != report.get("projection_protocol_hash")
+            )
+        )
+    ):
+        raise ValueError("source-bound explicit target projection protocol required")
     causal = report.get("causal_ball_reference", False)
     if (
         type(causal) is not bool
@@ -321,6 +344,13 @@ def main():
             return result
 
     policy.ort_session = VerifySession()
+    previous_target = data.qpos[lo.qi].astype(np.float64, copy=True)
+    physical_limits = model.jnt_range[lo.joints].astype(np.float64)
+    if projected and (
+        (previous_target < physical_limits[:, 0]).any()
+        or (previous_target > physical_limits[:, 1]).any()
+    ):
+        raise ValueError("projection initial measured position violates physical range")
     for tick in range(controls):
         if tick:
             # Preserve author's mixed-time object cache, as in native mj_step.
@@ -347,12 +377,16 @@ def main():
             if motor_plan is not None
             else decoded
         )
+        if projected:
+            applied = rebuild_projected_target(decoded, previous_target, physical_limits)
         if (
             policy.counter_step != tick + 1
             or policy.async_stage_thread is not None
             or not np.array_equal(applied, raw["joint_targets"][tick])
         ):
             raise ValueError("private CFtrack tick/decoded native target differs")
+        if projected:
+            previous_target = applied.copy()
     forces = raw["ball_forces"][:, 0]
     foot = np.flatnonzero((forces[:, :2] > 1).any(axis=1))
     nf = np.flatnonzero(forces[:, 2] > 1)
@@ -381,6 +415,8 @@ def main():
         raise ValueError("factorial protocol changed during neural readback")
     if causal and digest(a.causal_protocol) != report.get("causal_protocol_hash"):
         raise ValueError("causal protocol changed during neural readback")
+    if projected and digest(a.projection_protocol) != report.get("projection_protocol_hash"):
+        raise ValueError("projection protocol changed during neural readback")
     clean(a.expected_head)
     write_once(
         a.output / "complete.json",
@@ -396,6 +432,8 @@ def main():
             foot_frame_conditioning=report.get("foot_frame_conditioning"),
             motor_plan=report.get("motor_plan"),
             motor_nomination_hash=report.get("motor_nomination_hash"),
+            projected_target=projected,
+            projection_protocol_hash=report.get("projection_protocol_hash"),
             motion_source=str(motion_path) if motion_path else None,
             new_initial_condition_not_an_old_exam_certificate=True,
             constructor_warmups=0,

@@ -46,6 +46,7 @@ def main() -> None:
         p.add_argument("--" + key, required=True)
     p.add_argument("--factorial-protocol", type=Path)
     p.add_argument("--causal-protocol", type=Path)
+    p.add_argument("--projection-protocol", type=Path)
     a = p.parse_args()
     clean(a.expected_head)
     complete = a.qualification / "complete.json"
@@ -57,6 +58,19 @@ def main() -> None:
     ):
         raise ValueError("unused output and exact original candidate required")
     original = json.loads(complete.read_text())
+    projected = original.get("projected_target", False)
+    if (
+        type(projected) is not bool
+        or projected != (a.projection_protocol is not None)
+        or (
+            projected
+            and (
+                a.projection_protocol.is_symlink()
+                or digest(a.projection_protocol) != original.get("projection_protocol_hash")
+            )
+        )
+    ):
+        raise ValueError("source-bound explicit target projection protocol required")
     causal = original.get("causal_ball_reference", False)
     if (
         type(causal) is not bool
@@ -195,6 +209,8 @@ def main() -> None:
         raise ValueError("factorial protocol changed during replay")
     if causal and digest(a.causal_protocol) != original.get("causal_protocol_hash"):
         raise ValueError("causal protocol changed during replay")
+    if projected and digest(a.projection_protocol) != original.get("projection_protocol_hash"):
+        raise ValueError("projection protocol changed during replay")
     clean(a.expected_head)
     write_once(
         a.output / "complete.json",
