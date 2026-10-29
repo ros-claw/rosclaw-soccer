@@ -21,6 +21,7 @@ def summary(rows: list[dict]) -> dict:
     categories = Counter(c["category"] for r in contacts for c in r["reconstructed_contacts"])
     speeds = [c["relative_speed_mps"] for r in contacts for c in r["reconstructed_contacts"]]
     failure_rows = [r for r in rows if r["failure_control"] is not None]
+    before_contact = [v for r in rows for v in r.get("precontact_max_joint_delta_rad", [])]
     return dict(
         trajectories=len(rows),
         contact_observed=len(contacts),
@@ -28,6 +29,11 @@ def summary(rows: list[dict]) -> dict:
         reconstructed_bodies=dict(bodies),
         reconstructed_categories=dict(categories),
         median_reconstructed_relative_speed_mps=float(np.median(speeds)) if speeds else None,
+        precontact_delta_controls=len(before_contact),
+        precontact_median_max_joint_delta_rad=float(np.median(before_contact))
+        if before_contact
+        else None,
+        precontact_max_joint_delta_rad=max(before_contact) if before_contact else None,
         failure_trajectories=len(failure_rows),
         A_failure=sum("A" in r["failed_bodies"] for r in failure_rows),
         B_failure=sum("B" in r["failed_bodies"] for r in failure_rows),
@@ -104,13 +110,16 @@ def main() -> None:
             key = (seed, block, course["context"], course["lateral_m"])
             if key not in expected or type(course["arm"]["receiver_learned"]) is not bool:
                 raise ValueError("matched reviewed physical pair required")
-            physics, initial = bind(root, trial, "physics"), bind(root, trial, "initial")
-            if physics is None or initial is None:
+            physics, initial, motor = (
+                bind(root, trial, name) for name in ("physics", "initial", "receiver_velocity")
+            )
+            if physics is None or initial is None or motor is None:
                 raise ValueError("native history and initial state required")
             pins.extend(
                 (
                     (physics, trial["artifacts"]["physics"]["hash"]),
                     (initial, trial["artifacts"]["initial"]["hash"]),
+                    (motor, trial["artifacts"]["receiver_velocity"]["hash"]),
                 )
             )
             with (
@@ -127,6 +136,26 @@ def main() -> None:
                     for name, value in zip(("A", "B"), failed.any(axis=0), strict=True)
                     if value
                 ]
+            with np.load(motor, allow_pickle=False) as trace:
+                controls, deltas = trace["control"], trace["realized_delta_radians"]
+                if (
+                    controls.ndim != 1
+                    or deltas.shape != (len(controls), 29)
+                    or not np.isfinite(deltas).all()
+                    or np.any(np.diff(controls) <= 0)
+                ):
+                    raise ValueError("aligned finite actual receiver motor corrections required")
+                contact_control = contact.get("first_contact_control")
+                precontact = (
+                    np.max(
+                        np.abs(
+                            deltas[(controls >= contact_control - 5) & (controls < contact_control)]
+                        ),
+                        axis=1,
+                    ).tolist()
+                    if contact_control is not None
+                    else []
+                )
             rows.append(
                 dict(
                     seed=seed,
@@ -136,6 +165,7 @@ def main() -> None:
                     candidate=course["arm"]["receiver_learned"],
                     trial=trial["index"],
                     contact=contact,
+                    precontact_max_joint_delta_rad=precontact,
                     failure_control=int(first[0]) if first.size else None,
                     failed_bodies=failed_bodies,
                     handoff_control=trial["handoff"]["control"]

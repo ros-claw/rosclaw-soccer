@@ -27,3 +27,7 @@ def test_summary_counts_contact_and_full_failures_without_assuming_causality():
     assert out["contact_unmatched"] == 1 and out["reconstructed_bodies"] == {"b/thigh": 1}
     assert out["A_failure"] == 1 and out["B_failure"] == 0
     assert out["first_failure_after_handoff"] == 1
+    rows[0]["precontact_max_joint_delta_rad"] = [0.001, 0.002, 0.003]
+    out = summary(rows)
+    assert out["precontact_delta_controls"] == 3
+    assert out["precontact_median_max_joint_delta_rad"] == 0.002
