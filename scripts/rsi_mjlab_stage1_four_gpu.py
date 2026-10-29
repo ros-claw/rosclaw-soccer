@@ -46,7 +46,10 @@ def main():
     p.add_argument("--protocol-hash", required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--synchronize-normalizers", action="store_true")
+    p.add_argument("--iterations", type=int, choices=(2, 256), default=2)
     a = p.parse_args()
+    if a.iterations != 2 and not a.synchronize_normalizers:
+        raise ValueError("extended training requires synchronized normalizers")
     clean(a.expected_head)
     rank, local = validate_ranks(os.environ)
     root = a.reference_root.resolve()
@@ -87,7 +90,7 @@ def main():
     cfg.scene.num_envs, cfg.seed = 16, 20261029 + rank
     cfg.commands["motion"].motion_dir = str(motions[0].parent)
     agent = unitree_g1_soccer_ppo_runner_cfg()
-    agent.seed, agent.num_steps_per_env, agent.max_iterations = 20261029 + rank, 24, 2
+    agent.seed, agent.num_steps_per_env, agent.max_iterations = 20261029 + rank, 24, a.iterations
     agent.logger = "tensorboard"
     agent.upload_model = False
     folder = a.output / f"rank-{rank}"
@@ -107,7 +110,7 @@ def main():
             protocol_hash=a.protocol_hash,
             environments=16,
             steps_per_iteration=24,
-            iterations=2,
+            iterations=a.iterations,
             synchronize_normalizers=a.synchronize_normalizers,
             hardware_authorized=False,
             promotion_authorized=False,
@@ -135,7 +138,9 @@ def main():
         runner.alg.broadcast_parameters()
         policy = runner.alg.get_policy()
         before = {name: value.detach().clone() for name, value in policy.named_parameters()}
-        runner.learn(num_learning_iterations=2, init_at_random_ep_len=True)
+        initial_checkpoint = folder / "initial.pt"
+        runner.save(str(initial_checkpoint))
+        runner.learn(num_learning_iterations=a.iterations, init_at_random_ep_len=True)
         torch.cuda.synchronize()
         after = {name: value.detach() for name, value in policy.named_parameters()}
         if before.keys() != after.keys() or any(
@@ -143,7 +148,7 @@ def main():
         ):
             raise ValueError("finite actor parameters required")
         changed = [name for name in before if not torch.equal(before[name], after[name])]
-        if not changed or env._sim_step_counter != 192:
+        if not changed or env._sim_step_counter != 24 * a.iterations * cfg.decimation:
             raise ValueError("actual actor update and exact physics steps required")
         vector = torch.cat([v.flatten() for v in after.values()])
         gathered = [torch.empty_like(vector) for _ in range(4)]
@@ -173,11 +178,12 @@ def main():
                 gpu_uuid=gpu_map[local],
                 declaration_hash=file_digest(folder / "declaration.json"),
                 checkpoint_hash=file_digest(checkpoint),
+                initial_checkpoint_hash=file_digest(initial_checkpoint),
                 changed_parameters=changed,
                 synchronized_actor_parameters=True,
                 synchronized_normalizer_buffers=a.synchronize_normalizers,
                 native_sim_steps=env._sim_step_counter,
-                world_steps=16 * 24 * 2,
+                world_steps=16 * 24 * a.iterations,
                 hardware_authorized=False,
                 promotion_authorized=False,
             ),
@@ -188,12 +194,17 @@ def main():
             write_once(
                 a.output / "complete.json",
                 dict(
-                    status="FOUR_GPU_MJWARP_G1_PPO_SMOKE_ONLY",
+                    status=(
+                        "FOUR_GPU_MJWARP_G1_PPO_SMOKE_ONLY"
+                        if a.iterations == 2
+                        else "FOUR_GPU_MJWARP_G1_MOTION_TRAINING_ONLY"
+                    ),
                     source_head=a.expected_head,
                     reference_head=a.reference_head,
                     rank_receipt_hashes=[file_digest(path) for path in receipts],
                     gpu_uuids=[gpu_map[i] for i in range(4)],
-                    world_steps=4 * 16 * 24 * 2,
+                    world_steps=4 * 16 * 24 * a.iterations,
+                    iterations=a.iterations,
                     trainable_actor_synchronized=True,
                     normalizer_buffer_synchronization=(
                         "VERIFIED_ACTOR_AND_CRITIC" if a.synchronize_normalizers else "NOT_VERIFIED"
