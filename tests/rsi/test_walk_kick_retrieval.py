@@ -1,7 +1,11 @@
 import numpy as np
 import pytest
 
-from rosclaw_soccer.rsi.walk_kick_retrieval import nearest_teacher, prospective_courses
+from rosclaw_soccer.rsi.walk_kick_retrieval import (
+    nearest_teacher,
+    outcome_model_teacher,
+    prospective_courses,
+)
 from rosclaw_soccer.rsi.walk_kick_teacher_plan import search_course_bank
 from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
 
@@ -49,3 +53,11 @@ def test_extended_bank_has_ten_per_class_and_no_existing_cases():
     assert [(x.course[0] >= 2.6, x.course[2] > 0) for x in bank] == (
         [(False, False)] * 10 + [(False, True)] * 10 + [(True, False)] * 10 + [(True, True)] * 10
     )
+
+
+def test_outcome_model_ranks_fixed_donors_without_claiming_safety():
+    scores = np.array([[[0.8, 0.1], [0.6, 0.7]]] * 3)
+    assert outcome_model_teacher(scores, np.array([3, 9])) == 9
+    scores[0, 1, 1] = np.nan
+    with pytest.raises(ValueError):
+        outcome_model_teacher(scores, np.array([3, 9]))

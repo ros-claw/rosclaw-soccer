@@ -14,12 +14,20 @@ def main():
     p.add_argument("--shard", type=int, choices=range(4), required=True)
     p.add_argument("--prospective", action="store_true")
     p.add_argument("--extended", action="store_true")
+    p.add_argument("--outcome-model-root", type=Path)
+    p.add_argument("--outcome-model-hash")
     a = p.parse_args()
     if a.extended and not a.prospective:
         raise ValueError("extended bank requires prospective evaluation")
+    if bool(a.outcome_model_root) != bool(a.outcome_model_hash):
+        raise ValueError("exact outcome model root and receipt hash required together")
 
     from rosclaw_soccer.rsi.experimental_velocity_evidence import admit_heading_evidence
-    from rosclaw_soccer.rsi.walk_kick_retrieval import nearest_teacher, prospective_courses
+    from rosclaw_soccer.rsi.walk_kick_retrieval import (
+        nearest_teacher,
+        outcome_model_teacher,
+        prospective_courses,
+    )
     from rosclaw_soccer.rsi.walk_kick_teacher_plan import search_course_bank
     from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
     from scripts.rsi_atomic_artifacts import write_once
@@ -54,6 +62,25 @@ def main():
         raise ValueError("complete unpromoted public teacher audit required")
     pins = dict(source["input_file_hashes"])
     pins[str(a.source_audit)] = a.source_audit_hash
+    model_report = None
+    if a.outcome_model_root:
+        model_receipt = a.outcome_model_root / "complete.json"
+        if model_receipt.is_symlink() or digest(model_receipt) != a.outcome_model_hash:
+            raise ValueError("exact outcome-model receipt required")
+        model_report = json.loads(model_receipt.read_text())
+        if (
+            model_report.get("status") != "GROUPED_OUTCOME_MODEL_NEEDS_PHYSICS_NOT_SKILL"
+            or model_report.get("source_audit_hash") != a.source_audit_hash
+            or [x["seed"] for x in model_report["records"]] != [981, 982, 983]
+            or model_report.get("promotion_authorized") is not False
+        ):
+            raise ValueError("same source and all three unpromoted models required")
+        pins[str(model_receipt)] = a.outcome_model_hash
+        for rec in model_report["records"]:
+            checkpoint = a.outcome_model_root / f"model-{rec['seed']}.pt"
+            if checkpoint.is_symlink() or digest(checkpoint) != rec["checkpoint_hash"]:
+                raise ValueError("exact frozen outcome checkpoint required")
+            pins[str(checkpoint)] = rec["checkpoint_hash"]
     fast_assets, point_pins = admit_heading_evidence(
         a.experimental_approach_config, a.experimental_approach_config_hash
     )
@@ -106,6 +133,23 @@ def main():
     eligible = np.asarray(eligible, dtype=bool)
     if not eligible.any():
         raise ValueError("nonempty successful training donors required")
+    learned_models = []
+    if model_report:
+        import torch
+
+        from rosclaw_soccer.rsi.first_touch_outcome_model import FirstTouchOutcomeModel
+
+        for rec in model_report["records"]:
+            checkpoint = torch.load(
+                a.outcome_model_root / f"model-{rec['seed']}.pt",
+                map_location="cpu",
+                weights_only=True,
+            )
+            if checkpoint.get("seed") != rec["seed"]:
+                raise ValueError("outcome model seed mismatch")
+            predictor = FirstTouchOutcomeModel().eval()
+            predictor.load_state_dict(checkpoint["state_dict"], strict=True)
+            learned_models.append(predictor)
     vm, vc = one("/velocity/v0/exported/policy.onnx"), one("/velocity/v0/params/deploy.yaml")
     assets = dict(
         velocity_model=vm,
@@ -142,6 +186,8 @@ def main():
             extended_course_bank=a.extended,
             independent_fresh=False,
             no_actor_gradient=True,
+            outcome_model_hash=a.outcome_model_hash,
+            outcome_model_is_safety_gate=False,
             hardware_authorized=False,
             promotion_authorized=False,
         ),
@@ -149,8 +195,30 @@ def main():
     rows = []
     for i in assignments:
         donor = nearest_teacher(evaluation_courses[i].course, features, eligible)
-        chosen = selected[donor]
-        for arm in ("parent", "retrieval"):
+        donors = {"retrieval": donor}
+        if learned_models:
+            donor_ids = np.flatnonzero(eligible)
+            candidates = []
+            for index in donor_ids:
+                params = selected[int(index)]["parameters"]
+                candidates.append(
+                    [
+                        *evaluation_courses[i].course,
+                        params["speed_mps"],
+                        params["entry_gap_m"],
+                        params["reference_frame"],
+                        params["root_lateral_offset_m"],
+                    ]
+                )
+            candidate_tensor = torch.tensor(candidates, dtype=torch.float32)
+            with torch.no_grad():
+                scores = np.stack([m(candidate_tensor).sigmoid().numpy() for m in learned_models])
+            donors["outcome-model"] = outcome_model_teacher(scores, donor_ids)
+        arms = (
+            ("parent", "retrieval", "outcome-model") if learned_models else ("parent", "retrieval")
+        )
+        for arm in arms:
+            chosen = selected[donors[arm]] if arm != "parent" else None
             params = (
                 dict(
                     speed_mps=1.0, entry_gap_m=0.9, reference_frame=None, root_lateral_offset_m=0.0
@@ -185,7 +253,7 @@ def main():
             rows.append(
                 dict(
                     course_index=i,
-                    donor_index=donor if arm == "retrieval" else None,
+                    donor_index=donors[arm] if arm != "parent" else None,
                     arm=arm,
                     result=result,
                     raw_hash=digest(path),

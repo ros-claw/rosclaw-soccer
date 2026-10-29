@@ -45,3 +45,26 @@ def nearest_teacher(query, courses, eligible):
     distances = np.sum(((courses - query) / scale) ** 2, axis=1)
     distances[~eligible] = np.inf
     return int(np.argmin(distances))
+
+
+def outcome_model_teacher(scores, donor_indices):
+    """Rank frozen candidates; predictions are NOT a safety guarantee."""
+    scores = np.asarray(scores, dtype=np.float64)
+    donor_indices = np.asarray(donor_indices)
+    if (
+        scores.ndim != 3
+        or scores.shape[0] != 3
+        or scores.shape[2] != 2
+        or donor_indices.shape != (scores.shape[1],)
+        or not np.issubdtype(donor_indices.dtype, np.integer)
+        or not len(donor_indices)
+        or len(np.unique(donor_indices)) != len(donor_indices)
+        or not np.isfinite(scores).all()
+        or (scores < 0).any()
+        or (scores > 1).any()
+    ):
+        raise ValueError("three finite outcome-score vectors and unique donors required")
+    # Conservative across ensemble members is still an uncalibrated ranking,
+    # not an execution shield. Stable first maximum preserves deterministic ties.
+    rank = scores[:, :, 0].mean(axis=0) * scores[:, :, 1].min(axis=0)
+    return int(donor_indices[int(np.argmax(rank))])
