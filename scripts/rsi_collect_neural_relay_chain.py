@@ -491,22 +491,6 @@ def main():
             if path.is_symlink() or digest(path) != expected:
                 raise ValueError("exact pinned return-player candidate required")
             pins[str(path)] = expected
-    if a.receiver_velocity_candidate and a.receiver_child_velocity_sampling:
-        arms = [
-            dict(
-                start=80,
-                memory="own_shadow_carry",
-                reference_bridge_controls=0,
-                receiver_whole=True,
-                receiver_learned=True,
-                passer_velocity_recovery=True,
-                passer_prepare=True,
-                receiver_adaptive_intercept=True,
-                receiver_child_candidate=True,
-                exploration_seed=seed,
-            )
-            for seed in (None, 92117, 92143, 92171)
-        ]
     if a.receiver_exploration:
         if a.identity_review.is_symlink() or digest(a.identity_review) != a.identity_review_hash:
             raise ValueError("exact independent whole-receiver identity review required")
@@ -905,6 +889,22 @@ def main():
                 receiver_child_candidate=enabled,
             )
             for enabled in (False, True)
+        ]
+    if a.receiver_velocity_candidate and a.receiver_child_velocity_sampling:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                receiver_whole=True,
+                receiver_learned=True,
+                passer_velocity_recovery=True,
+                passer_prepare=True,
+                receiver_adaptive_intercept=True,
+                receiver_child_candidate=True,
+                exploration_seed=seed,
+            )
+            for seed in (None, 92117, 92143, 92171)
         ]
     if a.receiver_exploration:
         arms = [
