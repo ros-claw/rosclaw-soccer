@@ -103,3 +103,34 @@ def test_historical_baseline_identity_ignores_only_local_index_and_paths():
     assert same_baseline_metadata(same, previous)
     assert not same_baseline_metadata(dict(same, context=3), previous)
     assert not same_baseline_metadata(dict(same, controls=299), previous)
+
+
+def test_passer_recovery_uses_pinned_continuous_600_control_stream(monkeypatch):
+    from rosclaw_soccer.rsi import cftrack_shared_relay_trial as module
+
+    calls = []
+    stream = object()
+    monkeypatch.setattr(
+        module,
+        "ContinuousVelocityStream",
+        lambda model, config, **kwargs: calls.append((model, config, kwargs)) or stream,
+    )
+    monkeypatch.setattr(module, "PasserVelocityRecovery", lambda w, prefix, s: (w, prefix, s))
+    setup = SimpleNamespace(
+        velocity_path="model.onnx",
+        velocity_config="config.yaml",
+        pins={"model.onnx": "model-hash", "config.yaml": "config-hash"},
+    )
+    world = object()
+    assert module.new_passer_recovery(setup, world) == (world, "a/", stream)
+    assert calls == [
+        (
+            "model.onnx",
+            "config.yaml",
+            {
+                "expected_model_hash": "model-hash",
+                "expected_config_hash": "config-hash",
+                "horizon_controls": 600,
+            },
+        )
+    ]

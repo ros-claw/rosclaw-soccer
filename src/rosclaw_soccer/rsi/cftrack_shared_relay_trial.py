@@ -6,6 +6,7 @@ from typing import Any
 import mujoco
 import numpy as np
 
+from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
 from rosclaw_soccer.rsi.cftrack_live_history import CFtrackLiveHistory
 from rosclaw_soccer.rsi.cftrack_shared_handoff import handoff_shared_cftrack
 from rosclaw_soccer.rsi.live_neural_transition import blend_live_targets, quintic_weight
@@ -18,6 +19,18 @@ from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
 from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
 from rosclaw_soccer.rsi.shared_relay_setup import motion_segment, receiving_target_for_player
 from rosclaw_soccer.rsi.shared_shadow_motor import SharedShadowMotor
+
+
+def new_passer_recovery(setup: Any, world: Any) -> PasserVelocityRecovery:
+    """Use the existing continuous own-history stream for this H600 world."""
+    stream = ContinuousVelocityStream(
+        setup.velocity_path,
+        setup.velocity_config,
+        expected_model_hash=setup.pins[str(setup.velocity_path)],
+        expected_config_hash=setup.pins[str(setup.velocity_config)],
+        horizon_controls=600,
+    )
+    return PasserVelocityRecovery(world, "a/", stream)
 
 
 def early_incoming_boundary(world: Any, prefix: str, forward: np.ndarray) -> tuple[bool, float]:
@@ -92,9 +105,7 @@ def run_shared_cftrack_trial(
     )
     history = CFtrackLiveHistory(w, "b/")
     velocity, readiness = setup.velocity(), OnlineReceivingBoundary(w, "b/")
-    recovery = (
-        PasserVelocityRecovery(w, "a/", setup.velocity()) if passer_velocity_recovery else None
-    )
+    recovery = new_passer_recovery(setup, w) if passer_velocity_recovery else None
     passer_foot_seen = False
     recovery_boundary = None
     recovery_old_pd = recovery_new_pd = None
