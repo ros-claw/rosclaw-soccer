@@ -44,11 +44,19 @@ def main():
     return_player_seeded_sampling = (
         dec["protocol"] == "soccer.neural_relay_return_player_own_sampling_seeded.development.v47"
     )
+    child_velocity_candidate = (
+        dec["protocol"] == "soccer.neural_relay_child_velocity_candidate.development.v53"
+    )
     child_velocity_sampling = (
         dec["protocol"] == "soccer.neural_relay_child_velocity_sampling.development.v52"
     )
-    receiver_velocity_match_prepared = child_velocity_sampling or (
-        dec["protocol"] == "soccer.neural_relay_receiver_velocity_match_prepared.development.v51"
+    receiver_velocity_match_prepared = (
+        child_velocity_candidate
+        or child_velocity_sampling
+        or (
+            dec["protocol"]
+            == "soccer.neural_relay_receiver_velocity_match_prepared.development.v51"
+        )
     )
     prepared_candidate = (
         dec["protocol"] == "soccer.neural_relay_prepared_return_candidate.development.v50"
@@ -253,6 +261,8 @@ def main():
         if successor_pair
         else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
         if return_align_pair
+        else "NEURAL_RELAY_CHILD_VELOCITY_CANDIDATE16_PENDING_OWN_REPLAY"
+        if child_velocity_candidate
         else "NEURAL_RELAY_CHILD_VELOCITY_SAMPLING32_PENDING_OWN_REPLAY"
         if child_velocity_sampling
         else "NEURAL_RELAY_RECEIVER_VELOCITY_MATCH_PREPARED16_PENDING_OWN_REPLAY"
@@ -378,6 +388,7 @@ def main():
             "soccer.neural_relay_prepared_return_candidate.development.v50",
             "soccer.neural_relay_receiver_velocity_match_prepared.development.v51",
             "soccer.neural_relay_child_velocity_sampling.development.v52",
+            "soccer.neural_relay_child_velocity_candidate.development.v53",
             "soccer.neural_relay_receiver_motion_pair.development.v18",
             "soccer.neural_relay_receiver_dense_exploration.development.v19",
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
@@ -462,6 +473,21 @@ def main():
                 for seed in (None, 92117, 92143, 92171)
             ]
             if child_velocity_sampling
+            else [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_whole=True,
+                    receiver_learned=True,
+                    passer_velocity_recovery=True,
+                    passer_prepare=True,
+                    receiver_adaptive_intercept=True,
+                    receiver_child_candidate=enabled,
+                )
+                for enabled in (False, True)
+            ]
+            if child_velocity_candidate
             else [
                 dict(
                     start=80,
@@ -820,6 +846,12 @@ def main():
     else:
         indices = (1, 4, 20, 21)
     pins = dict(s["input_file_hashes"])
+    if child_velocity_candidate:
+        for key in ("receiver_velocity_candidate", "receiver_velocity_candidate_receipt"):
+            path = Path(dec[key])
+            expected = dec[key + "_hash"]
+            if path.is_symlink() or pins.get(str(path)) != expected or digest(path) != expected:
+                raise ValueError("exact B candidate evidence required for own replay")
     if prepared_candidate:
         for key in ("return_player_candidate", "return_player_training_receipt"):
             path = Path(dec[key])
@@ -958,6 +990,7 @@ def main():
 
         from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
         from rosclaw_soccer.rsi.adaptive_passer_velocity import AdaptivePasserVelocityRecovery
+        from rosclaw_soccer.rsi.b_child_velocity_candidate import load_b_child_velocity_candidate
         from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
         from rosclaw_soccer.rsi.live_neural_transition import blend_live_targets, quintic_weight
         from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
@@ -1054,6 +1087,18 @@ def main():
                 precontact_continuation_mode=precontact_continuation,
             )
             if learned_pair
+            else None
+        )
+        new_b_actor = (
+            load_b_child_velocity_candidate(
+                setup,
+                Path(dec["receiver_velocity_candidate"]),
+                dec["receiver_velocity_candidate_hash"],
+                Path(dec["receiver_velocity_candidate_receipt"]),
+                dec["receiver_velocity_candidate_receipt_hash"],
+                parent_hash=dec["receiver_checkpoint_hash"],
+            )
+            if child_velocity_candidate
             else None
         )
         if (a.source_root / "scene.xml").read_text() != setup.xml:
@@ -1179,7 +1224,11 @@ def main():
                 whole_receiver = SharedNativeReceivingPlayer(
                     w,
                     "b/",
-                    learned_actor if course["arm"].get("receiver_learned", False) else whole_actor,
+                    new_b_actor
+                    if course["arm"].get("receiver_child_candidate", False)
+                    else learned_actor
+                    if course["arm"].get("receiver_learned", False)
+                    else whole_actor,
                     model=setup.velocity_path,
                     config=setup.velocity_config,
                     expected_model_hash=pins[str(setup.velocity_path)],

@@ -225,3 +225,31 @@ def test_child_sampling_requires_velocity_match_protocol(tmp_path):
     assert result.returncode == 2
     assert "child velocity sampling requires prepared velocity-match pair" in result.stderr
     assert not (tmp_path / "output").exists()
+
+
+def test_b_velocity_candidate_rejects_incomplete_lineage(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
+            "--frontier-root",
+            str(tmp_path / "frontier"),
+            "--frontier-head",
+            "unused",
+            "--frontier-hash",
+            "unused",
+            "--expected-head",
+            "unused",
+            "--output",
+            str(tmp_path / "output"),
+            "--receiver-velocity-candidate",
+            str(tmp_path / "candidate.pt"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "B candidate requires exact isolated velocity-match lineage" in result.stderr
+    assert not (tmp_path / "output").exists()

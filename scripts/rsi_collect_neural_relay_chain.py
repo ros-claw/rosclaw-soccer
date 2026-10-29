@@ -56,6 +56,10 @@ def main():
     p.add_argument("--return-player-prepared-pair", action="store_true")
     p.add_argument("--receiver-velocity-match-prepared-pair", action="store_true")
     p.add_argument("--receiver-child-velocity-sampling", action="store_true")
+    p.add_argument("--receiver-velocity-candidate", type=Path)
+    p.add_argument("--receiver-velocity-candidate-hash")
+    p.add_argument("--receiver-velocity-candidate-receipt", type=Path)
+    p.add_argument("--receiver-velocity-candidate-receipt-hash")
     p.add_argument("--return-player-candidate", type=Path)
     p.add_argument("--return-player-candidate-hash")
     p.add_argument("--return-player-training-receipt", type=Path)
@@ -89,6 +93,18 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    b_candidate_fields = (
+        a.receiver_velocity_candidate,
+        a.receiver_velocity_candidate_hash,
+        a.receiver_velocity_candidate_receipt,
+        a.receiver_velocity_candidate_receipt_hash,
+    )
+    if any(b_candidate_fields) and (
+        not all(b_candidate_fields)
+        or not a.receiver_velocity_match_prepared_pair
+        or a.receiver_child_velocity_sampling
+    ):
+        p.error("B candidate requires exact isolated velocity-match lineage")
     if a.receiver_child_velocity_sampling and not a.receiver_velocity_match_prepared_pair:
         p.error("child velocity sampling requires prepared velocity-match pair")
     if a.receiver_velocity_match_prepared_pair and (
@@ -460,6 +476,14 @@ def main():
         ):
             if path.is_symlink() or digest(path) != expected:
                 raise ValueError("exact candidate evidence required before physics")
+            pins[str(path)] = expected
+    if a.receiver_velocity_candidate:
+        for path, expected in (
+            (a.receiver_velocity_candidate, a.receiver_velocity_candidate_hash),
+            (a.receiver_velocity_candidate_receipt, a.receiver_velocity_candidate_receipt_hash),
+        ):
+            if path.is_symlink() or digest(path) != expected:
+                raise ValueError("exact B candidate evidence required before physics")
             pins[str(path)] = expected
     if a.return_player_candidate:
         for path, expected in (
@@ -853,6 +877,21 @@ def main():
             )
             for seed in (None, 92117, 92143, 92171)
         ]
+    if a.receiver_velocity_candidate:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                receiver_whole=True,
+                receiver_learned=True,
+                passer_velocity_recovery=True,
+                passer_prepare=True,
+                receiver_adaptive_intercept=True,
+                receiver_child_candidate=enabled,
+            )
+            for enabled in (False, True)
+        ]
     if a.receiver_exploration:
         arms = [
             dict(
@@ -898,6 +937,8 @@ def main():
                 if a.passer_successor_pair
                 else "soccer.neural_relay_passer_return_alignment.development.v36"
                 if a.passer_return_align_pair
+                else "soccer.neural_relay_child_velocity_candidate.development.v53"
+                if a.receiver_velocity_candidate
                 else "soccer.neural_relay_child_velocity_sampling.development.v52"
                 if a.receiver_child_velocity_sampling
                 else "soccer.neural_relay_receiver_velocity_match_prepared.development.v51"
@@ -1012,6 +1053,14 @@ def main():
             identity_review_head=a.identity_review_head,
             receiver_checkpoint=str(a.receiver_checkpoint) if a.receiver_learned_pair else None,
             receiver_checkpoint_hash=a.receiver_checkpoint_hash,
+            receiver_velocity_candidate=str(a.receiver_velocity_candidate)
+            if a.receiver_velocity_candidate
+            else None,
+            receiver_velocity_candidate_hash=a.receiver_velocity_candidate_hash,
+            receiver_velocity_candidate_receipt=str(a.receiver_velocity_candidate_receipt)
+            if a.receiver_velocity_candidate_receipt
+            else None,
+            receiver_velocity_candidate_receipt_hash=a.receiver_velocity_candidate_receipt_hash,
             return_player_candidate=str(a.return_player_candidate)
             if a.return_player_candidate
             else None,
@@ -1145,6 +1194,7 @@ def main():
 
         from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
         from rosclaw_soccer.rsi.adaptive_passer_velocity import AdaptivePasserVelocityRecovery
+        from rosclaw_soccer.rsi.b_child_velocity_candidate import load_b_child_velocity_candidate
         from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
         from rosclaw_soccer.rsi.live_neural_transition import blend_live_targets, quintic_weight
         from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
@@ -1233,6 +1283,18 @@ def main():
             if a.receiver_learned_pair
             else None
         )
+        new_b_actor = (
+            load_b_child_velocity_candidate(
+                setup,
+                a.receiver_velocity_candidate,
+                a.receiver_velocity_candidate_hash,
+                a.receiver_velocity_candidate_receipt,
+                a.receiver_velocity_candidate_receipt_hash,
+                parent_hash=a.receiver_checkpoint_hash,
+            )
+            if a.receiver_velocity_candidate
+            else None
+        )
         (a.output / "scene.xml").write_text(setup.xml)
         typed = []
         for i in indices:
@@ -1279,7 +1341,11 @@ def main():
                 SharedNativeReceivingPlayer(
                     w,
                     "b/",
-                    learned_actor if course["arm"].get("receiver_learned", False) else whole_actor,
+                    new_b_actor
+                    if course["arm"].get("receiver_child_candidate", False)
+                    else learned_actor
+                    if course["arm"].get("receiver_learned", False)
+                    else whole_actor,
                     model=setup.velocity_path,
                     config=setup.velocity_config,
                     expected_model_hash=pins[str(setup.velocity_path)],
@@ -2171,6 +2237,8 @@ def main():
                     if a.passer_successor_pair
                     else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
                     if a.passer_return_align_pair
+                    else "NEURAL_RELAY_CHILD_VELOCITY_CANDIDATE16_PENDING_OWN_REPLAY"
+                    if a.receiver_velocity_candidate
                     else "NEURAL_RELAY_CHILD_VELOCITY_SAMPLING32_PENDING_OWN_REPLAY"
                     if a.receiver_child_velocity_sampling
                     else "NEURAL_RELAY_RECEIVER_VELOCITY_MATCH_PREPARED16_PENDING_OWN_REPLAY"
