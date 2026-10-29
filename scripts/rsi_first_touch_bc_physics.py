@@ -2,6 +2,7 @@
 
 import argparse
 import json
+from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +43,9 @@ def main():
     p.add_argument("--student-reference", type=Path)
     p.add_argument("--student-reference-hash")
     p.add_argument("--phase-policy", action="store_true")
+    p.add_argument("--kick-teacher-shadow", action="store_true")
+    p.add_argument("--shadow-reference", type=Path)
+    p.add_argument("--shadow-reference-hash")
     a = p.parse_args()
     clean(a.expected_head)
     if len(a.source) != 4 or len(a.source_hash) != 4 or len(a.declaration_hash) != 4:
@@ -62,6 +66,22 @@ def main():
         raise ValueError("reference and exact receipt hash must be supplied together")
     if a.phase_policy and (a.student_reference is not None or not trained.get("kick_phase_only")):
         raise ValueError("phase-only trained model and no takeover reference required")
+    if a.kick_teacher_shadow != bool(a.shadow_reference) or a.kick_teacher_shadow != bool(
+        a.shadow_reference_hash
+    ):
+        raise ValueError("shadow requires an exact prior student reference")
+    shadow_report = None
+    if a.kick_teacher_shadow:
+        if (
+            not a.phase_policy
+            or file_digest(a.shadow_reference / "complete.json") != a.shadow_reference_hash
+        ):
+            raise ValueError("source-bound phase student reference required")
+        shadow_report = json.loads((a.shadow_reference / "complete.json").read_text())
+        if shadow_report["model_hash"] != a.model_hash or [
+            r["course"] for r in shadow_report["rows"]
+        ] != list(range(0, 40, 5)):
+            raise ValueError("same student and complete eight courses required")
     reference_report = None
     if a.student_reference is not None:
         reference_receipt = a.student_reference / "complete.json"
@@ -125,13 +145,16 @@ def main():
     from rosclaw.simforge.tasks.g1_goalforge.concepts import G1_HARD_TORQUE_LIMITS
 
     from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
+    from rosclaw_soccer.rsi.kick_reference_phase import nearest_kick_reference_phase
     from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
     from rosclaw_soccer.rsi.observed_velocity_continuation import ObservedVelocityContinuation
+    from rosclaw_soccer.rsi.shared_kick_history import measured_kick_sample
     from rosclaw_soccer.rsi.shared_native_motor_world import (
         NativePDParameters,
         SharedNativeMotorWorld,
     )
     from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
+    from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
     from rosclaw_soccer.rsi.walk_kick_approach_command import approach_command
 
     model = mujoco.MjModel.from_xml_string(shared_native_scene(scene.read_text(), prefixes=("a/",)))
@@ -189,6 +212,7 @@ def main():
             phase_policy=a.phase_policy,
             kick_source_hash=kick_hash,
             kick_dependency_hashes={str(path): digest for path, digest in kick_dependencies},
+            shadow_reference_hash=a.shadow_reference_hash,
             courses=list(range(0, 40, 5)),
             promotion_authorized=False,
             hardware_authorized=False,
@@ -282,6 +306,13 @@ def main():
             recorded = {k: [first[k]] for k in ("qpos", "qvel", "torque", "ball_forces")}
             targets = [target.copy()]
             inputs = []
+            history = deque(maxlen=5)
+            if a.kick_teacher_shadow and not world.failed:
+                history.append(measured_kick_sample(world, "a/"))
+            kick_shadow = None
+            teacher_proposals = []
+            shadow_receipt = None
+            selected_reference_phase = None
             for frame in range(1, 360):
                 if world.failed:
                     break
@@ -296,6 +327,20 @@ def main():
                         if not world.switch_pd_profile("a/", kp)["physics_unchanged"]:
                             raise ValueError("kick gain transition changed physical state")
                         switch_frame = frame
+                        if a.kick_teacher_shadow:
+                            _, _, _, mapping = kick_types
+                            selected_reference_phase = nearest_kick_reference_phase(
+                                q[7:36],
+                                v[6:35],
+                                kick.motion_joint_pos[:, mapping],
+                                kick.motion_joint_vel[:, mapping],
+                            )["reference_frame"]
+                            kick_shadow = SharedRoboNaldoPlayer(
+                                world, "a/", kick, goal=np.array([8.0, 0.0, 0.11])
+                            )
+                            shadow_receipt = kick_shadow.install_measured_entry(
+                                tuple(history), reference_frame=selected_reference_phase
+                            )
                 if shadow is not None:
                     command = approach_command(
                         q=q,
@@ -351,7 +396,14 @@ def main():
                     raise ValueError("finite student target required")
                 if not a.phase_policy or switch_frame is not None:
                     inputs.append(observation)
+                if kick_shadow is not None:
+                    teacher_target, _ = kick_shadow.propose()
+                    teacher_proposals.append(teacher_target.copy())
                 result = world.advance({"a/": target})
+                if kick_shadow is not None:
+                    kick_shadow.commit_observed_target()
+                if a.kick_teacher_shadow and not world.failed:
+                    history.append(measured_kick_sample(world, "a/"))
                 if a.phase_policy and switch_frame is None:
                     with np.load(parent_path, allow_pickle=False) as original:
                         if not np.array_equal(target, original["joint_targets"][frame]):
@@ -388,6 +440,20 @@ def main():
             if shadow is not None:
                 arrays["shadow_targets"] = np.stack(shadow_targets)
                 arrays["shadow_commands"] = np.stack(shadow_commands)
+            if a.kick_teacher_shadow:
+                arrays["kick_teacher_targets"] = np.asarray(teacher_proposals).reshape(-1, 29)
+                ref_rows = [r for r in shadow_report["rows"] if r["course"] == i]
+                if len(ref_rows) != 1:
+                    raise ValueError("one original bounded student trajectory required")
+                ref_path = a.shadow_reference / f"course-{i:02d}-student.npz"
+                if file_digest(ref_path) != ref_rows[0]["artifact_hash"]:
+                    raise ValueError("original bounded student artifact mismatch")
+                reference_pins.append((ref_path, ref_rows[0]["artifact_hash"]))
+                with np.load(ref_path, allow_pickle=False) as ref:
+                    if any(
+                        not np.array_equal(arrays[k], ref[k], equal_nan=True) for k in ref.files
+                    ):
+                        raise ValueError("teacher shadow altered actual student trajectory")
             label = relabel_arrays(arrays, controls=n, ball_address=lo.bq, root_address=lo.rq)
             path = a.output / f"course-{i:02d}-student.npz"
             np.savez_compressed(path, **arrays)
@@ -398,6 +464,8 @@ def main():
                     parent_outcome=parent["result"]["outcome"],
                     controls=n,
                     phase_switch_frame=switch_frame,
+                    teacher_reference_phase=selected_reference_phase,
+                    teacher_history_receipt=shadow_receipt,
                     healthy_full_horizon=not world.failed and n == 360,
                     student_outcome=label,
                     artifact_hash=file_digest(path),
@@ -412,6 +480,10 @@ def main():
             or any(file_digest(path) != digest for path, digest in reference_pins)
             or (kick_path is not None and file_digest(kick_path) != kick_hash)
             or any(file_digest(path) != digest for path, digest in kick_dependencies)
+            or (
+                a.shadow_reference is not None
+                and file_digest(a.shadow_reference / "complete.json") != a.shadow_reference_hash
+            )
             or (
                 a.student_reference is not None
                 and file_digest(a.student_reference / "complete.json") != a.student_reference_hash
