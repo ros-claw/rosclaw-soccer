@@ -44,7 +44,10 @@ def main():
     return_player_seeded_sampling = (
         dec["protocol"] == "soccer.neural_relay_return_player_own_sampling_seeded.development.v47"
     )
-    child_generation_pair = (
+    child_successor_transition = (
+        dec["protocol"] == "soccer.neural_relay_child_successor_transition.development.v57"
+    )
+    child_generation_pair = child_successor_transition or (
         dec["protocol"] == "soccer.neural_relay_child_velocity_generation_pair.development.v56"
     )
     child_candidate_sampling = (
@@ -272,6 +275,8 @@ def main():
         if successor_pair
         else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
         if return_align_pair
+        else "NEURAL_RELAY_CHILD_SUCCESSOR_TRANSITION16_PENDING_OWN_REPLAY"
+        if child_successor_transition
         else "NEURAL_RELAY_CHILD_VELOCITY_GENERATION_PAIR16_PENDING_OWN_REPLAY"
         if child_generation_pair
         else "NEURAL_RELAY_CHILD_VELOCITY_CANDIDATE_SAMPLING32_PENDING_OWN_REPLAY"
@@ -409,6 +414,7 @@ def main():
             "soccer.neural_relay_child_velocity_candidate_fixed.development.v54",
             "soccer.neural_relay_child_velocity_candidate_sampling.development.v55",
             "soccer.neural_relay_child_velocity_generation_pair.development.v56",
+            "soccer.neural_relay_child_successor_transition.development.v57",
             "soccer.neural_relay_receiver_motion_pair.development.v18",
             "soccer.neural_relay_receiver_dense_exploration.development.v19",
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
@@ -478,6 +484,22 @@ def main():
                 for enabled in (False, True)
             ]
             if return_pair and not child_return_role
+            else [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_whole=True,
+                    receiver_learned=True,
+                    passer_velocity_recovery=True,
+                    passer_prepare=True,
+                    receiver_adaptive_intercept=True,
+                    receiver_child_candidate=True,
+                    receiver_successor_smooth=enabled,
+                )
+                for enabled in (False, True)
+            ]
+            if child_successor_transition
             else [
                 dict(
                     start=80,
@@ -791,6 +813,12 @@ def main():
             "adaptive_intercept_is_unlearned_teacher"
         ) is not True:
             raise ValueError("explicit unlearned adaptive command authority required")
+        if child_successor_transition and (
+            dec.get("receiver_generation_transition_controls") != 10
+            or dec.get("receiver_generation_transition_is_unlearned") is not True
+            or dec.get("joint_targets_remain_actual_neural_outputs") is not False
+        ):
+            raise ValueError("explicit unlearned ten-control transition provenance required")
         if (
             coordinated_intercept
             and dec.get("coordinated_intercept_is_unlearned_teacher") is not True
@@ -1723,9 +1751,9 @@ def main():
                     if receiver.phase == "MOTION_COMPLETE":
                         receiver.begin_standing()
                     smooth_index = step - handoff_control
-                    smooth_mode = precontact_smooth and course["arm"].get(
-                        "precontact_fullbody", False
-                    )
+                    smooth_mode = (
+                        precontact_smooth and course["arm"].get("precontact_fullbody", False)
+                    ) or course["arm"].get("receiver_successor_smooth", False)
                     smooth_active = smooth_mode and smooth_index < 10
                     target_b, trace_b = receiver.propose(
                         with_reference_evidence=balance_teacher is not None or smooth_mode

@@ -18,7 +18,7 @@ class DeclarationCaptured(Exception):
 
 
 @pytest.mark.parametrize("block", [0, 1, 2])
-@pytest.mark.parametrize("mode", ["sampling", "generation_pair"])
+@pytest.mark.parametrize("mode", ["sampling", "generation_pair", "successor_transition"])
 def test_candidate_sampling_declares_all_real_candidate_arms(monkeypatch, tmp_path, block, mode):
     frontier = tmp_path / "frontier"
     frontier.mkdir()
@@ -79,9 +79,11 @@ def test_candidate_sampling_declares_all_real_candidate_arms(monkeypatch, tmp_pa
         "receiver-velocity-candidate-receipt",
     ):
         args.extend(["--" + name, str(candidate), "--" + name + "-hash", "hash"])
-    if mode == "generation_pair":
+    if mode in ("generation_pair", "successor_transition"):
         for name in ("receiver-velocity-parent", "receiver-velocity-parent-receipt"):
             args.extend(["--" + name, str(parent), "--" + name + "-hash", "parenthash"])
+    if mode == "successor_transition":
+        args.append("--receiver-generation-transition-pair")
     monkeypatch.setattr(sys, "argv", args)
     with pytest.raises(DeclarationCaptured):
         rsi_collect_neural_relay_chain.main()
@@ -94,7 +96,7 @@ def test_candidate_sampling_declares_all_real_candidate_arms(monkeypatch, tmp_pa
             assert [arm["exploration_seed"] for arm in arms] == [None, 92117, 92143, 92171]
             assert all(arm["receiver_adaptive_intercept"] for arm in arms)
         assert captured["joint_targets_remain_actual_neural_outputs"] is False
-    else:
+    elif mode == "generation_pair":
         assert captured["protocol"].endswith("generation_pair.development.v56")
         assert len(captured["courses"]) == 16
         for offset in range(0, 16, 2):
@@ -103,3 +105,12 @@ def test_candidate_sampling_declares_all_real_candidate_arms(monkeypatch, tmp_pa
             assert all(arm["receiver_adaptive_intercept"] for arm in arms)
         assert captured["receiver_velocity_parent_hash"] == "parenthash"
         assert captured["joint_targets_remain_actual_neural_outputs"] is True
+    else:
+        assert captured["protocol"].endswith("successor_transition.development.v57")
+        assert len(captured["courses"]) == 16
+        for offset in range(0, 16, 2):
+            arms = [row["arm"] for row in captured["courses"][offset : offset + 2]]
+            assert all(arm["receiver_child_candidate"] is True for arm in arms)
+            assert [arm["receiver_successor_smooth"] for arm in arms] == [False, True]
+        assert captured["receiver_generation_transition_controls"] == 10
+        assert captured["joint_targets_remain_actual_neural_outputs"] is False

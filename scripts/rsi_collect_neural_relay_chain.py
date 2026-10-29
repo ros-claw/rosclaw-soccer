@@ -64,6 +64,7 @@ def main():
     p.add_argument("--receiver-velocity-parent-hash")
     p.add_argument("--receiver-velocity-parent-receipt", type=Path)
     p.add_argument("--receiver-velocity-parent-receipt-hash")
+    p.add_argument("--receiver-generation-transition-pair", action="store_true")
     p.add_argument("--return-player-candidate", type=Path)
     p.add_argument("--return-player-candidate-hash")
     p.add_argument("--return-player-training-receipt", type=Path)
@@ -116,6 +117,8 @@ def main():
         or a.receiver_velocity_parent_hash == a.receiver_velocity_candidate_hash
     ):
         p.error("B generation pair requires exact parent and child without sampling")
+    if a.receiver_generation_transition_pair and not all(b_parent_fields):
+        p.error("successor transition requires exact parent and child generation evidence")
     if any(b_candidate_fields) and (
         not all(b_candidate_fields) or not a.receiver_velocity_match_prepared_pair
     ):
@@ -931,6 +934,22 @@ def main():
             )
             for seed in (None, 92117, 92143, 92171)
         ]
+    if a.receiver_generation_transition_pair:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                receiver_whole=True,
+                receiver_learned=True,
+                passer_velocity_recovery=True,
+                passer_prepare=True,
+                receiver_adaptive_intercept=True,
+                receiver_child_candidate=True,
+                receiver_successor_smooth=enabled,
+            )
+            for enabled in (False, True)
+        ]
     if a.receiver_exploration:
         arms = [
             dict(
@@ -976,6 +995,8 @@ def main():
                 if a.passer_successor_pair
                 else "soccer.neural_relay_passer_return_alignment.development.v36"
                 if a.passer_return_align_pair
+                else "soccer.neural_relay_child_successor_transition.development.v57"
+                if a.receiver_generation_transition_pair
                 else "soccer.neural_relay_child_velocity_generation_pair.development.v56"
                 if a.receiver_velocity_parent
                 else "soccer.neural_relay_child_velocity_candidate_sampling.development.v55"
@@ -1146,6 +1167,7 @@ def main():
             and not a.receiver_child_velocity_sampling
             and not a.passer_residual_pair
             and not a.precontact_smooth
+            and not a.receiver_generation_transition_pair
             and not a.receiver_foot_teacher_pair
             and not a.receiver_leg_limit_pair,
             # Projected targets deliberately differ from raw actor outputs;
@@ -1196,6 +1218,10 @@ def main():
             passer_successor_blend_controls=20 if a.passer_successor_blend_pair else 0,
             precontact_fullbody_is_unlearned_teacher=a.precontact_fullbody_pair,
             precontact_smooth_controls=10 if a.precontact_smooth else 0,
+            receiver_generation_transition_controls=10
+            if a.receiver_generation_transition_pair
+            else 0,
+            receiver_generation_transition_is_unlearned=a.receiver_generation_transition_pair,
             receiver_sampling_profile="contact-v1"
             if a.receiver_exploration
             or a.receiver_learned_exploration
@@ -2017,9 +2043,9 @@ def main():
                     if receiver.phase == "MOTION_COMPLETE":
                         receiver.begin_standing()
                     smooth_index = step - handoff["control"]
-                    smooth_mode = a.precontact_smooth and course["arm"].get(
-                        "precontact_fullbody", False
-                    )
+                    smooth_mode = (
+                        a.precontact_smooth and course["arm"].get("precontact_fullbody", False)
+                    ) or course["arm"].get("receiver_successor_smooth", False)
                     smooth_active = smooth_mode and smooth_index < 10
                     target_b, trace_b = receiver.propose(
                         with_reference_evidence=balance_teacher is not None or smooth_mode
@@ -2326,6 +2352,8 @@ def main():
                     if a.passer_successor_pair
                     else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
                     if a.passer_return_align_pair
+                    else "NEURAL_RELAY_CHILD_SUCCESSOR_TRANSITION16_PENDING_OWN_REPLAY"
+                    if a.receiver_generation_transition_pair
                     else "NEURAL_RELAY_CHILD_VELOCITY_GENERATION_PAIR16_PENDING_OWN_REPLAY"
                     if a.receiver_velocity_parent
                     else "NEURAL_RELAY_CHILD_VELOCITY_CANDIDATE_SAMPLING32_PENDING_OWN_REPLAY"
