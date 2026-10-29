@@ -44,11 +44,16 @@ def main():
     return_player_seeded_sampling = (
         dec["protocol"] == "soccer.neural_relay_return_player_own_sampling_seeded.development.v47"
     )
+    child_generation_pair = (
+        dec["protocol"] == "soccer.neural_relay_child_velocity_generation_pair.development.v56"
+    )
     child_candidate_sampling = (
         dec["protocol"] == "soccer.neural_relay_child_velocity_candidate_sampling.development.v55"
     )
-    child_velocity_fixed = child_candidate_sampling or (
-        dec["protocol"] == "soccer.neural_relay_child_velocity_candidate_fixed.development.v54"
+    child_velocity_fixed = (
+        child_generation_pair
+        or child_candidate_sampling
+        or (dec["protocol"] == "soccer.neural_relay_child_velocity_candidate_fixed.development.v54")
     )
     child_velocity_candidate = child_velocity_fixed or (
         dec["protocol"] == "soccer.neural_relay_child_velocity_candidate.development.v53"
@@ -267,6 +272,8 @@ def main():
         if successor_pair
         else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
         if return_align_pair
+        else "NEURAL_RELAY_CHILD_VELOCITY_GENERATION_PAIR16_PENDING_OWN_REPLAY"
+        if child_generation_pair
         else "NEURAL_RELAY_CHILD_VELOCITY_CANDIDATE_SAMPLING32_PENDING_OWN_REPLAY"
         if child_candidate_sampling
         else "NEURAL_RELAY_CHILD_VELOCITY_CANDIDATE_FIXED16_PENDING_OWN_REPLAY"
@@ -401,6 +408,7 @@ def main():
             "soccer.neural_relay_child_velocity_candidate.development.v53",
             "soccer.neural_relay_child_velocity_candidate_fixed.development.v54",
             "soccer.neural_relay_child_velocity_candidate_sampling.development.v55",
+            "soccer.neural_relay_child_velocity_generation_pair.development.v56",
             "soccer.neural_relay_receiver_motion_pair.development.v18",
             "soccer.neural_relay_receiver_dense_exploration.development.v19",
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
@@ -865,6 +873,14 @@ def main():
             expected = dec[key + "_hash"]
             if path.is_symlink() or pins.get(str(path)) != expected or digest(path) != expected:
                 raise ValueError("exact B candidate evidence required for own replay")
+    if child_generation_pair:
+        if dec["receiver_velocity_parent_hash"] == dec["receiver_velocity_candidate_hash"]:
+            raise ValueError("distinct parent and child generation identities required")
+        for key in ("receiver_velocity_parent", "receiver_velocity_parent_receipt"):
+            path = Path(dec[key])
+            expected = dec[key + "_hash"]
+            if path.is_symlink() or pins.get(str(path)) != expected or digest(path) != expected:
+                raise ValueError("exact B generation parent evidence required for own replay")
     if prepared_candidate:
         for key in ("return_player_candidate", "return_player_training_receipt"):
             path = Path(dec[key])
@@ -1105,6 +1121,18 @@ def main():
             if learned_pair
             else None
         )
+        generation_parent_actor = (
+            load_b_child_velocity_candidate(
+                setup,
+                Path(dec["receiver_velocity_parent"]),
+                dec["receiver_velocity_parent_hash"],
+                Path(dec["receiver_velocity_parent_receipt"]),
+                dec["receiver_velocity_parent_receipt_hash"],
+                parent_hash=dec["receiver_checkpoint_hash"],
+            )
+            if child_generation_pair
+            else None
+        )
         new_b_actor = (
             load_b_child_velocity_candidate(
                 setup,
@@ -1112,7 +1140,9 @@ def main():
                 dec["receiver_velocity_candidate_hash"],
                 Path(dec["receiver_velocity_candidate_receipt"]),
                 dec["receiver_velocity_candidate_receipt_hash"],
-                parent_hash=dec["receiver_checkpoint_hash"],
+                parent_hash=dec["receiver_velocity_parent_hash"]
+                if child_generation_pair
+                else dec["receiver_checkpoint_hash"],
             )
             if child_velocity_candidate
             else None
@@ -1238,7 +1268,10 @@ def main():
                 if whole_actor is None:
                     raise ValueError("qualified zero whole receiver required")
                 selected_b_actor = select_relay_receiver_actor(
-                    course["arm"], whole=whole_actor, parent=learned_actor, candidate=new_b_actor
+                    course["arm"],
+                    whole=whole_actor,
+                    parent=generation_parent_actor or learned_actor,
+                    candidate=new_b_actor,
                 )
                 whole_receiver = SharedNativeReceivingPlayer(
                     w,
@@ -1615,6 +1648,14 @@ def main():
                             selected = course["arm"].get("receiver_child_candidate", False)
                             if selected and whole_receiver.actor is not new_b_actor:
                                 raise ValueError("candidate replay must execute candidate actor")
+                            if (
+                                child_generation_pair
+                                and not selected
+                                and whole_receiver.actor is not generation_parent_actor
+                            ):
+                                raise ValueError(
+                                    "baseline replay must execute generation parent actor"
+                                )
                             trace_v["candidate_actor_selected"] = np.array(selected)
                             counts["receiver_candidate_calls"] += int(selected)
                         if receiver_sampler is not None:

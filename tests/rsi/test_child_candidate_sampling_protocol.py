@@ -18,7 +18,8 @@ class DeclarationCaptured(Exception):
 
 
 @pytest.mark.parametrize("block", [0, 1, 2])
-def test_candidate_sampling_declares_all_real_candidate_arms(monkeypatch, tmp_path, block):
+@pytest.mark.parametrize("mode", ["sampling", "generation_pair"])
+def test_candidate_sampling_declares_all_real_candidate_arms(monkeypatch, tmp_path, block, mode):
     frontier = tmp_path / "frontier"
     frontier.mkdir()
     (frontier / "complete.json").write_text(
@@ -26,6 +27,8 @@ def test_candidate_sampling_declares_all_real_candidate_arms(monkeypatch, tmp_pa
     )
     candidate = tmp_path / "candidate"
     candidate.touch()
+    parent = tmp_path / "parent"
+    parent.touch()
     captured = {}
 
     def capture(path, value):
@@ -39,7 +42,11 @@ def test_candidate_sampling_declares_all_real_candidate_arms(monkeypatch, tmp_pa
         "admit_frontier",
         lambda *args: ({}, "base", [{"seed": 65023}], []),
     )
-    monkeypatch.setattr(rsi_native_context_recovery_common, "digest", lambda path: "hash")
+    monkeypatch.setattr(
+        rsi_native_context_recovery_common,
+        "digest",
+        lambda path: "parenthash" if path == parent else "hash",
+    )
     monkeypatch.setattr(rsi_native_context_recovery_common, "check_pins", lambda pins: None)
     args = [
         "collector",
@@ -61,8 +68,9 @@ def test_candidate_sampling_declares_all_real_candidate_arms(monkeypatch, tmp_pa
         "--receiver-precontact-continuation-pair",
         "--receiver-child-return-role-pair",
         "--receiver-velocity-match-prepared-pair",
-        "--receiver-child-velocity-sampling",
     ]
+    if mode == "sampling":
+        args.append("--receiver-child-velocity-sampling")
     for name in (
         "receiver-checkpoint",
         "receiver-candidate-audit",
@@ -71,14 +79,27 @@ def test_candidate_sampling_declares_all_real_candidate_arms(monkeypatch, tmp_pa
         "receiver-velocity-candidate-receipt",
     ):
         args.extend(["--" + name, str(candidate), "--" + name + "-hash", "hash"])
+    if mode == "generation_pair":
+        for name in ("receiver-velocity-parent", "receiver-velocity-parent-receipt"):
+            args.extend(["--" + name, str(parent), "--" + name + "-hash", "parenthash"])
     monkeypatch.setattr(sys, "argv", args)
     with pytest.raises(DeclarationCaptured):
         rsi_collect_neural_relay_chain.main()
-    assert captured["protocol"].endswith("candidate_sampling.development.v55")
-    assert len(captured["courses"]) == 32
-    for offset in range(0, 32, 4):
-        arms = [row["arm"] for row in captured["courses"][offset : offset + 4]]
-        assert all(arm["receiver_child_candidate"] is True for arm in arms)
-        assert [arm["exploration_seed"] for arm in arms] == [None, 92117, 92143, 92171]
-        assert all(arm["receiver_adaptive_intercept"] for arm in arms)
-    assert captured["joint_targets_remain_actual_neural_outputs"] is False
+    if mode == "sampling":
+        assert captured["protocol"].endswith("candidate_sampling.development.v55")
+        assert len(captured["courses"]) == 32
+        for offset in range(0, 32, 4):
+            arms = [row["arm"] for row in captured["courses"][offset : offset + 4]]
+            assert all(arm["receiver_child_candidate"] is True for arm in arms)
+            assert [arm["exploration_seed"] for arm in arms] == [None, 92117, 92143, 92171]
+            assert all(arm["receiver_adaptive_intercept"] for arm in arms)
+        assert captured["joint_targets_remain_actual_neural_outputs"] is False
+    else:
+        assert captured["protocol"].endswith("generation_pair.development.v56")
+        assert len(captured["courses"]) == 16
+        for offset in range(0, 16, 2):
+            arms = [row["arm"] for row in captured["courses"][offset : offset + 2]]
+            assert [arm["receiver_child_candidate"] for arm in arms] == [False, True]
+            assert all(arm["receiver_adaptive_intercept"] for arm in arms)
+        assert captured["receiver_velocity_parent_hash"] == "parenthash"
+        assert captured["joint_targets_remain_actual_neural_outputs"] is True
