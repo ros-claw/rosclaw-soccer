@@ -10,6 +10,7 @@ from rosclaw_soccer.rsi.cftrack_live_history import CFtrackLiveHistory
 from rosclaw_soccer.rsi.cftrack_shared_handoff import handoff_shared_cftrack
 from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
 from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
+from rosclaw_soccer.rsi.receiving_witness import body_contact_witness, readiness_witness
 from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
 from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
 from rosclaw_soccer.rsi.shared_relay_setup import motion_segment, receiving_target_for_player
@@ -45,11 +46,13 @@ def run_shared_cftrack_trial(
     expected_policy_type: type[Any],
     early_cftrack: bool = False,
     receiver_actor: Any | None = None,
+    record_witness: bool = False,
 ) -> dict[str, Any]:
     """Use real measured readiness; no body/ball resets after initialization."""
     if (
         type(use_cftrack) is not bool
         or type(early_cftrack) is not bool
+        or type(record_witness) is not bool
         or type(context) is not int
         or lateral_m not in (-0.35, 0.35)
         or (receiver_actor is not None and use_cftrack)
@@ -96,6 +99,7 @@ def run_shared_cftrack_trial(
         [],
     )
     termination = "WORLD_HORIZON_COMPLETE"
+    contacts, readiness_records = [], []
     for step in range(600):
         if receiver is None and not ready and step >= 300:
             termination = "NO_RECEIVING_HANDOFF_WITHIN_ORIGINAL_VELOCITY_H300"
@@ -169,12 +173,16 @@ def run_shared_cftrack_trial(
             target_b, b_trace = receiver.propose()
             dual_trace.append(b_trace)
         row = w.advance({"a/": target_a, "b/": target_b})
+        if record_witness:
+            contacts.append(body_contact_witness(w))
         passer.commit()
         if receiver is None:
             shadow.commit_actual()
             if not w.failed:
                 history.capture()
                 stable_ready = readiness.update()
+                if record_witness:
+                    readiness_records.append(readiness_witness(readiness, stable_ready))
                 ready = (
                     early_incoming_boundary(w, "b/", forward)[0]
                     if use_cftrack and early_cftrack
@@ -202,7 +210,7 @@ def run_shared_cftrack_trial(
     def stack(rows):
         return {key: np.stack([row[key] for row in rows]) for key in rows[0]} if rows else {}
 
-    return dict(
+    result = dict(
         termination=termination,
         controls=w.control_steps,
         native_steps=w.native_steps,
@@ -215,3 +223,6 @@ def run_shared_cftrack_trial(
         receiver_velocity=stack(velocity_trace),
         cftrack=stack(cf_trace),
     )
+    if record_witness:
+        result["witness"] = dict(contacts=contacts, readiness=readiness_records)
+    return result
