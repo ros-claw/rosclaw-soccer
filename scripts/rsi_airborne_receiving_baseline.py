@@ -25,6 +25,30 @@ def exact_arrays(a, b):
     return True
 
 
+def posttouch_research_components(arm, *, agent_id, foundation_hash, foundation_config_hash):
+    """Fixed, explicitly SIM-only counterfactual; no outcome-based selection."""
+    if arm == "disabled":
+        return None, None
+    if arm not in ("zero", "lateral"):
+        raise ValueError("explicit fixed post-touch research arm required")
+    from rosclaw_soccer.rsi.team_receive_contact_evidence import (
+        ReceiveContactEvidence,
+        ReceiveContactMailbox,
+    )
+    from rosclaw_soccer.rsi.team_receive_contact_phase_actor import TeamReceiveContactPhaseActor
+
+    mailbox = ReceiveContactMailbox(agent_id)
+    actor = TeamReceiveContactPhaseActor(
+        agent_id,
+        foundation_hash,
+        foundation_config_hash,
+        weights=(0.0,) * 5,
+        post_weights=(0.0,) * 5 if arm == "zero" else (0.0, 0.5, 0.0, 0.5, -0.25),
+        mailbox=mailbox,
+    )
+    return actor, ReceiveContactEvidence(mailbox)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for key in ("asset-root", "policy", "protocol", "core-source", "output"):
@@ -38,6 +62,9 @@ def main():
     p.add_argument("--dissipation-validation", action="store_true")
     p.add_argument("--focal-exploration-seed-base", type=int)
     p.add_argument("--capture-residual-target-authority", action="store_true")
+    p.add_argument(
+        "--posttouch-research-arm", choices=("disabled", "zero", "lateral"), default="disabled"
+    )
     a = p.parse_args()
     if a.dissipation_validation and (
         not a.focal_nearest
@@ -57,6 +84,13 @@ def main():
         raise ValueError("seeded exploration requires focal courses and eight valid seeds")
     if a.capture_residual_target_authority and a.focal_exploration_seed_base is None:
         raise ValueError("authority capture requires the declared focal exploration pilot")
+    if a.posttouch_research_arm != "disabled" and (
+        not a.focal_nearest
+        or a.focal_nearest_validation
+        or a.dissipation_validation
+        or a.focal_exploration_seed_base is not None
+    ):
+        raise ValueError("post-touch research uses deterministic public training courses only")
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("unused external evidence path required")
@@ -221,6 +255,7 @@ def main():
             dissipation_validation=a.dissipation_validation,
             focal_exploration_seed_base=a.focal_exploration_seed_base,
             capture_residual_target_authority=a.capture_residual_target_authority,
+            posttouch_research_arm=a.posttouch_research_arm,
             input_file_hashes=pins,
             coach_assigned_receive=True,
             classroom_profile="R1_CONTACT_TAP",
@@ -234,6 +269,12 @@ def main():
             course = courses[i]
             original = None
             for repeat in range(2):
+                navigation, contact_evidence = posttouch_research_components(
+                    a.posttouch_research_arm,
+                    agent_id=course.agent_id,
+                    foundation_hash=digest(assets / "policy/loco_mode/model/policy_29dof.pt"),
+                    foundation_config_hash=digest(assets / "policy/loco_mode/config/LocoMode.yaml"),
+                )
                 result, trace = simulate_r0_receiving_course(
                     asset_root=assets,
                     reference_policy_path=a.policy,
@@ -247,6 +288,12 @@ def main():
                         else a.focal_exploration_seed_base + i
                     ),
                     capture_residual_target_authority=a.capture_residual_target_authority,
+                    research_navigation_policy=navigation,
+                    physics_evidence_consumers=(
+                        {course.agent_id: contact_evidence}
+                        if contact_evidence is not None
+                        else None
+                    ),
                 )
                 if str(trace["initial_integration_hash"][0]) != starts[course.seed]:
                     raise ValueError("actual initial state differs from whole-bank preflight")
@@ -307,6 +354,16 @@ def main():
                         result=result.to_dict(),
                         receiving_trials=trials,
                         exploration_diagnostics=exploration_diagnostics,
+                        posttouch_navigation=(
+                            None
+                            if navigation is None
+                            else dict(
+                                contract_hash=navigation.contract_hash,
+                                active_frames=navigation.post_active_frames,
+                                peak_delta_mps=navigation.peak_delta_mps,
+                                first_foot_time_sec=navigation.mailbox.snapshot.first_own_foot_time_sec,
+                            )
+                        ),
                         artifact=artifact,
                     )
                 )
@@ -330,6 +387,7 @@ def main():
                 dissipation_validation=a.dissipation_validation,
                 focal_exploration_seed_base=a.focal_exploration_seed_base,
                 capture_residual_target_authority=a.capture_residual_target_authority,
+                posttouch_research_arm=a.posttouch_research_arm,
                 promotion_authorized=False,
                 hardware_authorized=False,
             ),
