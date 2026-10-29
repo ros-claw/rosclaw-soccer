@@ -45,6 +45,7 @@ def main() -> None:
     for key in ("qualification-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
     p.add_argument("--factorial-protocol", type=Path)
+    p.add_argument("--causal-protocol", type=Path)
     a = p.parse_args()
     clean(a.expected_head)
     complete = a.qualification / "complete.json"
@@ -56,6 +57,19 @@ def main() -> None:
     ):
         raise ValueError("unused output and exact original candidate required")
     original = json.loads(complete.read_text())
+    causal = original.get("causal_ball_reference", False)
+    if (
+        type(causal) is not bool
+        or causal != (a.causal_protocol is not None)
+        or (
+            causal
+            and (
+                a.causal_protocol.is_symlink()
+                or digest(a.causal_protocol) != original.get("causal_protocol_hash")
+            )
+        )
+    ):
+        raise ValueError("source-bound explicit causal protocol required")
     ground = original.get("ground_reference_ball", False)
     no_spin = original.get("zero_reference_ball_spin", False)
     factorial = ground or no_spin
@@ -179,6 +193,8 @@ def main() -> None:
     check_pins(pins)
     if factorial and digest(a.factorial_protocol) != original.get("factorial_protocol_hash"):
         raise ValueError("factorial protocol changed during replay")
+    if causal and digest(a.causal_protocol) != original.get("causal_protocol_hash"):
+        raise ValueError("causal protocol changed during replay")
     clean(a.expected_head)
     write_once(
         a.output / "complete.json",

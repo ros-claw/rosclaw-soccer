@@ -44,6 +44,7 @@ def main():
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--derived-moving-partial", action="store_true")
     p.add_argument("--factorial-protocol", type=Path)
+    p.add_argument("--causal-protocol", type=Path)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -60,6 +61,20 @@ def main():
         raise ValueError("unused isolated readback and exact producer required")
     report = json.loads(complete.read_text())
     controls = validate_scope(report, derived_moving_partial=a.derived_moving_partial)
+    causal = report.get("causal_ball_reference", False)
+    if (
+        type(causal) is not bool
+        or causal != (a.causal_protocol is not None)
+        or (causal and not a.derived_moving_partial)
+        or (
+            causal
+            and (
+                a.causal_protocol.is_symlink()
+                or digest(a.causal_protocol) != report.get("causal_protocol_hash")
+            )
+        )
+    ):
+        raise ValueError("source-bound explicit causal protocol required")
     ground = report.get("ground_reference_ball", False)
     no_spin = report.get("zero_reference_ball_spin", False)
     factorial = ground or no_spin
@@ -164,6 +179,11 @@ def main():
     ):
         if raw[key].shape != shape or not np.isfinite(raw[key]).all():
             raise ValueError("full finite actual trace required: " + key)
+    if causal and (
+        raw.get("causal_ankle_offset_xy_m", np.empty(0)).shape != (controls, 2)
+        or not np.isfinite(raw["causal_ankle_offset_xy_m"]).all()
+    ):
+        raise ValueError("complete actual causal reference updates required")
     scene = [Path(path) for path in pins if path.endswith("/cached-standard/declared-scene.xml")]
     if len(scene) != 1:
         raise ValueError("unique pinned native scene required")
@@ -237,6 +257,11 @@ def main():
     SharedOmniContactPlayer._observe(view)
     policy.goal_pos_override = np.array([5.0, 0.0, 0.11], np.float32)
     policy.enter()
+    causal_reference = None
+    if causal:
+        from rosclaw_soccer.rsi.causal_ball_reference import CausalBallReference
+
+        causal_reference = CausalBallReference(policy)
     if report.get("reference_conditioning") is not None:
         from rosclaw_soccer.rsi.cftrack_direct_approach import condition_direct_kick_approach
         from rosclaw_soccer.sim.contracts import hash_json
@@ -305,6 +330,10 @@ def main():
             data.qpos[:], data.qvel[:] = raw["qpos"][tick * 10 - 1], raw["qvel"][tick * 10 - 1]
         view.world.control_steps = tick
         SharedOmniContactPlayer._observe(view)
+        if causal_reference is not None and not np.array_equal(
+            causal_reference.apply(data.xpos[lo.ball].copy()), raw["causal_ankle_offset_xy_m"][tick]
+        ):
+            raise ValueError("actual causal reference update differs")
         policy.run()
         decoded = policy.policy_output.actions.astype(np.float64)
         if "nn_decoded_targets" in raw and not np.array_equal(
@@ -350,6 +379,8 @@ def main():
     check_pins(pins)
     if factorial and digest(a.factorial_protocol) != report.get("factorial_protocol_hash"):
         raise ValueError("factorial protocol changed during neural readback")
+    if causal and digest(a.causal_protocol) != report.get("causal_protocol_hash"):
+        raise ValueError("causal protocol changed during neural readback")
     clean(a.expected_head)
     write_once(
         a.output / "complete.json",

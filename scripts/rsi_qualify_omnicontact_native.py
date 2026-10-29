@@ -30,12 +30,23 @@ def main():
     p.add_argument("--zero-reference-ball-spin", action="store_true")
     p.add_argument("--factorial-protocol", type=Path)
     p.add_argument("--factorial-protocol-hash")
+    p.add_argument("--causal-ball-reference", action="store_true")
+    p.add_argument("--causal-protocol", type=Path)
+    p.add_argument("--causal-protocol-hash")
     p.add_argument("--reference-phase-start", type=int, default=0)
     p.add_argument("--ankle-roll-reference", action="store_true")
     p.add_argument("--motor-pilot", type=Path)
     p.add_argument("--motor-pilot-hash")
     a = p.parse_args()
     factorial = a.ground_reference_ball or a.zero_reference_ball_spin
+    if a.causal_ball_reference != (a.causal_protocol is not None) or a.causal_ball_reference != (
+        a.causal_protocol_hash is not None
+    ):
+        p.error("causal feedback requires its exact predeclared protocol")
+    if a.causal_ball_reference and (
+        factorial or not a.reference_all_initial_velocities or a.reference_phase_start != 0
+    ):
+        p.error("causal feedback requires the original full-velocity reference initial state")
     if factorial != (a.factorial_protocol is not None) or factorial != (
         a.factorial_protocol_hash is not None
     ):
@@ -62,6 +73,10 @@ def main():
         or digest(a.factorial_protocol) != a.factorial_protocol_hash
     ):
         raise ValueError("exact predeclared factorial protocol required")
+    if a.causal_ball_reference and (
+        a.causal_protocol.is_symlink() or digest(a.causal_protocol) != a.causal_protocol_hash
+    ):
+        raise ValueError("exact predeclared causal protocol required")
     external = a.external_source.resolve()
     head = subprocess.check_output(
         ["git", "-C", str(external), "rev-parse", "HEAD"], text=True
@@ -229,6 +244,8 @@ def main():
             ground_reference_ball=a.ground_reference_ball,
             zero_reference_ball_spin=a.zero_reference_ball_spin,
             factorial_protocol_hash=a.factorial_protocol_hash,
+            causal_ball_reference=a.causal_ball_reference,
+            causal_protocol_hash=a.causal_protocol_hash,
             direct_approach_reference=a.direct_approach_reference,
             ankle_roll_reference=a.ankle_roll_reference,
             motor_plan=asdict(motor_plan) if motor_plan else None,
@@ -353,7 +370,7 @@ def main():
             captured_actions.append(result[0].copy())
             return result
 
-    rows, targets, errors, decoded = [], [], [], []
+    rows, targets, errors, decoded, causal_offsets = [], [], [], [], []
     failure = None
     reference_conditioning = None
     foot_frame_conditioning = None
@@ -366,6 +383,11 @@ def main():
             goal=np.array([5.0, 0.0, 0.11]),
             reference_source="CFgen" if motion is None else "NPZmotion",
         )
+        causal_reference = None
+        if a.causal_ball_reference:
+            from rosclaw_soccer.rsi.causal_ball_reference import CausalBallReference
+
+            causal_reference = CausalBallReference(policy)
         if a.direct_approach_reference:
             from rosclaw_soccer.rsi.cftrack_direct_approach import condition_direct_kick_approach
 
@@ -392,6 +414,8 @@ def main():
             )
         policy.ort_session = CaptureSession()
         for _ in range(600):
+            if causal_reference is not None:
+                causal_offsets.append(causal_reference.apply(data.xpos[lo.ball].copy()))
             target, measured = player.propose()
             row = world.advance({"a/": target})
             rows.append(row)
@@ -446,11 +470,15 @@ def main():
         neural_actions=np.array(captured_actions),
         ankle_error_m=np.array(errors),
     )
+    if a.causal_ball_reference:
+        arrays["causal_ankle_offset_xy_m"] = np.asarray(causal_offsets)
     artifact = a.output / "actual-unvalidated.npz"
     np.savez_compressed(artifact, **arrays)
     check_pins(pins)
     if factorial and digest(a.factorial_protocol) != a.factorial_protocol_hash:
         raise ValueError("factorial protocol changed during actual physics")
+    if a.causal_ball_reference and digest(a.causal_protocol) != a.causal_protocol_hash:
+        raise ValueError("causal protocol changed during actual physics")
     clean(a.expected_head)
     forces = arrays.get("ball_forces", np.zeros((0, 1, 3)))[:, 0]
     foot = np.flatnonzero((forces[:, :2] > 1).any(axis=1))
@@ -474,6 +502,8 @@ def main():
             ground_reference_ball=a.ground_reference_ball,
             zero_reference_ball_spin=a.zero_reference_ball_spin,
             factorial_protocol_hash=a.factorial_protocol_hash,
+            causal_ball_reference=a.causal_ball_reference,
+            causal_protocol_hash=a.causal_protocol_hash,
             reference_phase_start=a.reference_phase_start,
             controls=world.control_steps,
             native_steps=world.native_steps,
