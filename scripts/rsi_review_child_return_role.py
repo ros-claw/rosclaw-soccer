@@ -22,15 +22,38 @@ def assert_causal_prefix(root, baseline, candidate):
     cutoff = boundary["control"] if boundary is not None else controls
     if type(cutoff) is not int or not 0 <= cutoff <= controls:
         raise ValueError("valid observed role-switch boundary required")
-    for name in ("physics", "passer_nn", "receiver_velocity", "receiver_shadow"):
+    for name in (
+        "physics",
+        "passer_nn",
+        "receiver_velocity",
+        "receiver_shadow",
+        "receiver_return_nn",
+    ):
         left, right = bind(root, baseline, name), bind(root, candidate, name)
+        if name == "receiver_return_nn" and left is None and right is None:
+            continue
         if left is None or right is None:
             raise ValueError("complete paired own-state prefix required")
         with np.load(left, allow_pickle=False) as x, np.load(right, allow_pickle=False) as y:
             if set(x.files) != set(y.files):
                 raise ValueError("matching own-state prefix fields required")
+            if "control" in x:
+                if (
+                    x["control"].ndim != 1
+                    or y["control"].ndim != 1
+                    or np.any(np.diff(x["control"]) <= 0)
+                    or np.any(np.diff(y["control"]) <= 0)
+                ):
+                    raise ValueError("ordered explicit control clocks required")
+                left_limit = int(np.searchsorted(x["control"], cutoff))
+                right_limit = int(np.searchsorted(y["control"], cutoff))
+            else:
+                left_limit = right_limit = cutoff
             for key in x.files:
-                left_count, right_count = min(cutoff, len(x[key])), min(cutoff, len(y[key]))
+                left_count, right_count = (
+                    min(left_limit, len(x[key])),
+                    min(right_limit, len(y[key])),
+                )
                 if left_count != right_count or not np.array_equal(
                     x[key][:left_count], y[key][:right_count]
                 ):
@@ -199,7 +222,7 @@ def main():
                     role_trigger=role["passer_velocity_recovery_boundary"] is not None,
                     horizons=[len(x) for x in failures],
                     common_healthy=[not bool(x[:n].any()) for x in failures],
-                    full_horizon_healthy=[not bool(x.any()) for x in failures],
+                    observed_horizon_healthy=[not bool(x.any()) for x in failures],
                     interaction=interactions,
                 )
             )
@@ -217,7 +240,9 @@ def main():
             conditions=len(group),
             triggers=sum(r["role_trigger"] for r in group),
             healthy_common=[sum(r["common_healthy"][j] for r in group) for j in (0, 1)],
-            healthy_full=[sum(r["full_horizon_healthy"][j] for r in group) for j in (0, 1)],
+            healthy_observed_horizon=[
+                sum(r["observed_horizon_healthy"][j] for r in group) for j in (0, 1)
+            ],
             rescues=sum(not r["common_healthy"][0] and r["common_healthy"][1] for r in group),
             new_failures=sum(r["common_healthy"][0] and not r["common_healthy"][1] for r in group),
             unequal_horizons=sum(r["horizons"][0] != r["horizons"][1] for r in group),
