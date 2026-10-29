@@ -8,8 +8,11 @@ import numpy as np
 
 from rosclaw_soccer.rsi.cftrack_live_history import CFtrackLiveHistory
 from rosclaw_soccer.rsi.cftrack_shared_handoff import handoff_shared_cftrack
+from rosclaw_soccer.rsi.live_neural_transition import blend_live_targets, quintic_weight
 from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
 from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
+from rosclaw_soccer.rsi.paid_velocity_shadow import policy_action_from_hg_target
+from rosclaw_soccer.rsi.passer_velocity_recovery import PasserVelocityRecovery
 from rosclaw_soccer.rsi.receiving_witness import body_contact_witness, readiness_witness
 from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
 from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
@@ -47,12 +50,14 @@ def run_shared_cftrack_trial(
     early_cftrack: bool = False,
     receiver_actor: Any | None = None,
     record_witness: bool = False,
+    passer_velocity_recovery: bool = False,
 ) -> dict[str, Any]:
     """Use real measured readiness; no body/ball resets after initialization."""
     if (
         type(use_cftrack) is not bool
         or type(early_cftrack) is not bool
         or type(record_witness) is not bool
+        or type(passer_velocity_recovery) is not bool
         or type(context) is not int
         or lateral_m not in (-0.35, 0.35)
         or (receiver_actor is not None and use_cftrack)
@@ -87,6 +92,13 @@ def run_shared_cftrack_trial(
     )
     history = CFtrackLiveHistory(w, "b/")
     velocity, readiness = setup.velocity(), OnlineReceivingBoundary(w, "b/")
+    recovery = (
+        PasserVelocityRecovery(w, "a/", setup.velocity()) if passer_velocity_recovery else None
+    )
+    passer_foot_seen = False
+    recovery_boundary = None
+    recovery_old_pd = recovery_new_pd = None
+    passer_velocity_trace = []
     receiver = None
     ready = launch = False
     handoff = None
@@ -124,9 +136,46 @@ def run_shared_cftrack_trial(
                     profile={k: v for k, v in profile.items() if k not in ("before", "after")},
                 )
         mujoco.mj_forward(w.model, w.data)
-        if passer.phase == "MOTION_COMPLETE":
+        if passer.phase == "MOTION_COMPLETE" and (recovery is None or not recovery.active):
+            if recovery is not None and passer_foot_seen:
+                params = recovery.stream.params
+                recovery_old_pd = w.parameters["a/"].owned_copy()
+                recovery_new_pd = NativePDParameters(
+                    np.asarray(params.stiffness, np.float64),
+                    np.asarray(params.damping, np.float64),
+                    recovery_old_pd.effort.copy(),
+                )
+                recovery.activate(motion_complete=True, passer_foot_seen=True)
+                recovery_boundary = step
             passer.begin_standing()
-        target_a, a_trace = passer.propose()
+        recovery_target = None
+        if recovery is not None:
+            recovery_target = recovery.observe(np.zeros(3, np.float32))
+            recovery_trace = dict(
+                control=np.array(step),
+                obs=recovery.stream.last_observation.copy(),
+                proposed_action=recovery.stream.last_action.copy(),
+                phase=np.array(recovery.stream.phase),
+            )
+        blend_index = step - recovery_boundary if recovery_boundary is not None else -1
+        blend_active = 0 <= blend_index < 20
+        executed_a = None
+        if recovery is not None and recovery.active and not blend_active:
+            if blend_index == 20:
+                w.switch_pd_profile("a/", recovery_new_pd)
+            target_a, a_trace = recovery_target, None
+        else:
+            target_a, a_trace = passer.propose()
+        if blend_active:
+            weight = quintic_weight(blend_index, start=0, duration=20)
+            target_a, profile = blend_live_targets(
+                target_a, recovery_target, recovery_old_pd, recovery_new_pd, weight=weight
+            )
+            w.switch_pd_profile("a/", profile)
+            executed_a = policy_action_from_hg_target(
+                target_a, passer.offset, passer.scale, passer.order
+            )
+            target_a = passer.offset + executed_a[passer.order] * passer.scale
         if receiver is None:
             s_trace = shadow.observe()
             q, v = w.layouts["b/"].canonical(w.data)
@@ -175,7 +224,19 @@ def run_shared_cftrack_trial(
         row = w.advance({"a/": target_a, "b/": target_b})
         if record_witness:
             contacts.append(body_contact_witness(w))
-        passer.commit()
+        if a_trace is not None:
+            if blend_active:
+                passer.commit_sim_transition(executed_action=executed_a, target=target_a)
+            else:
+                passer.commit()
+        if recovery is not None:
+            recovery_row = recovery.commit(
+                transition_target=np.asarray(target_a, np.float64) if blend_active else None
+            )
+            recovery_trace.update({k: np.asarray(v) for k, v in recovery_row.items()})
+            recovery_trace["blend_index"] = np.array(blend_index)
+            passer_velocity_trace.append(recovery_trace)
+        passer_foot_seen = passer_foot_seen or bool((row["ball_forces"][:, 0, :2] > 10).any())
         if receiver is None:
             shadow.commit_actual()
             if not w.failed:
@@ -193,7 +254,8 @@ def run_shared_cftrack_trial(
             receiver.commit()
         else:
             receiver.commit()
-        passer_trace.append(a_trace)
+        if a_trace is not None:
+            passer_trace.append(a_trace)
         physical.append(
             {k: row[k] for k in ("qpos", "qvel", "torque", "ball_forces")}
             | dict(
@@ -225,4 +287,7 @@ def run_shared_cftrack_trial(
     )
     if record_witness:
         result["witness"] = dict(contacts=contacts, readiness=readiness_records)
+    if passer_velocity_recovery:
+        result["passer_velocity"] = stack(passer_velocity_trace)
+        result["passer_recovery_boundary"] = recovery_boundary
     return result

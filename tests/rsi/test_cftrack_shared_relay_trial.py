@@ -68,3 +68,21 @@ def test_explicit_receiver_actor_cannot_be_mixed_with_cftrack():
             policy_factory=lambda: None,
             expected_policy_type=object,
         )
+
+
+def test_passer_recovery_must_be_explicit_boolean_before_world_allocation():
+    class ForbiddenSetup:
+        def prepare(self, *args):
+            raise AssertionError("invalid declaration allocated physics")
+
+    with pytest.raises(ValueError):
+        run_shared_cftrack_trial(
+            ForbiddenSetup(),
+            object(),
+            context=2,
+            lateral_m=0.35,
+            use_cftrack=False,
+            passer_velocity_recovery=1,
+            policy_factory=lambda: None,
+            expected_policy_type=object,
+        )
