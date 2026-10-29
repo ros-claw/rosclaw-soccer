@@ -35,9 +35,16 @@ def main():
     p.add_argument("--standard-ball", action="store_true")
     p.add_argument("--focal-nearest", action="store_true")
     p.add_argument("--focal-nearest-validation", action="store_true")
+    p.add_argument("--dissipation-validation", action="store_true")
     p.add_argument("--focal-exploration-seed-base", type=int)
     p.add_argument("--capture-residual-target-authority", action="store_true")
     a = p.parse_args()
+    if a.dissipation_validation and (
+        not a.focal_nearest
+        or a.focal_nearest_validation
+        or a.focal_exploration_seed_base is not None
+    ):
+        raise ValueError("dissipation validation requires deterministic focal-nearest mode")
     if a.focal_nearest and not a.standard_ball:
         raise ValueError("focal-nearest study requires the declared standard ball")
     if a.focal_nearest_validation and (
@@ -85,6 +92,7 @@ def main():
         airborne_receiving_ball_launch,
         airborne_receiving_course_bank,
         disjoint_focal_airborne_validation_bank,
+        dissipation_focal_airborne_validation_bank,
         focal_nearest_airborne_course_bank,
     )
     from rosclaw_soccer.training.continuous_competitive_match_growth import _write_trajectory
@@ -103,7 +111,9 @@ def main():
     if Path(rosclaw.__file__).resolve() != core / "__init__.py":
         raise ValueError("imported core differs from pinned source")
     courses = (
-        disjoint_focal_airborne_validation_bank()
+        dissipation_focal_airborne_validation_bank()
+        if a.dissipation_validation
+        else disjoint_focal_airborne_validation_bank()
         if a.focal_nearest_validation
         else focal_nearest_airborne_course_bank()
         if a.focal_nearest
@@ -208,6 +218,7 @@ def main():
             standard_ball=a.standard_ball,
             focal_nearest=a.focal_nearest,
             focal_nearest_validation=a.focal_nearest_validation,
+            dissipation_validation=a.dissipation_validation,
             focal_exploration_seed_base=a.focal_exploration_seed_base,
             capture_residual_target_authority=a.capture_residual_target_authority,
             input_file_hashes=pins,
@@ -316,6 +327,7 @@ def main():
                 standard_ball=a.standard_ball,
                 focal_nearest=a.focal_nearest,
                 focal_nearest_validation=a.focal_nearest_validation,
+                dissipation_validation=a.dissipation_validation,
                 focal_exploration_seed_base=a.focal_exploration_seed_base,
                 capture_residual_target_authority=a.capture_residual_target_authority,
                 promotion_authorized=False,
