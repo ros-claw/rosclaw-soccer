@@ -44,6 +44,9 @@ def main():
     return_player_seeded_sampling = (
         dec["protocol"] == "soccer.neural_relay_return_player_own_sampling_seeded.development.v47"
     )
+    receiver_velocity_match_prepared = (
+        dec["protocol"] == "soccer.neural_relay_receiver_velocity_match_prepared.development.v51"
+    )
     prepared_candidate = (
         dec["protocol"] == "soccer.neural_relay_prepared_return_candidate.development.v50"
     )
@@ -56,7 +59,8 @@ def main():
         or (dec["protocol"] == "soccer.neural_relay_return_player_own_sampling.development.v46")
     )
     return_player_prepare = (
-        prepared_candidate
+        receiver_velocity_match_prepared
+        or prepared_candidate
         or prepared_sampling
         or (dec["protocol"] == "soccer.neural_relay_return_player_prepare.development.v48")
     )
@@ -246,6 +250,8 @@ def main():
         if successor_pair
         else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
         if return_align_pair
+        else "NEURAL_RELAY_RECEIVER_VELOCITY_MATCH_PREPARED16_PENDING_OWN_REPLAY"
+        if receiver_velocity_match_prepared
         else "NEURAL_RELAY_PREPARED_RETURN_CANDIDATE16_PENDING_OWN_REPLAY"
         if prepared_candidate
         else "NEURAL_RELAY_PREPARED_RETURN_SAMPLING16_PENDING_OWN_REPLAY"
@@ -365,6 +371,7 @@ def main():
             "soccer.neural_relay_return_player_prepare.development.v48",
             "soccer.neural_relay_prepared_return_sampling.development.v49",
             "soccer.neural_relay_prepared_return_candidate.development.v50",
+            "soccer.neural_relay_receiver_velocity_match_prepared.development.v51",
             "soccer.neural_relay_receiver_motion_pair.development.v18",
             "soccer.neural_relay_receiver_dense_exploration.development.v19",
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
@@ -434,6 +441,20 @@ def main():
                 for enabled in (False, True)
             ]
             if return_pair and not child_return_role
+            else [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_whole=True,
+                    receiver_learned=True,
+                    passer_velocity_recovery=True,
+                    passer_prepare=True,
+                    receiver_adaptive_intercept=enabled,
+                )
+                for enabled in (False, True)
+            ]
+            if receiver_velocity_match_prepared
             else [
                 dict(
                     start=80,
@@ -698,7 +719,9 @@ def main():
             or dec.get("bounded_teacher_added_after_neural") is not False
         ):
             raise ValueError("explicit unlearned lateral command authority required")
-        if adaptive_intercept and dec.get("adaptive_intercept_is_unlearned_teacher") is not True:
+        if (adaptive_intercept or receiver_velocity_match_prepared) and dec.get(
+            "adaptive_intercept_is_unlearned_teacher"
+        ) is not True:
             raise ValueError("explicit unlearned adaptive command authority required")
         if (
             coordinated_intercept

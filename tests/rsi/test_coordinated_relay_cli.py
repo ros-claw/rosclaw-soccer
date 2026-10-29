@@ -171,3 +171,30 @@ def test_return_candidate_rejects_incomplete_lineage(tmp_path):
         in result.stderr
     )
     assert not (tmp_path / "output").exists()
+
+
+def test_velocity_match_prepared_requires_child_role(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
+            "--frontier-root",
+            str(tmp_path / "frontier"),
+            "--frontier-head",
+            "unused",
+            "--frontier-hash",
+            "unused",
+            "--expected-head",
+            "unused",
+            "--output",
+            str(tmp_path / "output"),
+            "--receiver-velocity-match-prepared-pair",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "velocity match requires an isolated child return-role pair" in result.stderr
+    assert not (tmp_path / "output").exists()

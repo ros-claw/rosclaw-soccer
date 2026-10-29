@@ -54,6 +54,7 @@ def main():
     p.add_argument("--return-player-own-sampling", action="store_true")
     p.add_argument("--return-player-sampling-seed", type=int, choices=(94137, 94163))
     p.add_argument("--return-player-prepared-pair", action="store_true")
+    p.add_argument("--receiver-velocity-match-prepared-pair", action="store_true")
     p.add_argument("--return-player-candidate", type=Path)
     p.add_argument("--return-player-candidate-hash")
     p.add_argument("--return-player-training-receipt", type=Path)
@@ -87,6 +88,14 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.receiver_velocity_match_prepared_pair and (
+        not a.receiver_child_return_role_pair
+        or a.return_player_prepared_pair
+        or a.return_player_adaptive_identity
+        or a.return_player_own_sampling
+        or a.return_player_candidate
+    ):
+        p.error("velocity match requires an isolated child return-role pair")
     candidate_fields = (
         a.return_player_candidate,
         a.return_player_candidate_hash,
@@ -812,6 +821,20 @@ def main():
             )
             for enabled in (False, True)
         ]
+    if a.receiver_velocity_match_prepared_pair:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                receiver_whole=True,
+                receiver_learned=True,
+                passer_velocity_recovery=True,
+                passer_prepare=True,
+                receiver_adaptive_intercept=enabled,
+            )
+            for enabled in (False, True)
+        ]
     if a.receiver_exploration:
         arms = [
             dict(
@@ -857,6 +880,8 @@ def main():
                 if a.passer_successor_pair
                 else "soccer.neural_relay_passer_return_alignment.development.v36"
                 if a.passer_return_align_pair
+                else "soccer.neural_relay_receiver_velocity_match_prepared.development.v51"
+                if a.receiver_velocity_match_prepared_pair
                 else "soccer.neural_relay_prepared_return_candidate.development.v50"
                 if a.return_player_candidate
                 else "soccer.neural_relay_prepared_return_sampling.development.v49"
@@ -1027,7 +1052,8 @@ def main():
             geometry_role_selector_is_teacher=True,
             post_touch_velocity_follow_is_unlearned_teacher=a.receiver_follow_study,
             lateral_intercept_is_unlearned_teacher=a.receiver_lateral_authority,
-            adaptive_intercept_is_unlearned_teacher=a.receiver_adaptive_intercept,
+            adaptive_intercept_is_unlearned_teacher=a.receiver_adaptive_intercept
+            or a.receiver_velocity_match_prepared_pair,
             coordinated_intercept_is_unlearned_teacher=a.receiver_coordinated_intercept,
             longitudinal_intercept_is_unlearned_teacher=a.receiver_longitudinal_authority,
             whole_receiver_identity_not_trained=a.receiver_whole_identity,
@@ -2114,6 +2140,8 @@ def main():
                     if a.passer_successor_pair
                     else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
                     if a.passer_return_align_pair
+                    else "NEURAL_RELAY_RECEIVER_VELOCITY_MATCH_PREPARED16_PENDING_OWN_REPLAY"
+                    if a.receiver_velocity_match_prepared_pair
                     else "NEURAL_RELAY_PREPARED_RETURN_CANDIDATE16_PENDING_OWN_REPLAY"
                     if a.return_player_candidate
                     else "NEURAL_RELAY_PREPARED_RETURN_SAMPLING16_PENDING_OWN_REPLAY"
