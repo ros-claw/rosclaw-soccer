@@ -30,9 +30,12 @@ def main():
     p.add_argument("--anchor-data", type=Path, required=True)
     p.add_argument("--anchor-data-hash", required=True)
     p.add_argument("--safe-continuation", action="store_true")
+    p.add_argument("--receiver-potential", action="store_true")
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
+    if a.receiver_potential and not a.safe_continuation:
+        p.error("receiver potential requires unchanged safe-continuation base reward")
     clean(a.expected_head)
     if len(a.group) != 2 or len(a.audit_hash) != 2:
         raise ValueError("both predeclared training blocks and replay hashes required")
@@ -107,9 +110,10 @@ def main():
             if scene.is_symlink():
                 raise ValueError("exact native physics scene required")
             native_model = mujoco.MjModel.from_xml_path(str(scene))
-            ball_v = NativeVelocityLayout(
+            layout = NativeVelocityLayout(
                 native_model, robot_prefix="b/", ball_body_name="soccer_ball", player_count=2
-            ).bv
+            )
+            ball_v = layout.bv
             pins.append((scene, scene_hash))
         for row in source["records"]:
             seed = row["course"]["arm"]["exploration_seed"]
@@ -171,6 +175,31 @@ def main():
                     and (returns > 1e-7).any()
                 ):
                     raise ValueError("observed failed episodes cannot receive positive returns")
+                if a.receiver_potential:
+                    from rosclaw_soccer.rsi.receiver_potential_shaping import (
+                        receiver_potential_shaping,
+                    )
+
+                    ip = bind(root, row, "initial")
+                    if ip is None:
+                        raise ValueError("actual initial shared state required")
+                    with np.load(ip, allow_pickle=False) as initial:
+                        pre_q = np.concatenate((initial["qpos"][None], raw["qpos"][: n - 1, -1]))
+                        pre_v = np.concatenate((initial["qvel"][None], raw["qvel"][: n - 1, -1]))
+                    shape = receiver_potential_shaping(
+                        pre_q,
+                        pre_v,
+                        receiver_q=layout.rq,
+                        receiver_v=layout.rv,
+                        ball_q=layout.bq,
+                        ball_v=layout.bv,
+                    )
+                    reward = reward + shape
+                    returns, running = np.empty(n, np.float32), 0.0
+                    for index in range(n - 1, -1, -1):
+                        running = float(reward[index]) + 0.99 * running
+                        returns[index] = running
+                    pins.append((ip, digest(ip)))
 
                 def t(x):
                     return torch.from_numpy(np.asarray(x, np.float32).copy())
@@ -289,7 +318,13 @@ def main():
             checkpoint_hash=digest(dest),
             episodes=len(episodes),
             sampled_controls=len(observations),
-            reward_contract="safe-continuation-v2" if a.safe_continuation else "precontact-v1",
+            reward_contract=(
+                "safe-continuation-v2-potential-v1"
+                if a.receiver_potential
+                else "safe-continuation-v2"
+                if a.safe_continuation
+                else "precontact-v1"
+            ),
             gated_controls=gated_controls,
             event_counts=dict(event_counts),
             critic_updates=3,
