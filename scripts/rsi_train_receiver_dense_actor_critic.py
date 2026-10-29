@@ -34,9 +34,15 @@ def main() -> None:
     p.add_argument("--seed", type=int, choices=(92401, 92402, 92403), required=True)
     p.add_argument("--receiver-motion-only", action="store_true")
     p.add_argument("--functional-proxy", action="store_true")
+    p.add_argument("--functional-failure-timing", type=Path)
+    p.add_argument("--functional-failure-timing-hash")
     a = p.parse_args()
     if a.functional_proxy and a.receiver_motion_only:
         p.error("functional proxy and motion-only feedback are distinct protocols")
+    if bool(a.functional_failure_timing) != bool(a.functional_failure_timing_hash) or (
+        a.functional_failure_timing and not a.functional_proxy
+    ):
+        p.error("timed failure requires functional proxy and a pinned timing receipt")
     clean(a.expected_head)
     paths = (
         (a.dataset / "complete.json", a.dataset_hash),
@@ -45,13 +51,40 @@ def main() -> None:
         (a.anchor_admission, a.anchor_admission_hash),
         (a.anchor_dataset, a.anchor_dataset_hash),
     )
+    if a.functional_failure_timing:
+        paths += ((a.functional_failure_timing, a.functional_failure_timing_hash),)
     if (
         a.output.exists()
         or a.output.resolve().is_relative_to(Path.cwd())
         or any(p.is_symlink() or digest(p) != h for p, h in paths)
     ):
         raise ValueError("pinned audits and unused external output required")
-    data, dense, audit, admission, old_data = [json.loads(p.read_text()) for p, _ in paths]
+    data, dense, audit, admission, old_data = [json.loads(p.read_text()) for p, _ in paths[:5]]
+    timing_by_key = {}
+    if a.functional_failure_timing:
+        timing = json.loads(a.functional_failure_timing.read_text())
+        timing_rows = timing.get("records", [])
+        if (
+            timing.get("status") != "RECEIVER_FAILURE_TIMELINE_REPLAY_BOUND_NOT_TRAINED"
+            or timing.get("dataset_hash") != a.dataset_hash
+            or len(timing_rows) != 72
+            or timing.get("failure_count")
+            != sum(r.get("failure_control") is not None for r in timing_rows)
+            or any(
+                timing.get(k) is not False
+                for k in (
+                    "actor_training",
+                    "independent_fresh",
+                    "promotion_authorized",
+                    "hardware_authorized",
+                    "goal_complete",
+                )
+            )
+        ):
+            raise ValueError("exact unpromoted failure timing receipt required")
+        timing_by_key = {(r["context"], r["side"], r["seed"]): r for r in timing_rows}
+        if len(timing_by_key) != 72:
+            raise ValueError("unique complete timing rows required")
     anchors = a.anchor_admission.parent / "healthy-anchors.npz"
     if (
         data.get("status") != "RECEIVER_ONPOLICY_PHYSICAL_EPISODES_NOT_TRAINED"
@@ -130,15 +163,44 @@ def main() -> None:
             ):
                 raise ValueError("actual actions and strict rewards must remain aligned")
             if a.functional_proxy:
-                from rosclaw_soccer.rsi.functional_receive_proxy import functional_receive_proxy
+                from rosclaw_soccer.rsi.functional_receive_proxy import (
+                    functional_receive_proxy,
+                    timed_failure_penalty,
+                )
 
                 reward, window = functional_receive_proxy(
                     d["receiver_xy"],
                     d["ball_xy"],
                     d["ball_forces"],
                     d["body_failed"],
-                    eventual_failure=original["actual"]["body_failure"],
+                    eventual_failure=original["actual"]["body_failure"]
+                    if not timing_by_key
+                    else False,
                 )
+                timing_credit = None
+                if timing_by_key:
+                    row = timing_by_key[(original["context"], original["side"], original["seed"])]
+                    failure_control = row["failure_control"]
+                    if (
+                        row["sampled_controls"] != n
+                        or row["source_block"] != original["source_block"]
+                        or row["source_trial"] != original["source_trial"]
+                        or row["source_physics_hash"] != original["source_physics_hash"]
+                        or (failure_control is not None) != original["actual"]["body_failure"]
+                        or (
+                            failure_control is not None
+                            and (
+                                type(failure_control) is not int
+                                or failure_control >= row["physical_controls"]
+                            )
+                        )
+                        or ("A" in row["failed_bodies"]) != original["actual"]["A_failed"]
+                        or ("B" in row["failed_bodies"]) != original["actual"]["B_failed"]
+                    ):
+                        raise ValueError("exact full native failure timing required")
+                    reward, timing_credit = timed_failure_penalty(
+                        reward, failure_control=failure_control, gamma=0.99
+                    )
                 proxy_windows.append(
                     dict(
                         context=original["context"],
@@ -146,6 +208,7 @@ def main() -> None:
                         seed=original["seed"],
                         first_window_control=window,
                         eventual_failure=original["actual"]["body_failure"],
+                        timing_credit=timing_credit,
                     )
                 )
             else:
@@ -236,7 +299,9 @@ def main() -> None:
             dataset_hash=a.dataset_hash,
             dense_hash=a.dense_hash,
             dense_audit_hash=a.dense_audit_hash,
-            feedback_profile="functional-receive-proxy-v1"
+            feedback_profile="functional-receive-timed-proxy-v2"
+            if timing_by_key
+            else "functional-receive-proxy-v1"
             if a.functional_proxy
             else "receiver-motion-kinematic-v2"
             if a.receiver_motion_only
@@ -244,6 +309,7 @@ def main() -> None:
             physical_retention_proven=False,
             promotion_authorized=False,
             hardware_authorized=False,
+            failure_timing_hash=a.functional_failure_timing_hash,
         ),
         checkpoint,
     )
@@ -251,7 +317,9 @@ def main() -> None:
         a.output / "complete.json",
         dict(
             status=(
-                "FUNCTIONAL_RECEIVER_OFFLINE_CANDIDATE"
+                "FUNCTIONAL_TIMED_RECEIVER_OFFLINE_CANDIDATE"
+                if timing_by_key
+                else "FUNCTIONAL_RECEIVER_OFFLINE_CANDIDATE"
                 if a.functional_proxy
                 else "MOTION_RECEIVER_OFFLINE_CANDIDATE"
                 if a.receiver_motion_only
@@ -259,7 +327,9 @@ def main() -> None:
             )
             if result["accepted"]
             else (
-                "FUNCTIONAL_RECEIVER_OFFLINE_REJECTED"
+                "FUNCTIONAL_TIMED_RECEIVER_OFFLINE_REJECTED"
+                if timing_by_key
+                else "FUNCTIONAL_RECEIVER_OFFLINE_REJECTED"
                 if a.functional_proxy
                 else "MOTION_RECEIVER_OFFLINE_REJECTED"
                 if a.receiver_motion_only
@@ -269,7 +339,9 @@ def main() -> None:
             dataset_hash=a.dataset_hash,
             dense_hash=a.dense_hash,
             dense_audit_hash=a.dense_audit_hash,
-            feedback_profile="functional-receive-proxy-v1"
+            feedback_profile="functional-receive-timed-proxy-v2"
+            if timing_by_key
+            else "functional-receive-proxy-v1"
             if a.functional_proxy
             else "receiver-motion-kinematic-v2"
             if a.receiver_motion_only
@@ -284,6 +356,7 @@ def main() -> None:
             dense_weight=0.0 if a.functional_proxy else 0.2,
             proxy_window_rows=proxy_windows if a.functional_proxy else None,
             proxy_is_not_possession=a.functional_proxy,
+            failure_timing_hash=a.functional_failure_timing_hash,
             gamma=0.99,
             **result,
             actual_new_physics=False,

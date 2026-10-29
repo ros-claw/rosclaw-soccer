@@ -34,9 +34,15 @@ def main() -> None:
     p.add_argument("--seed", type=int, choices=(92401, 92402, 92403), required=True)
     p.add_argument("--receiver-motion-only", action="store_true")
     p.add_argument("--functional-proxy", action="store_true")
+    p.add_argument("--functional-failure-timing", type=Path)
+    p.add_argument("--functional-failure-timing-hash")
     a = p.parse_args()
     if a.functional_proxy and a.receiver_motion_only:
         p.error("functional proxy and motion-only feedback are distinct protocols")
+    if bool(a.functional_failure_timing) != bool(a.functional_failure_timing_hash) or (
+        a.functional_failure_timing and not a.functional_proxy
+    ):
+        p.error("timed failure requires functional proxy and a pinned timing receipt")
     clean(a.expected_head)
     dp, ap, tp = (x / "complete.json" for x in (a.dataset, a.admission, a.training))
     pins = (
@@ -45,18 +51,32 @@ def main() -> None:
         (tp, a.training_hash),
         (a.dense_audit, a.dense_audit_hash),
     )
+    if a.functional_failure_timing:
+        pins += ((a.functional_failure_timing, a.functional_failure_timing_hash),)
     if (
         a.output.exists()
         or a.output.resolve().is_relative_to(Path.cwd())
         or any(p.is_symlink() or digest(p) != h for p, h in pins)
     ):
         raise ValueError("exact immutable research input and unused external output required")
-    data, admission, training, audit = [json.loads(p.read_text()) for p, _ in pins]
+    data, admission, training, audit = [json.loads(p.read_text()) for p, _ in pins[:4]]
+    timed = bool(a.functional_failure_timing)
+    if timed:
+        timing = json.loads(a.functional_failure_timing.read_text())
+        if (
+            timing.get("status") != "RECEIVER_FAILURE_TIMELINE_REPLAY_BOUND_NOT_TRAINED"
+            or timing.get("dataset_hash") != a.dataset_hash
+            or len(timing.get("records", [])) != 72
+            or training.get("failure_timing_hash") != a.functional_failure_timing_hash
+        ):
+            raise ValueError("exact replay-bound failure timing required")
     checkpoint, anchors = a.training / "research-candidate.pt", a.admission / "healthy-anchors.npz"
     if (
         training.get("status")
         != (
-            "FUNCTIONAL_RECEIVER_OFFLINE_CANDIDATE"
+            "FUNCTIONAL_TIMED_RECEIVER_OFFLINE_CANDIDATE"
+            if timed
+            else "FUNCTIONAL_RECEIVER_OFFLINE_CANDIDATE"
             if a.functional_proxy
             else "MOTION_RECEIVER_OFFLINE_CANDIDATE"
             if a.receiver_motion_only
@@ -72,7 +92,8 @@ def main() -> None:
         or (
             a.functional_proxy
             and (
-                training.get("feedback_profile") != "functional-receive-proxy-v1"
+                training.get("feedback_profile")
+                != ("functional-receive-timed-proxy-v2" if timed else "functional-receive-proxy-v1")
                 or training.get("proxy_is_not_possession") is not True
             )
         )
@@ -122,7 +143,12 @@ def main() -> None:
         or state.get("dense_hash") != training["dense_hash"]
         or state.get("dense_audit_hash") != a.dense_audit_hash
         or state.get("seed") != a.seed
-        or (a.functional_proxy and state.get("feedback_profile") != "functional-receive-proxy-v1")
+        or (
+            a.functional_proxy
+            and state.get("feedback_profile")
+            != ("functional-receive-timed-proxy-v2" if timed else "functional-receive-proxy-v1")
+        )
+        or (timed and state.get("failure_timing_hash") != a.functional_failure_timing_hash)
         or (
             a.receiver_motion_only
             and state.get("feedback_profile") != "receiver-motion-kinematic-v2"
@@ -212,12 +238,16 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="FUNCTIONAL_RECEIVER_CANDIDATE_READBACK_MATCH"
+            status="FUNCTIONAL_TIMED_RECEIVER_CANDIDATE_READBACK_MATCH"
+            if timed
+            else "FUNCTIONAL_RECEIVER_CANDIDATE_READBACK_MATCH"
             if a.functional_proxy
             else "MOTION_RECEIVER_CANDIDATE_READBACK_MATCH"
             if a.receiver_motion_only
             else "DENSE_RECEIVER_CANDIDATE_READBACK_MATCH",
-            feedback_profile="functional-receive-proxy-v1"
+            feedback_profile="functional-receive-timed-proxy-v2"
+            if timed
+            else "functional-receive-proxy-v1"
             if a.functional_proxy
             else "receiver-motion-kinematic-v2"
             if a.receiver_motion_only
@@ -228,6 +258,8 @@ def main() -> None:
             checkpoint_hash=training["checkpoint_hash"],
             dataset_hash=a.dataset_hash,
             dense_audit_hash=a.dense_audit_hash,
+            failure_timing_hash=a.functional_failure_timing_hash,
+            reward_or_training_recomputed=False,
             seed=a.seed,
             episodes=len(kls),
             sampled_controls=count,
