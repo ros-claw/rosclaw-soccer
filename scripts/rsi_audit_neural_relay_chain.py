@@ -129,8 +129,11 @@ def main():
     leg_limit_pair = projected_memory or (
         dec["protocol"] == "soccer.neural_relay_receiver_leg_target_projection.development.v26"
     )
-    coordinated_intercept = (return_pair and not child_return_role) or (
-        dec["protocol"] == "soccer.neural_relay_receiver_coordinated_intercept.development.v34"
+    freeze_ankle = dec["protocol"] == "soccer.neural_relay_receiver_ankle_freeze.development.v58"
+    coordinated_intercept = (
+        freeze_ankle
+        or (return_pair and not child_return_role)
+        or (dec["protocol"] == "soccer.neural_relay_receiver_coordinated_intercept.development.v34")
     )
     contact_lead = coordinated_intercept or (
         dec["protocol"] == "soccer.neural_relay_receiver_contact_lead.development.v29"
@@ -313,6 +316,8 @@ def main():
         if projected_memory
         else "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY"
         if leg_limit_pair
+        else "NEURAL_RELAY_RECEIVER_ANKLE_FREEZE16_PENDING_OWN_REPLAY"
+        if freeze_ankle
         else "NEURAL_RELAY_RECEIVER_COORDINATED_INTERCEPT16_PENDING_OWN_REPLAY"
         if coordinated_intercept
         else "NEURAL_RELAY_RECEIVER_CONTACT_LEAD16_PENDING_OWN_REPLAY"
@@ -428,6 +433,7 @@ def main():
             "soccer.neural_relay_receiver_early_intercept.development.v28",
             "soccer.neural_relay_receiver_contact_lead.development.v29",
             "soccer.neural_relay_receiver_coordinated_intercept.development.v34",
+            "soccer.neural_relay_receiver_ankle_freeze.development.v58",
             "soccer.neural_relay_passer_return_pair.development.v35",
             "soccer.neural_relay_passer_return_alignment.development.v36",
             "soccer.neural_relay_passer_successor.development.v37",
@@ -854,6 +860,8 @@ def main():
             raise ValueError("explicit unlearned predictive foot/shin teacher required")
         if axis_local_fallback and dec.get("receiver_axis_local_fallback") is not True:
             raise ValueError("explicit axis-local fallback research contract required")
+        if freeze_ankle and dec.get("receiver_freeze_ankle_teacher") is not True:
+            raise ValueError("explicit ankle-freeze teacher research contract required")
         if early_intercept and dec.get("receiver_early_foot_intercept_is_unlearned") is not True:
             raise ValueError("explicit unlearned early intercept contract required")
         if contact_lead and dec.get("receiver_early_contact_lead_is_unlearned") is not True:
@@ -1333,6 +1341,7 @@ def main():
                     axis_local_fallback=axis_local_fallback,
                     early_intercept=early_intercept,
                     contact_lead=contact_lead,
+                    freeze_ankle_correction=freeze_ankle,
                 )
             foot_bodies = [
                 w.model.body("b/" + side + "_ankle_roll_link").id for side in ("left", "right")

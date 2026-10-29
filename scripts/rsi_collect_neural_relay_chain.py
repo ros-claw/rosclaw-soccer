@@ -37,6 +37,7 @@ def main():
     p.add_argument("--receiver-axis-local-fallback", action="store_true")
     p.add_argument("--receiver-early-foot-intercept", action="store_true")
     p.add_argument("--receiver-early-contact-lead", action="store_true")
+    p.add_argument("--receiver-freeze-ankle-teacher", action="store_true")
     p.add_argument("--receiver-leg-limit-pair", action="store_true")
     p.add_argument("--receiver-projection-executed-memory", action="store_true")
     p.add_argument("--receiver-whole-identity", action="store_true")
@@ -278,6 +279,10 @@ def main():
         p.error("passer velocity recovery requires one isolated development block")
     if a.receiver_early_contact_lead and not a.receiver_early_foot_intercept:
         p.error("contact lead requires the early foot intercept study")
+    if a.receiver_freeze_ankle_teacher and (
+        not a.receiver_coordinated_intercept or a.passer_return_pair
+    ):
+        p.error("ankle-freeze study requires the isolated coordinated receiver pair")
     if a.receiver_early_foot_intercept and not (
         a.receiver_predictive_foot_shin and a.receiver_axis_local_fallback
     ):
@@ -1035,6 +1040,8 @@ def main():
                 if a.receiver_projection_executed_memory
                 else "soccer.neural_relay_receiver_leg_target_projection.development.v26"
                 if a.receiver_leg_limit_pair
+                else "soccer.neural_relay_receiver_ankle_freeze.development.v58"
+                if a.receiver_freeze_ankle_teacher
                 else "soccer.neural_relay_receiver_coordinated_intercept.development.v34"
                 if a.receiver_coordinated_intercept
                 else "soccer.neural_relay_receiver_contact_lead.development.v29"
@@ -1185,6 +1192,7 @@ def main():
             receiver_foot_teacher_is_unlearned=a.receiver_foot_teacher_pair,
             receiver_predictive_foot_shin_is_unlearned=a.receiver_predictive_foot_shin,
             receiver_axis_local_fallback=a.receiver_axis_local_fallback,
+            receiver_freeze_ankle_teacher=a.receiver_freeze_ankle_teacher,
             receiver_early_foot_intercept_is_unlearned=a.receiver_early_foot_intercept,
             receiver_early_contact_lead_is_unlearned=a.receiver_early_contact_lead,
             receiver_leg_projection_is_unlearned=a.receiver_leg_limit_pair,
@@ -1609,6 +1617,7 @@ def main():
                     axis_local_fallback=a.receiver_axis_local_fallback,
                     early_intercept=a.receiver_early_foot_intercept,
                     contact_lead=a.receiver_early_contact_lead,
+                    freeze_ankle_correction=a.receiver_freeze_ankle_teacher,
                 )
             foot_bodies = [
                 w.model.body("b/" + side + "_ankle_roll_link").id for side in ("left", "right")
@@ -2392,6 +2401,8 @@ def main():
                     if a.receiver_projection_executed_memory
                     else "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY"
                     if a.receiver_leg_limit_pair
+                    else "NEURAL_RELAY_RECEIVER_ANKLE_FREEZE16_PENDING_OWN_REPLAY"
+                    if a.receiver_freeze_ankle_teacher
                     else "NEURAL_RELAY_RECEIVER_COORDINATED_INTERCEPT16_PENDING_OWN_REPLAY"
                     if a.receiver_coordinated_intercept
                     else "NEURAL_RELAY_RECEIVER_CONTACT_LEAD16_PENDING_OWN_REPLAY"

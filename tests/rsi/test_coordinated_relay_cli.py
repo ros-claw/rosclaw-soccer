@@ -4,6 +4,33 @@ import subprocess
 import sys
 
 
+def test_ankle_freeze_requires_own_explicit_study(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
+            "--frontier-root",
+            str(tmp_path / "frontier"),
+            "--frontier-head",
+            "unused",
+            "--frontier-hash",
+            "unused",
+            "--expected-head",
+            "unused",
+            "--output",
+            str(tmp_path / "output"),
+            "--receiver-freeze-ankle-teacher",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "ankle-freeze study requires the isolated coordinated receiver pair" in result.stderr
+    assert not (tmp_path / "output").exists()
+
+
 def test_coordinated_protocol_rejects_incomplete_teacher_configuration(tmp_path):
     result = subprocess.run(
         [
