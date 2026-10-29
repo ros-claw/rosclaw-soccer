@@ -9,6 +9,20 @@ from scripts.rsi_native_context_recovery_common import check_pins, digest
 from scripts.rsi_native_fresh_common import admit_frontier, clean, receipt, source_pins
 
 
+def freeze_router(actor):
+    import torch
+
+    before = {k: v.detach().clone() for k, v in actor.state_dict().items()}
+    actor.requires_grad_(False).eval()
+    if (
+        actor.training
+        or any(p.requires_grad for p in actor.parameters())
+        or any(not torch.equal(v, before[k]) for k, v in actor.state_dict().items())
+    ):
+        raise ValueError("router must freeze without changing any weights or buffers")
+    return actor
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ("frontier-root", "router-source", "router-history", "protocol", "output"):
@@ -24,6 +38,12 @@ def main():
         p.add_argument("--" + name, required=True)
     p.add_argument("--replay-source", type=Path)
     p.add_argument("--replay-source-hash")
+    p.add_argument("--recovery-root", type=Path, required=True)
+    p.add_argument("--recovery-failure-hash", required=True)
+    p.add_argument("--recovery-declaration-hash", required=True)
+    p.add_argument("--recovery-world-hash", required=True)
+    p.add_argument("--recovery-protocol", type=Path, required=True)
+    p.add_argument("--recovery-protocol-hash", required=True)
     a = p.parse_args()
     clean(a.expected_head)
     if (
@@ -36,6 +56,7 @@ def main():
         (a.router_source, a.router_source_hash),
         (a.router_history, a.router_history_hash),
         (a.protocol, a.protocol_hash),
+        (a.recovery_protocol, a.recovery_protocol_hash),
     ):
         if path.is_symlink() or digest(path) != h:
             raise ValueError("exact router source, history and protocol required")
@@ -68,6 +89,29 @@ def main():
     )
     if [c["seed"] for c in candidates] != [65023]:
         raise ValueError("exact acquired parent required")
+    failed_path = a.recovery_root / "failed.json"
+    prior_declaration = a.recovery_root / "declaration.json"
+    prior_world_path = a.recovery_root / "trial0/complete.json"
+    for path, h in (
+        (failed_path, a.recovery_failure_hash),
+        (prior_declaration, a.recovery_declaration_hash),
+        (prior_world_path, a.recovery_world_hash),
+    ):
+        if path.is_symlink() or digest(path) != h:
+            raise ValueError("exact failed attempt and world-zero evidence required")
+    failed = json.loads(failed_path.read_text())
+    prior_d = json.loads(prior_declaration.read_text())
+    prior_world = json.loads(prior_world_path.read_text())
+    if (
+        failed.get("index") != 1
+        or failed.get("arm") != "router"
+        or failed.get("completed_worlds") != 1
+        or failed.get("error") != "frozen CPU Dual motor and healthy actual world required"
+        or prior_d.get("protocol_hash") != a.protocol_hash
+        or prior_world.get("index") != 0
+        or prior_world.get("arm") != "dual"
+    ):
+        raise ValueError("exact declared pre-router admission failure required")
     for path, value in old["input_file_hashes"].items():
         if path in pins and pins[path] != value:
             raise ValueError("source lineages disagree")
@@ -79,8 +123,17 @@ def main():
         (fresh_receipt, old_config["fresh_hash"]),
         (fresh_declaration, fresh["declaration_hash"]),
         (a.protocol, a.protocol_hash),
+        (a.recovery_protocol, a.recovery_protocol_hash),
+        (failed_path, a.recovery_failure_hash),
+        (prior_declaration, a.recovery_declaration_hash),
+        (prior_world_path, a.recovery_world_hash),
     ):
         pins[str(path.resolve())] = h
+    for artifact in prior_world["artifacts"].values():
+        path = a.recovery_root / artifact["path"]
+        if path.is_symlink() or path.resolve().parent != (a.recovery_root / "trial0").resolve():
+            raise ValueError("confined old world evidence required")
+        pins[str(path.resolve())] = artifact["hash"]
     source_pins(pins)
     check_pins(pins)
     import rosclaw
@@ -133,6 +186,7 @@ def main():
     router, variant = load_fresh_actor(policies[0], router_config, "progressive")
     if type(router) is not FrozenAncestralRouterActor or variant != 2:
         raise ValueError("exact frozen router required")
+    router = freeze_router(router)
     setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor, context_indices=indices)
     courses = [
         (i, side, arm) for i in indices for side in (-0.35, 0.35) for arm in ("dual", "router")
@@ -212,6 +266,20 @@ def main():
                 index=index, context=context, lateral_m=side, arm=arm, **result, artifacts=artifacts
             )
             write_once(folder / "complete.json", record)
+            if index == 0:
+                if {k: v for k, v in record.items() if k != "artifacts"} != {
+                    k: v for k, v in prior_world.items() if k != "artifacts"
+                } or set(artifacts) != set(prior_world["artifacts"]):
+                    raise ValueError("recovered world-zero metadata differs")
+                for key, saved in prior_world["artifacts"].items():
+                    with np.load(a.recovery_root / saved["path"], allow_pickle=False) as archive:
+                        if set(archive.files) != set(arrays_all[key]) or any(
+                            not np.array_equal(archive[k], arrays_all[key][k])
+                            for k in archive.files
+                        ):
+                            raise ValueError(
+                                "recovered world-zero physical/history mismatch: " + key
+                            )
             if replay is not None:
                 saved = replay["records"][index]
                 if {k: v for k, v in record.items() if k != "artifacts"} != {
