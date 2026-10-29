@@ -18,6 +18,7 @@ def main():
     p.add_argument("--protocol", type=Path, required=True)
     p.add_argument("--protocol-hash", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--exploration-seed", type=int, choices=(24001, 24002))
     a = p.parse_args()
     clean(a.expected_head)
     if a.output.resolve().is_relative_to(Path.cwd()) or a.output.resolve().is_relative_to(
@@ -34,6 +35,10 @@ def main():
             protocol_hash=a.protocol_hash,
             policy_hash=a.policy_hash,
             mode="ASSISTED_TRAINING_ONLY",
+            exploration_seed=a.exploration_seed,
+            exploration_agent_ids=(
+                ["blue.playmaker", "red.finisher"] if a.exploration_seed is not None else []
+            ),
             promotion_authorized=False,
             hardware_authorized=False,
         ),
@@ -53,7 +58,9 @@ def main():
             default_continuous_match_options,
         )
         from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixture
+        from rosclaw_soccer.training.near_ball_residual_ppo import _validate_on_policy
         from rosclaw_soccer.training.return_turnaround import return_turnaround_metrics
+        from rosclaw_soccer.training.returned_ball_learning import returned_ball_segments
         from rosclaw_soccer.world.training_ball_return import TrainingBallReturnConfig
 
         fixture = build_four_vs_four_fixture(a.asset_root, basic_ball_play=True)
@@ -103,7 +110,30 @@ def main():
                 contact_teacher_config=teacher,
                 option_bridge_config=option,
                 near_ball_policy=policy,
+                near_ball_explore=a.exploration_seed is not None,
+                near_ball_seed=a.exploration_seed or 0,
+                near_ball_exploration_agent_ids=(
+                    ("blue.playmaker", "red.finisher") if a.exploration_seed is not None else None
+                ),
             )
+            sampled_by_role = None
+            if a.exploration_seed is not None:
+                _validate_on_policy(policy, trace)
+                live_parts = returned_ball_segments(
+                    {k: v for k, v in trace.items() if np.ndim(v) and len(v) == len(trace["time"])}
+                )
+                sampled_by_role = {
+                    agent: int(
+                        sum(
+                            np.sum(
+                                part["residual_active"][:, i]
+                                & part["residual_exploration_mask"][:, i]
+                            )
+                            for part in live_parts
+                        )
+                    )
+                    for i, agent in enumerate(policy.agent_ids)
+                }
             returns = return_turnaround_metrics(trace["time"], trace["training_return_event_code"])
             reentries = np.flatnonzero(trace["training_return_event_code"] == 3)
             first_reentry = int(reentries[0]) if len(reentries) else len(trace["time"])
@@ -124,6 +154,7 @@ def main():
                     else first_reentry,
                     later_recorded_foot_contact_frames=len(later_contacts),
                     later_recorded_nonfoot_contact_frames=len(later_nonfoot),
+                    returned_live_active_exploration_frames=sampled_by_role,
                 )
             )
         if file_digest(a.protocol) != a.protocol_hash or file_digest(a.policy) != a.policy_hash:
@@ -136,6 +167,7 @@ def main():
                 source_head=a.expected_head,
                 protocol_hash=a.protocol_hash,
                 policy_hash=a.policy_hash,
+                exploration_seed=a.exploration_seed,
                 fixture_hash=fixture.fixture_hash,
                 world_config=asdict(world),
                 artifacts=artifacts,
