@@ -25,6 +25,7 @@ def main() -> None:
         metavar=("SEED", "BLOCK", "SOURCE", "AUDIT", "AUDIT_HASH"),
     )
     p.add_argument("--expected-head", required=True)
+    p.add_argument("--precontact", action="store_true")
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
     clean(a.expected_head)
@@ -41,7 +42,9 @@ def main() -> None:
             root,
             audit,
             audit_hash,
-            "NEURAL_RELAY_RECEIVER_FUNCTIONAL_TIMED_PAIR16_PENDING_OWN_REPLAY",
+            "NEURAL_RELAY_RECEIVER_PRECONTACT_PAIR16_PENDING_OWN_REPLAY"
+            if a.precontact
+            else "NEURAL_RELAY_RECEIVER_FUNCTIONAL_TIMED_PAIR16_PENDING_OWN_REPLAY",
             worlds=16,
         )
         decl_path = root / "declaration.json"
@@ -51,7 +54,11 @@ def main() -> None:
             or digest(decl_path) != source["declaration_hash"]
             or decl.get("development_context_block") != block
             or decl.get("protocol")
-            != "soccer.neural_relay_receiver_functional_timed_pair.development.v40"
+            != (
+                "soccer.neural_relay_receiver_precontact_pair.development.v41"
+                if a.precontact
+                else "soccer.neural_relay_receiver_functional_timed_pair.development.v40"
+            )
         ):
             raise ValueError("exact declared source protocol required")
         candidate_audit = Path(decl["receiver_candidate_audit"])
@@ -180,7 +187,9 @@ def main() -> None:
     write_once(
         a.output,
         dict(
-            status="TIMED_RECEIVER_PAIR_REPLAYED_DEVELOPMENT_NOT_PROMOTED",
+            status="PRECONTACT_RECEIVER_PAIR_REPLAYED_DEVELOPMENT_NOT_PROMOTED"
+            if a.precontact
+            else "TIMED_RECEIVER_PAIR_REPLAYED_DEVELOPMENT_NOT_PROMOTED",
             source_head=a.expected_head,
             summaries=summaries,
             provenance=provenance,

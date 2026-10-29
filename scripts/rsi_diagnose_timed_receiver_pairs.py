@@ -49,6 +49,7 @@ def main() -> None:
     parser.add_argument("--review", type=Path, required=True)
     parser.add_argument("--review-hash", required=True)
     parser.add_argument("--expected-head", required=True)
+    parser.add_argument("--precontact", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     clean(args.expected_head)
@@ -61,7 +62,12 @@ def main() -> None:
         raise ValueError("exact paired review and unused external output required")
     review = json.loads(args.review.read_text())
     if (
-        review.get("status") != "TIMED_RECEIVER_PAIR_REPLAYED_DEVELOPMENT_NOT_PROMOTED"
+        review.get("status")
+        != (
+            "PRECONTACT_RECEIVER_PAIR_REPLAYED_DEVELOPMENT_NOT_PROMOTED"
+            if args.precontact
+            else "TIMED_RECEIVER_PAIR_REPLAYED_DEVELOPMENT_NOT_PROMOTED"
+        )
         or len(review.get("provenance", [])) != 9
         or len(review.get("records", [])) != 72
         or any(
@@ -84,7 +90,9 @@ def main() -> None:
             root,
             audit,
             proof["audit_hash"],
-            "NEURAL_RELAY_RECEIVER_FUNCTIONAL_TIMED_PAIR16_PENDING_OWN_REPLAY",
+            "NEURAL_RELAY_RECEIVER_PRECONTACT_PAIR16_PENDING_OWN_REPLAY"
+            if args.precontact
+            else "NEURAL_RELAY_RECEIVER_FUNCTIONAL_TIMED_PAIR16_PENDING_OWN_REPLAY",
             worlds=16,
         )
         scene, declaration = root / "scene.xml", root / "declaration.json"
@@ -196,7 +204,9 @@ def main() -> None:
     write_once(
         args.output,
         dict(
-            status="TIMED_RECEIVER_CONTACT_GEOMETRY_DIAGNOSTIC_NOT_PROMOTED",
+            status="PRECONTACT_RECEIVER_CONTACT_GEOMETRY_DIAGNOSTIC_NOT_PROMOTED"
+            if args.precontact
+            else "TIMED_RECEIVER_CONTACT_GEOMETRY_DIAGNOSTIC_NOT_PROMOTED",
             source_head=args.expected_head,
             review_hash=args.review_hash,
             summaries=summaries,
