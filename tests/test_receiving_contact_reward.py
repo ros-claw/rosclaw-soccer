@@ -101,3 +101,45 @@ def test_role_reward_rejects_nonfinite_control_entry_velocity():
     trace["ball_control_entry_velocity"][0, 0] = np.nan
     with pytest.raises(ValueError, match="pre-control"):
         physical_rewards(trace, parent.agent_ids, reward_shaping="role_receiving_v1")
+
+
+def test_team_dissipation_adds_contact_credit_without_double_direction_subtraction():
+    from test_s215_near_ball_residual import policy, samples
+
+    from rosclaw_soccer.training.near_ball_residual_ppo import physical_rewards
+
+    parent = policy()
+    trace = samples(parent)
+    n = len(trace["time"])
+    trace["ball_control_entry_velocity"] = np.zeros((n, 6))
+    trace["ball_control_entry_velocity"][:, 0] = 1.0
+    trace["ball_velocity"][:, 0] = 0.2
+    trace["possession_agent_code"] = np.ones(n, int)
+    trace["ball_contact_agent_code"][0] = 1
+    trace["ball_contact_effector_code"][0] = 1
+    trace["ball_contact_force_n"][0] = 2.0
+    trace["ball_nonfoot_contact_force_n"] = np.zeros(n)
+    trace["robot_robot_contact_count"] = np.zeros(n, dtype=int)
+    for i, agent in enumerate(parent.agent_ids):
+        key = agent.replace(".", "_")
+        trace[key + "_pelvis_pose"][:, 3:] = (1, 0, 0, 0)
+        trace[key + "_intent_code"] = np.full(n, 1 if i == 0 else 3, dtype=int)
+        trace[key + "_joint_safety_margin_rad"] = np.full((n, 29), 0.5)
+        for suffix in ("_left_foot_position", "_right_foot_position"):
+            trace[key + suffix][:] = (0.2, 0.0, 0.0)
+        trace[key + "_target_position"][:] = (-0.2, 0.0, 0.0)
+    base = physical_rewards(trace, parent.agent_ids, reward_shaping="team_capture_v1")
+    combined = physical_rewards(
+        trace, parent.agent_ids, reward_shaping="team_capture_dissipation_v1"
+    )
+    assert combined[0, 0] - base[0, 0] == pytest.approx(0.032 + 0.01)
+    np.testing.assert_array_equal(combined[:, 1:], base[:, 1:])
+    trace["ball_contact_force_n"][:] = 0
+    combined_no_contact = physical_rewards(
+        trace, parent.agent_ids, reward_shaping="team_capture_dissipation_v1"
+    )
+    base_no_contact = physical_rewards(trace, parent.agent_ids, reward_shaping="team_capture_v1")
+    np.testing.assert_array_equal(combined_no_contact, base_no_contact)
+    del trace["ball_control_entry_velocity"]
+    with pytest.raises(ValueError, match="control-entry"):
+        physical_rewards(trace, parent.agent_ids, reward_shaping="team_capture_dissipation_v1")

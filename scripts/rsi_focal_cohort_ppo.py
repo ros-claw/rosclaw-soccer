@@ -66,6 +66,11 @@ def main():
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("parent-hash", "protocol-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument(
+        "--reward-shaping",
+        choices=("team_capture_v1", "team_capture_dissipation_v1"),
+        default="team_capture_v1",
+    )
     a = p.parse_args()
     clean(a.expected_head)
     if (
@@ -215,7 +220,7 @@ def main():
             epochs=4,
             gamma=0.99,
             trace_decay=0.95,
-            reward_shaping="team_capture_v1",
+            reward_shaping=a.reward_shaping,
             trainable_agent_ids=SCOPE,
         )
         if not any(row["updated"] for row in rows):
@@ -233,6 +238,7 @@ def main():
                 "source_head": a.expected_head,
                 "parent_hash": a.parent_hash,
                 "protocol_hash": a.protocol_hash,
+                "reward_shaping": a.reward_shaping,
                 "source_hashes": a.source_hash,
                 "declaration_hashes": a.declaration_hash,
                 "rows": rows,

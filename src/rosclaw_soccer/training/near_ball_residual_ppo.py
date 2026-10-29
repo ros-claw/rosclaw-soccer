@@ -108,7 +108,7 @@ def physical_rewards(
         toward = (np.asarray(trace["ball_velocity"])[:, :2] * direction).sum(axis=1)
         touching = (contact == i + 1) & foot
         rewards[:, i] += touching * 0.04 * np.clip(toward, -2, 2)
-        if reward_shaping == "team_capture_v1":
+        if reward_shaping in {"team_capture_v1", "team_capture_dissipation_v1"}:
             from rosclaw_soccer.growth.role_self_model import TacticalIntent
 
             receiving = np.isin(
@@ -123,7 +123,7 @@ def physical_rewards(
                 ],
             )
             rewards[:, i] -= receiving * touching * 0.04 * np.clip(toward, -2, 2)
-        if reward_shaping == "role_receiving_v1":
+        if reward_shaping in {"role_receiving_v1", "team_capture_dissipation_v1"}:
             from rosclaw_soccer.growth.role_self_model import TacticalIntent
             from rosclaw_soccer.training.receiving_contact_reward import (
                 receiving_contact_adjustment,
@@ -159,7 +159,13 @@ def physical_rewards(
                 speed_before=np.linalg.norm(before_velocity[:, :2], axis=1),
                 speed_after=np.linalg.norm(np.asarray(trace["ball_velocity"])[:, :2], axis=1),
                 foot_distance=after,
-                directed_reward=touching * 0.04 * np.clip(toward, -2, 2),
+                # Team capture already removes directed credit for receiving;
+                # do not remove it a second time in the combined mode.
+                directed_reward=(
+                    np.zeros(count)
+                    if reward_shaping == "team_capture_dissipation_v1"
+                    else touching * 0.04 * np.clip(toward, -2, 2)
+                ),
             )
         rewards[:, i] -= 0.02 * (nonfoot == i + 1)
         gravity = obs[:, i, :3]
@@ -209,6 +215,7 @@ def physical_rewards(
         "in_play_motor_task_v1",
         "role_receiving_v1",
         "team_capture_v1",
+        "team_capture_dissipation_v1",
     }:
         distance = np.minimum(
             np.linalg.norm(obs[:, :, 38:41], axis=2),
@@ -231,6 +238,7 @@ def physical_rewards(
         "in_play_motor_task_v1",
         "role_receiving_v1",
         "team_capture_v1",
+        "team_capture_dissipation_v1",
     }:
         margins = np.stack(
             [np.asarray(trace[a.replace(".", "_") + "_joint_safety_margin_rad"]) for a in ids],
@@ -243,7 +251,7 @@ def physical_rewards(
         from rosclaw_soccer.training.in_play_rewards import in_play_rewards
 
         rewards = in_play_rewards(rewards, trace, ids)
-    if reward_shaping == "team_capture_v1":
+    if reward_shaping in {"team_capture_v1", "team_capture_dissipation_v1"}:
         from rosclaw_soccer.training.team_capture_curriculum import team_capture_trials
 
         capture_reward, _ = team_capture_trials(trace, agent_ids=ids)
