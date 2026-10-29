@@ -6,6 +6,7 @@ import torch
 from test_velocity_prior_actor import tensors
 
 from rosclaw_soccer.rsi.anchored_receiving_motor import AnchoredReceivingMotor
+from rosclaw_soccer.rsi.precontact_receiving_motor import PrecontactReceivingMotor
 from rosclaw_soccer.rsi.receiver_actor_critic import (
     ReceiverCritic,
     episode_balanced_value_loss,
@@ -86,3 +87,30 @@ def test_critic_weights_episodes_equally_not_by_length():
     episodes[1]["returns"][0] = float("nan")
     with pytest.raises(ValueError, match="finite complete"):
         episode_balanced_value_loss(critic, episodes)
+
+
+def test_explicit_precontact_motor_can_learn_on_audited_history():
+    actor = PrecontactReceivingMotor(
+        VelocityPriorActor(tensors(), reference_features=14), torch.full((29,), 0.25)
+    )
+    data = episode()
+    data["observations"][:, 98:101] = torch.tensor([1.0, 0.0, 0.0])
+    data["observations"][:, 101:104] = torch.tensor([-2.0, 0.0, 0.0])
+    loss, _ = receiver_own_history_loss(
+        actor, ReceiverCritic(), data, torch.full((29,), math.log(0.02)), rho=0.9
+    )
+    loss.backward()
+    assert all(p.grad is not None and p.grad.abs().sum() > 0 for p in actor.plastic_parameters())
+
+
+def test_arbitrary_motor_subclass_is_not_accepted():
+    class UnreviewedMotor(AnchoredReceivingMotor):
+        pass
+
+    actor = UnreviewedMotor(
+        VelocityPriorActor(tensors(), reference_features=14), torch.full((29,), 0.25)
+    )
+    with pytest.raises(ValueError, match="audited pure"):
+        receiver_own_history_loss(
+            actor, ReceiverCritic(), episode(), torch.full((29,), math.log(0.02)), rho=0.9
+        )

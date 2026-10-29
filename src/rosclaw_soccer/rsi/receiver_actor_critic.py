@@ -7,6 +7,7 @@ from torch import nn
 
 from rosclaw_soccer.rsi.anchored_receiving_motor import AnchoredReceivingMotor
 from rosclaw_soccer.rsi.motor_sampling_law import history_motor_kl, history_motor_logp
+from rosclaw_soccer.rsi.precontact_receiving_motor import PrecontactReceivingMotor
 
 
 class ReceiverCritic(nn.Module):
@@ -64,7 +65,7 @@ def receiver_own_history_loss(
     separately prove physical execution, own replay and measured outcomes.
     """
     if (
-        type(actor) is not AnchoredReceivingMotor
+        type(actor) not in (AnchoredReceivingMotor, PrecontactReceivingMotor)
         or type(critic) is not ReceiverCritic
         or episode.get("sampling_law") != "box-truncated-ar1"
         or any(
