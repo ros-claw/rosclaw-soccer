@@ -40,7 +40,7 @@ def compare_prefix(left, right, fields, controls):
             raise ValueError("actual paired prefix differs")
 
 
-def own_report(source, audit, source_hash, audit_hash):
+def own_report(source, audit, source_hash, audit_hash, *, early_cftrack=False):
     source_path, audit_path = source / "complete.json", audit / "complete.json"
     if (
         any(x.is_symlink() for x in (source_path, audit_path))
@@ -52,8 +52,18 @@ def own_report(source, audit, source_hash, audit_hash):
         raise ValueError("failed campaigns cannot be promoted as complete")
     original, replay = (json.loads(x.read_text()) for x in (source_path, audit_path))
     if (
-        original.get("status") != "SHARED_CFTRACK_16_PENDING_OWN_REPLAY"
-        or replay.get("status") != "SHARED_CFTRACK_ALL_OWN_HISTORY_MATCH"
+        original.get("status")
+        != (
+            "SHARED_CFTRACK_EARLY_16_PENDING_OWN_REPLAY"
+            if early_cftrack
+            else "SHARED_CFTRACK_16_PENDING_OWN_REPLAY"
+        )
+        or replay.get("status")
+        != (
+            "SHARED_CFTRACK_EARLY_ALL_OWN_HISTORY_MATCH"
+            if early_cftrack
+            else "SHARED_CFTRACK_ALL_OWN_HISTORY_MATCH"
+        )
         or replay.get("producer_hash") != source_hash
         or original.get("source_head") != replay.get("source_head")
         or original.get("external_head") != replay.get("external_head")
@@ -80,6 +90,7 @@ def own_report(source, audit, source_hash, audit_hash):
     if (
         declarations[0].get("input_file_hashes") != declarations[1].get("input_file_hashes")
         or original["scene_hash"] != replay["scene_hash"]
+        or any(d.get("early_cftrack", False) is not early_cftrack for d in declarations)
     ):
         raise ValueError("exact original source assets and compiled scene required")
     for i, (x, y) in enumerate(zip(original["records"], replay["records"], strict=True)):
@@ -165,11 +176,14 @@ def main():
         p.add_argument("--" + flag, type=Path, required=True)
     for flag in ("source-hash", "audit-hash", "prior-audit-hash", "expected-head"):
         p.add_argument("--" + flag, required=True)
+    p.add_argument("--early-cftrack", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("unused external output required")
-    current = own_report(a.source, a.audit, a.source_hash, a.audit_hash)
+    current = own_report(
+        a.source, a.audit, a.source_hash, a.audit_hash, early_cftrack=a.early_cftrack
+    )
     prior, _, ph = report(
         a.prior,
         a.prior_audit,
@@ -197,11 +211,19 @@ def main():
             or base["lateral_m"] != old["course"]["lateral_m"]
         ):
             raise ValueError("matched original baseline and intervention required")
-        if (base["handoff"] is None) != (candidate["handoff"] is None):
-            raise ValueError("intervention cannot change readiness before switching")
-        prefix = base["controls"] if base["handoff"] is None else base["handoff"]["control"]
-        if candidate["handoff"] is not None and candidate["handoff"]["control"] != prefix:
-            raise ValueError("identical switch boundary required")
+        if a.early_cftrack:
+            prefix = min(
+                base["controls"] if base["handoff"] is None else base["handoff"]["control"],
+                candidate["controls"]
+                if candidate["handoff"] is None
+                else candidate["handoff"]["control"],
+            )
+        else:
+            if (base["handoff"] is None) != (candidate["handoff"] is None):
+                raise ValueError("intervention cannot change readiness before switching")
+            prefix = base["controls"] if base["handoff"] is None else base["handoff"]["control"]
+            if candidate["handoff"] is not None and candidate["handoff"]["control"] != prefix:
+                raise ValueError("identical switch boundary required")
         with (
             np.load(bind(a.source, base, "physics"), allow_pickle=False) as x,
             np.load(bind(a.source, candidate, "physics"), allow_pickle=False) as y,
@@ -225,7 +247,7 @@ def main():
                 cftrack_common=outcome(a.source, candidate, common, model, layout),
                 cftrack_neural_controls=0
                 if candidate["artifacts"]["cftrack"] is None
-                else candidate["controls"] - prefix,
+                else candidate["controls"] - candidate["handoff"]["control"],
             )
         )
     if digest(scene) != scene_hash:
@@ -235,7 +257,9 @@ def main():
     write_once(
         a.output,
         dict(
-            status="SHARED_CFTRACK_REPLAYED_DEVELOPMENT_ONLY",
+            status="SHARED_CFTRACK_EARLY_REPLAYED_DEVELOPMENT_ONLY"
+            if a.early_cftrack
+            else "SHARED_CFTRACK_REPLAYED_DEVELOPMENT_ONLY",
             source_hash=a.source_hash,
             audit_hash=a.audit_hash,
             prior_hash=ph,

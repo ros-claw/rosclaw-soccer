@@ -28,6 +28,15 @@ def test_replay_rejects_unbound_or_mutated_source_scene(tmp_path):
     scene.write_text("<mujoco/>")
     receipt = dict(declaration_hash=digest(declaration), scene_hash=digest(scene))
     validate_replay_binding(tmp_path, receipt, pins, source_head="head", external_head="external")
+    with pytest.raises(ValueError, match="exact original"):
+        validate_replay_binding(
+            tmp_path,
+            receipt,
+            pins,
+            source_head="head",
+            external_head="external",
+            early_cftrack=True,
+        )
     with pytest.raises(ValueError, match="bound"):
         validate_replay_binding(tmp_path, {}, pins, source_head="head", external_head="external")
     scene.write_text("<mujoco model='changed'/>")

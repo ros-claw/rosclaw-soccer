@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 
-def validate_replay_binding(root, replay, pins, *, source_head, external_head):
+def validate_replay_binding(root, replay, pins, *, source_head, external_head, early_cftrack=False):
     """Reject missing or changed completed source commitments before replay."""
     from scripts.rsi_native_context_recovery_common import digest
 
@@ -25,6 +25,7 @@ def validate_replay_binding(root, replay, pins, *, source_head, external_head):
         source_declaration.get("input_file_hashes") != pins
         or source_declaration.get("source_head") != source_head
         or source_declaration.get("external_head") != external_head
+        or source_declaration.get("early_cftrack", False) is not early_cftrack
     ):
         raise ValueError("exact original source and external asset pins required for replay")
 
@@ -37,6 +38,7 @@ def main():
         p.add_argument("--" + flag, required=True)
     p.add_argument("--replay-source", type=Path)
     p.add_argument("--replay-source-hash")
+    p.add_argument("--early-cftrack", action="store_true")
     a = p.parse_args()
     if (a.replay_source is None) != (a.replay_source_hash is None):
         p.error("replay requires the exact source receipt hash")
@@ -83,7 +85,12 @@ def main():
             raise ValueError("exact completed source required")
         replay = json.loads(source_file.read_text())
         if (
-            replay["status"] != "SHARED_CFTRACK_16_PENDING_OWN_REPLAY"
+            replay["status"]
+            != (
+                "SHARED_CFTRACK_EARLY_16_PENDING_OWN_REPLAY"
+                if a.early_cftrack
+                else "SHARED_CFTRACK_16_PENDING_OWN_REPLAY"
+            )
             or replay["source_head"] != a.expected_head
             or replay["external_head"] != a.external_head
             or len(replay["records"]) != 16
@@ -95,6 +102,7 @@ def main():
             pins,
             source_head=a.expected_head,
             external_head=a.external_head,
+            early_cftrack=a.early_cftrack,
         )
     import numpy as np
 
@@ -167,6 +175,7 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol="soccer.shared_cftrack_relay.development.v1",
+            early_cftrack=a.early_cftrack,
             source_head=a.expected_head,
             external_head=a.external_head,
             input_file_hashes=pins,
@@ -190,6 +199,7 @@ def main():
                 use_cftrack=arm,
                 policy_factory=policy_factory,
                 expected_policy_type=OmniContact,
+                early_cftrack=a.early_cftrack,
             )
         except Exception as error:
             write_once(
@@ -274,9 +284,15 @@ def main():
     write_once(
         a.output / "complete.json",
         dict(
-            status="SHARED_CFTRACK_ALL_OWN_HISTORY_MATCH"
-            if replay
-            else "SHARED_CFTRACK_16_PENDING_OWN_REPLAY",
+            status=(
+                "SHARED_CFTRACK_EARLY_ALL_OWN_HISTORY_MATCH"
+                if replay and a.early_cftrack
+                else "SHARED_CFTRACK_ALL_OWN_HISTORY_MATCH"
+                if replay
+                else "SHARED_CFTRACK_EARLY_16_PENDING_OWN_REPLAY"
+                if a.early_cftrack
+                else "SHARED_CFTRACK_16_PENDING_OWN_REPLAY"
+            ),
             source_head=a.expected_head,
             external_head=a.external_head,
             producer_hash=a.replay_source_hash,

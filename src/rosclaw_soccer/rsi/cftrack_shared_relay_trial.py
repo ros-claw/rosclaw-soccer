@@ -16,6 +16,24 @@ from rosclaw_soccer.rsi.shared_relay_setup import motion_segment, receiving_targ
 from rosclaw_soccer.rsi.shared_shadow_motor import SharedShadowMotor
 
 
+def early_incoming_boundary(world: Any, prefix: str, forward: np.ndarray) -> tuple[bool, float]:
+    """Causal SIM trigger, not an indication of contact or a qualified pass."""
+    world._require_current_boundary()
+    if (
+        prefix not in world.layouts
+        or not isinstance(forward, np.ndarray)
+        or forward.shape != (2,)
+        or not np.isfinite(forward).all()
+        or abs(float(np.linalg.norm(forward)) - 1.0) > 1e-10
+    ):
+        raise ValueError("actual body and finite unit pass direction required")
+    _, velocity = world.layouts[prefix].canonical(world.data)
+    if velocity.shape != (41,) or not np.isfinite(velocity).all():
+        raise ValueError("finite actual canonical velocity required")
+    toward = float(velocity[35:37] @ forward)
+    return bool(world.control_steps >= 5 and not world.failed and toward > 0.4), toward
+
+
 def run_shared_cftrack_trial(
     setup: Any,
     actor: Any,
@@ -25,9 +43,15 @@ def run_shared_cftrack_trial(
     use_cftrack: bool,
     policy_factory: Callable[[], Any],
     expected_policy_type: type[Any],
+    early_cftrack: bool = False,
 ) -> dict[str, Any]:
     """Use real measured readiness; no body/ball resets after initialization."""
-    if type(use_cftrack) is not bool or type(context) is not int or lateral_m not in (-0.35, 0.35):
+    if (
+        type(use_cftrack) is not bool
+        or type(early_cftrack) is not bool
+        or type(context) is not int
+        or lateral_m not in (-0.35, 0.35)
+    ):
         raise ValueError("explicit predeclared context, side and study arm required")
     ep, w, forward, home, anchor = setup.prepare(context, lateral_m)
     initial_q, initial_v = w.data.qpos.copy(), w.data.qvel.copy()
@@ -82,6 +106,9 @@ def run_shared_cftrack_trial(
                     w, "b/", history, policy, expected_policy_type=expected_policy_type, goal=goal
                 )
                 handoff = dict(control=step, return_goal=goal.tolist(), transition=transition)
+                if early_cftrack:
+                    _, speed = early_incoming_boundary(w, "b/", forward)
+                    handoff["incoming_ball_speed_along_pass_mps"] = speed
             else:
                 profile = w.switch_pd_profile("b/", NativePDParameters(ep.kp, ep.kd, ep.effort))
                 receiver = shadow.handoff(goal=goal, carry_memory=True)
@@ -145,7 +172,12 @@ def run_shared_cftrack_trial(
             shadow.commit_actual()
             if not w.failed:
                 history.capture()
-                ready = readiness.update()
+                stable_ready = readiness.update()
+                ready = (
+                    early_incoming_boundary(w, "b/", forward)[0]
+                    if use_cftrack and early_cftrack
+                    else stable_ready
+                )
             shadow_trace.append(s_trace)
         elif use_cftrack:
             receiver.commit()
