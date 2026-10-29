@@ -20,6 +20,7 @@ def main():
     p.add_argument("--protocol", required=True, type=Path)
     p.add_argument("--protocol-hash", required=True)
     p.add_argument("--output", required=True, type=Path)
+    p.add_argument("--sampling-mode", choices=("uniform", "adaptive"), default="uniform")
     a = p.parse_args()
     clean(a.expected_head)
     root = a.reference_root.resolve()
@@ -44,7 +45,7 @@ def main():
     cfg = unitree_g1_stage1_env_cfg()
     cfg.scene.num_envs, cfg.seed = 16, 20261030
     cfg.commands["motion"].motion_dir = str(motions[0].parent)
-    cfg.commands["motion"].sampling_mode = "uniform"
+    cfg.commands["motion"].sampling_mode = a.sampling_mode
     cfg.observations["actor"].enable_corruption = False
     cfg.events.pop("push_robot", None)
     agent = unitree_g1_soccer_ppo_runner_cfg()
@@ -60,6 +61,7 @@ def main():
             protocol_hash=a.protocol_hash,
             worlds=16,
             max_controls=150,
+            sampling_mode=a.sampling_mode,
             training_motions=True,
             hardware_authorized=False,
             promotion_authorized=False,
