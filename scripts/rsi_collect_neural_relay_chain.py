@@ -1210,6 +1210,9 @@ def main():
             transition_start_action = None
             largest_jump = 0.0
             for step in range(600):
+                if receiver is None and not ready and step >= 300:
+                    termination = "NO_RECEIVING_HANDOFF_WITHIN_ORIGINAL_VELOCITY_H300"
+                    break
                 if (
                     course["arm"].get("passer_successor", False)
                     and successor_motor is None
@@ -1287,9 +1290,6 @@ def main():
                         prior_action_carried=True,
                         body_or_ball_reset=False,
                     )
-                if receiver is None and step >= 300:
-                    termination = "NO_RECEIVING_HANDOFF_WITHIN_ORIGINAL_VELOCITY_H300"
-                    break
                 mujoco.mj_forward(w.model, w.data)
                 if a.passer_return_pair and passer.phase == "MOTION_COMPLETE":
                     passer.begin_standing()
