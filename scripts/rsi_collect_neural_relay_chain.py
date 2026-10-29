@@ -26,6 +26,7 @@ def main():
     p.add_argument("--receiver-follow-study", action="store_true")
     p.add_argument("--receiver-lateral-authority", action="store_true")
     p.add_argument("--receiver-adaptive-intercept", action="store_true")
+    p.add_argument("--receiver-coordinated-intercept", action="store_true")
     p.add_argument("--receiver-longitudinal-authority", action="store_true")
     p.add_argument("--receiver-foot-teacher-pair", action="store_true")
     p.add_argument("--receiver-predictive-foot-shin", action="store_true")
@@ -128,6 +129,15 @@ def main():
         )
     ):
         p.error("passer strike teacher requires one isolated development block")
+    if a.receiver_coordinated_intercept and not (
+        a.receiver_foot_teacher_pair
+        and a.receiver_predictive_foot_shin
+        and a.receiver_axis_local_fallback
+        and a.receiver_early_foot_intercept
+        and a.receiver_early_contact_lead
+        and not a.receiver_adaptive_intercept
+    ):
+        p.error("coordinated intercept requires the isolated early-contact foot teacher pair")
     if a.receiver_adaptive_intercept and (
         not a.receiver_lateral_authority or a.receiver_longitudinal_authority
     ):
@@ -570,6 +580,11 @@ def main():
                 memory="own_shadow_carry",
                 reference_bridge_controls=0,
                 receiver_foot_teacher_strength=strength,
+                **(
+                    {"receiver_adaptive_intercept": bool(strength)}
+                    if a.receiver_coordinated_intercept
+                    else {}
+                ),
             )
             for strength in (0.0, 0.5)
         ]
@@ -677,6 +692,8 @@ def main():
                 if a.receiver_projection_executed_memory
                 else "soccer.neural_relay_receiver_leg_target_projection.development.v26"
                 if a.receiver_leg_limit_pair
+                else "soccer.neural_relay_receiver_coordinated_intercept.development.v34"
+                if a.receiver_coordinated_intercept
                 else "soccer.neural_relay_receiver_contact_lead.development.v29"
                 if a.receiver_early_contact_lead
                 else "soccer.neural_relay_receiver_early_intercept.development.v28"
@@ -800,6 +817,7 @@ def main():
             post_touch_velocity_follow_is_unlearned_teacher=a.receiver_follow_study,
             lateral_intercept_is_unlearned_teacher=a.receiver_lateral_authority,
             adaptive_intercept_is_unlearned_teacher=a.receiver_adaptive_intercept,
+            coordinated_intercept_is_unlearned_teacher=a.receiver_coordinated_intercept,
             longitudinal_intercept_is_unlearned_teacher=a.receiver_longitudinal_authority,
             whole_receiver_identity_not_trained=a.receiver_whole_identity,
             receiver_exploration_is_stochastic_not_training=(
@@ -1638,6 +1656,8 @@ def main():
                     if a.receiver_projection_executed_memory
                     else "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY"
                     if a.receiver_leg_limit_pair
+                    else "NEURAL_RELAY_RECEIVER_COORDINATED_INTERCEPT16_PENDING_OWN_REPLAY"
+                    if a.receiver_coordinated_intercept
                     else "NEURAL_RELAY_RECEIVER_CONTACT_LEAD16_PENDING_OWN_REPLAY"
                     if a.receiver_early_contact_lead
                     else "NEURAL_RELAY_RECEIVER_EARLY_INTERCEPT16_PENDING_OWN_REPLAY"

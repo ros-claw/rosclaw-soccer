@@ -43,7 +43,12 @@ def main():
     leg_limit_pair = projected_memory or (
         dec["protocol"] == "soccer.neural_relay_receiver_leg_target_projection.development.v26"
     )
-    contact_lead = dec["protocol"] == "soccer.neural_relay_receiver_contact_lead.development.v29"
+    coordinated_intercept = (
+        dec["protocol"] == "soccer.neural_relay_receiver_coordinated_intercept.development.v34"
+    )
+    contact_lead = coordinated_intercept or (
+        dec["protocol"] == "soccer.neural_relay_receiver_contact_lead.development.v29"
+    )
     early_intercept = contact_lead or (
         dec["protocol"] == "soccer.neural_relay_receiver_early_intercept.development.v28"
     )
@@ -165,6 +170,8 @@ def main():
         if projected_memory
         else "NEURAL_RELAY_RECEIVER_LEG_TARGET_PROJECTION16_PENDING_OWN_REPLAY"
         if leg_limit_pair
+        else "NEURAL_RELAY_RECEIVER_COORDINATED_INTERCEPT16_PENDING_OWN_REPLAY"
+        if coordinated_intercept
         else "NEURAL_RELAY_RECEIVER_CONTACT_LEAD16_PENDING_OWN_REPLAY"
         if contact_lead
         else "NEURAL_RELAY_RECEIVER_EARLY_INTERCEPT16_PENDING_OWN_REPLAY"
@@ -248,6 +255,7 @@ def main():
             "soccer.neural_relay_receiver_axis_local_fallback.development.v25",
             "soccer.neural_relay_receiver_early_intercept.development.v28",
             "soccer.neural_relay_receiver_contact_lead.development.v29",
+            "soccer.neural_relay_receiver_coordinated_intercept.development.v34",
             "soccer.neural_relay_passer_velocity_recovery.development.v30",
             "soccer.neural_relay_passer_velocity_blend.development.v31",
             "soccer.neural_relay_receiver_leg_target_projection.development.v26",
@@ -314,6 +322,11 @@ def main():
                     memory="own_shadow_carry",
                     reference_bridge_controls=0,
                     receiver_foot_teacher_strength=strength,
+                    **(
+                        {"receiver_adaptive_intercept": bool(strength)}
+                        if coordinated_intercept
+                        else {}
+                    ),
                 )
                 for strength in (0.0, 0.5)
             ]
@@ -485,6 +498,11 @@ def main():
             raise ValueError("explicit unlearned lateral command authority required")
         if adaptive_intercept and dec.get("adaptive_intercept_is_unlearned_teacher") is not True:
             raise ValueError("explicit unlearned adaptive command authority required")
+        if (
+            coordinated_intercept
+            and dec.get("coordinated_intercept_is_unlearned_teacher") is not True
+        ):
+            raise ValueError("explicit unlearned coordinated intercept required")
         if (
             longitudinal_authority
             and dec.get("longitudinal_intercept_is_unlearned_teacher") is not True
