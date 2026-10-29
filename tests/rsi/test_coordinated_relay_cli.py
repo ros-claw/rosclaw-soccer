@@ -113,3 +113,30 @@ def test_sampling_seed_without_own_sampling_fails_closed(tmp_path):
     assert result.returncode == 2
     assert "explicit sampling seed requires own sampling" in result.stderr
     assert not (tmp_path / "output").exists()
+
+
+def test_prepared_pair_requires_child_study(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
+            "--frontier-root",
+            str(tmp_path / "frontier"),
+            "--frontier-head",
+            "unused",
+            "--frontier-hash",
+            "unused",
+            "--expected-head",
+            "unused",
+            "--output",
+            str(tmp_path / "output"),
+            "--return-player-prepared-pair",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "prepared pair requires isolated child return-role study" in result.stderr
+    assert not (tmp_path / "output").exists()

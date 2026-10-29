@@ -47,6 +47,9 @@ def main():
     return_player_sampling = return_player_seeded_sampling or (
         dec["protocol"] == "soccer.neural_relay_return_player_own_sampling.development.v46"
     )
+    return_player_prepare = (
+        dec["protocol"] == "soccer.neural_relay_return_player_prepare.development.v48"
+    )
     sampling_seed = 94111
     if return_player_seeded_sampling:
         declared_seeds = {c["arm"].get("passer_sampling_seed") for c in dec["courses"]}
@@ -59,8 +62,10 @@ def main():
     return_player_identity = return_player_sampling or (
         dec["protocol"] == "soccer.neural_relay_return_player_adaptive_identity.development.v45"
     )
-    child_return_role = return_player_identity or (
-        dec["protocol"] == "soccer.neural_relay_receiver_child_return_role.development.v44"
+    child_return_role = (
+        return_player_prepare
+        or return_player_identity
+        or (dec["protocol"] == "soccer.neural_relay_receiver_child_return_role.development.v44")
     )
     return_pair = (
         child_return_role
@@ -225,6 +230,8 @@ def main():
         if successor_pair
         else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
         if return_align_pair
+        else "NEURAL_RELAY_RETURN_PLAYER_PREPARE16_PENDING_OWN_REPLAY"
+        if return_player_prepare
         else "NEURAL_RELAY_RETURN_PLAYER_SEEDED_SAMPLING16_PENDING_OWN_REPLAY"
         if return_player_seeded_sampling
         else "NEURAL_RELAY_RETURN_PLAYER_OWN_SAMPLING16_PENDING_OWN_REPLAY"
@@ -335,6 +342,7 @@ def main():
             "soccer.neural_relay_return_player_adaptive_identity.development.v45",
             "soccer.neural_relay_return_player_own_sampling.development.v46",
             "soccer.neural_relay_return_player_own_sampling_seeded.development.v47",
+            "soccer.neural_relay_return_player_prepare.development.v48",
             "soccer.neural_relay_receiver_motion_pair.development.v18",
             "soccer.neural_relay_receiver_dense_exploration.development.v19",
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
@@ -412,6 +420,19 @@ def main():
                     receiver_whole=True,
                     receiver_learned=True,
                     passer_velocity_recovery=True,
+                    passer_prepare=enabled,
+                )
+                for enabled in (False, True)
+            ]
+            if return_player_prepare
+            else [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_whole=True,
+                    receiver_learned=True,
+                    passer_velocity_recovery=True,
                     passer_adaptive=enabled,
                     **(
                         {"passer_sampling_seed": sampling_seed if enabled else None}
@@ -433,7 +454,7 @@ def main():
                 )
                 for enabled in (False, True)
             ]
-            if child_return_role and not return_player_identity
+            if child_return_role and not return_player_identity and not return_player_prepare
             else [
                 dict(
                     start=80,
@@ -1216,7 +1237,13 @@ def main():
                         return_pair
                         and passer_recovery is not None
                         and passer.phase == "STANDING"
-                        and return_seen
+                        and (
+                            return_seen
+                            or (
+                                course["arm"].get("passer_prepare", False)
+                                and handoff_control is not None
+                            )
+                        )
                     )
                 ) and not (passer_recovery is not None and passer_recovery.active):
                     if passer_recovery is not None and passer_foot_seen:
