@@ -35,6 +35,7 @@ def main():
     p.add_argument("--standard-ball", action="store_true")
     p.add_argument("--focal-nearest", action="store_true")
     p.add_argument("--focal-exploration-seed-base", type=int)
+    p.add_argument("--capture-residual-target-authority", action="store_true")
     a = p.parse_args()
     if a.focal_nearest and not a.standard_ball:
         raise ValueError("focal-nearest study requires the declared standard ball")
@@ -42,6 +43,8 @@ def main():
         not a.focal_nearest or not 0 <= a.focal_exploration_seed_base <= 2**32 - 8
     ):
         raise ValueError("seeded exploration requires focal courses and eight valid seeds")
+    if a.capture_residual_target_authority and a.focal_exploration_seed_base is None:
+        raise ValueError("authority capture requires the declared focal exploration pilot")
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("unused external evidence path required")
@@ -197,6 +200,7 @@ def main():
             standard_ball=a.standard_ball,
             focal_nearest=a.focal_nearest,
             focal_exploration_seed_base=a.focal_exploration_seed_base,
+            capture_residual_target_authority=a.capture_residual_target_authority,
             input_file_hashes=pins,
             coach_assigned_receive=True,
             classroom_profile="R1_CONTACT_TAP",
@@ -222,6 +226,7 @@ def main():
                         if a.focal_exploration_seed_base is None
                         else a.focal_exploration_seed_base + i
                     ),
+                    capture_residual_target_authority=a.capture_residual_target_authority,
                 )
                 if str(trace["initial_integration_hash"][0]) != starts[course.seed]:
                     raise ValueError("actual initial state differs from whole-bank preflight")
@@ -255,6 +260,23 @@ def main():
                             )
                         ),
                     }
+                    if a.capture_residual_target_authority:
+                        injected = aligned["residual_pd_target_injected_substeps"]
+                        overridden = aligned["residual_pd_target_override_substeps"]
+                        if (
+                            injected.shape != mask.shape
+                            or overridden.shape != mask.shape
+                            or injected.dtype.kind not in "iu"
+                            or overridden.dtype.kind not in "iu"
+                            or np.any(injected < 0)
+                            or np.any(overridden < 0)
+                            or np.any(injected + overridden > 10)
+                        ):
+                            raise ValueError("invalid residual PD target authority telemetry")
+                        exploration_diagnostics.update(
+                            focal_pd_target_injected_substeps=int(injected[:, focal_index].sum()),
+                            focal_pd_target_override_substeps=int(overridden[:, focal_index].sum()),
+                        )
                 _, trials = team_capture_trials(aligned, agent_ids=ROSTER)
                 artifact = _write_trajectory(a.output / f"course-{i:02d}-{repeat}.npz", trace)
                 records.append(
@@ -285,6 +307,7 @@ def main():
                 standard_ball=a.standard_ball,
                 focal_nearest=a.focal_nearest,
                 focal_exploration_seed_base=a.focal_exploration_seed_base,
+                capture_residual_target_authority=a.capture_residual_target_authority,
                 promotion_authorized=False,
                 hardware_authorized=False,
             ),

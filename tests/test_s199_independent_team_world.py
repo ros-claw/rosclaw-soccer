@@ -14,6 +14,7 @@ from rosclaw_soccer.skills.team.independent_team_world import (
     IndependentTeamWorldConfig,
     IndependentTeamWorldResult,
     IndependentTeamWorldScenario,
+    _record_residual_target_substep,
     simulate_independent_team_world,
 )
 from rosclaw_soccer.training.independent_team_growth import (
@@ -24,6 +25,30 @@ from rosclaw_soccer.world.multi_player import (
     G1PitchPlayerSpec,
     build_g1_multi_player_stadium_model,
 )
+
+
+def test_residual_target_authority_counts_injection_and_override_separately() -> None:
+    injected = np.zeros(8, dtype=np.int64)
+    overridden = np.zeros(8, dtype=np.int64)
+    _record_residual_target_substep(injected, overridden, 2, injected=False, target_overridden=True)
+    _record_residual_target_substep(injected, overridden, 2, injected=True, target_overridden=True)
+    _record_residual_target_substep(injected, overridden, 2, injected=True, target_overridden=False)
+    assert injected.tolist() == [0, 0, 1, 0, 0, 0, 0, 0]
+    assert overridden.tolist() == [0, 0, 1, 0, 0, 0, 0, 0]
+
+
+@pytest.mark.parametrize("capture", [True, 1])
+def test_residual_target_authority_rejects_missing_policy_before_assets(capture: object) -> None:
+    with pytest.raises(ValueError, match="authority capture"):
+        simulate_independent_team_world(
+            asset_root=Path("must-not-load-assets"),
+            roster=None,  # type: ignore[arg-type]
+            cells=(),
+            players=(),
+            scenario=None,  # type: ignore[arg-type]
+            goal=None,  # type: ignore[arg-type]
+            capture_residual_target_authority=capture,  # type: ignore[arg-type]
+        )
 
 
 def _hash(label: str) -> str:

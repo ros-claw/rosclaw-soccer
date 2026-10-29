@@ -82,6 +82,7 @@ def simulate_r0_receiving_course(
     scenario_id: str,
     airborne_standard_ball: bool = False,
     research_focal_exploration_seed: int | None = None,
+    capture_residual_target_authority: bool = False,
     checkpoint_frame: int = 0,
     capture_support: bool = False,
     capture_oracle_authority: bool = False,
@@ -140,6 +141,8 @@ def simulate_r0_receiving_course(
     ):
         raise ValueError("typed focal receiving course required")
     exploration = _focal_exploration_options(course.agent_id, research_focal_exploration_seed)
+    if type(capture_residual_target_authority) is not bool:
+        raise ValueError("explicit residual target authority capture flag required")
     if type(airborne_standard_ball) is not bool or (
         airborne_standard_ball and not isinstance(course, AirborneReceivingCourse)
     ):
@@ -596,6 +599,7 @@ def simulate_r0_receiving_course(
         research_contact_max_active_substeps=research_contact_max_active_substeps,
         research_focal_shin_reflex_torque_nm=research_focal_shin_reflex_torque_nm,
         **({"near_ball_seed": course.seed, **exploration}),
+        capture_residual_target_authority=capture_residual_target_authority,
         motor_options=(
             {course.agent_id: research_motor_option}
             if research_motor_option is not None

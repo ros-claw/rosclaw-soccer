@@ -19,6 +19,7 @@ from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse
         {"research_focal_exploration_seed": -1},
         {"research_focal_exploration_seed": 2**32},
         {"research_focal_exploration_seed": 1.0},
+        {"capture_residual_target_authority": 1},
         {"checkpoint_frame": 300},
         {"capture_support": 1},
         {"capture_oracle_authority": 1},

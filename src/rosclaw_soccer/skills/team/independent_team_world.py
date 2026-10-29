@@ -1104,6 +1104,19 @@ class _PlayerController:
             self.seen_intents = set()
 
 
+def _record_residual_target_substep(
+    injected_counts: NDArray[np.int64],
+    override_counts: NDArray[np.int64],
+    index: int,
+    *,
+    injected: bool,
+    target_overridden: bool,
+) -> None:
+    """Count observed target injection, conservatively separating later overrides."""
+    if injected:
+        (override_counts if target_overridden else injected_counts)[index] += 1
+
+
 def simulate_independent_team_world(
     *,
     asset_root: Path,
@@ -1127,6 +1140,7 @@ def simulate_independent_team_world(
     near_ball_explore: bool = False,
     near_ball_exploration_agent_ids: tuple[str, ...] | None = None,
     near_ball_explore_after_return: bool = False,
+    capture_residual_target_authority: bool = False,
     motor_options: Mapping[str, TeamMotorOption] | None = None,
     receiving_students: Mapping[str, QualifiedReceivingStudent] | None = None,
     receiving_student_probe_torque_nm: float = 0.0,
@@ -1161,6 +1175,10 @@ def simulate_independent_team_world(
     """
 
     active = config or IndependentTeamWorldConfig()
+    if type(capture_residual_target_authority) is not bool or (
+        capture_residual_target_authority and near_ball_policy is None
+    ):
+        raise ValueError("residual target authority capture requires a near-ball policy")
     if research_contact_distance_threshold_m is not None and (
         type(research_contact_distance_threshold_m) is not float
         or research_contact_distance_threshold_m not in (0.18, 0.24, 0.30, 0.36)
@@ -3646,6 +3664,8 @@ def simulate_independent_team_world(
         student_brake_active_substeps = 0
         research_teacher_active_substeps = 0
         research_teacher_peak_torque_nm = 0.0
+        residual_target_substeps = np.zeros(len(residual_ids), dtype=np.int64)
+        residual_target_override_substeps = np.zeros(len(residual_ids), dtype=np.int64)
         for substep in range(_SUBSTEPS):
             frame_teacher_last_substep_valid = False
             frame_teacher_baseline = np.zeros(29, dtype=np.float64)
@@ -3709,6 +3729,7 @@ def simulate_independent_team_world(
                 authority_foundation = target.copy() if observe_authority else None
                 residual = residual_by_id.get(controller.cell.agent_id)
                 authority_added = np.zeros(29) if observe_authority else None
+                residual_injected = False
                 if (
                     (
                         controller.cell.agent_id not in residual_blocked
@@ -3721,6 +3742,7 @@ def simulate_independent_team_world(
                 ):
                     target = target.copy()
                     target[: len(residual)] += residual
+                    residual_injected = True
                     if authority_added is not None:
                         authority_added[: len(residual)] = residual
                 dq = np.asarray(data.qvel[controller.joint_qvel], dtype=np.float64)
@@ -3737,6 +3759,15 @@ def simulate_independent_team_world(
                     and controller.cell.agent_id in motor_targets
                     and controller.cell.agent_id not in motor_faults
                 )
+                if capture_residual_target_authority:
+                    residual_index = residual_ids.index(controller.cell.agent_id)
+                    _record_residual_target_substep(
+                        residual_target_substeps,
+                        residual_target_override_substeps,
+                        residual_index,
+                        injected=residual_injected,
+                        target_overridden=student_active or research_teacher_active,
+                    )
                 research_foundation_target = target
                 if student_active:
                     assert student is not None
@@ -4824,6 +4855,13 @@ def simulate_independent_team_world(
                 frame_research_shin_reflex_substeps
             )
         trace["robot_robot_contact_count"].append(frame_robot_contact_count)
+        if capture_residual_target_authority:
+            trace.setdefault("residual_pd_target_injected_substeps", []).append(
+                residual_target_substeps
+            )
+            trace.setdefault("residual_pd_target_override_substeps", []).append(
+                residual_target_override_substeps
+            )
         trace["robot_robot_contact_first_code"].append(frame_robot_contact_first_code)
         trace["robot_robot_contact_second_code"].append(frame_robot_contact_second_code)
         trace["robot_robot_contact_force_n"].append(frame_robot_contact_force_n)
