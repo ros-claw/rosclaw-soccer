@@ -8,6 +8,10 @@ import re
 from dataclasses import asdict, dataclass
 
 from rosclaw_soccer.sim.contracts import hash_json
+from rosclaw_soccer.training.airborne_receiving_courses import (
+    AirborneReceivingCourse,
+    preflight_airborne_receiving_courses,
+)
 from rosclaw_soccer.training.categorical_motion_holdout import (
     CategoricalMotionHoldoutCourse,
     preflight_categorical_motion_holdout,
@@ -46,6 +50,7 @@ class FirstTouchCourse:
 
 def preflight_receiving_courses(
     courses: tuple[ReceivingCourse, ...]
+    | tuple[AirborneReceivingCourse, ...]
     | tuple[FirstTouchCourse, ...]
     | tuple[CloseContactCourse, ...]
     | tuple[ExpandedEntryCourse, ...]
@@ -68,6 +73,8 @@ def preflight_receiving_courses(
     """
     if type(courses) is not tuple or not 1 <= len(courses) <= 4096:
         raise ValueError("bounded immutable receiving course bank required")
+    if all(type(course) is AirborneReceivingCourse for course in courses):
+        return preflight_airborne_receiving_courses(courses)  # type: ignore[arg-type]
     if all(type(course) is NativeTeamBallCourse for course in courses):
         return preflight_native_team_courses(courses)  # type: ignore[arg-type]
     if all(type(course) is NativePassCourse for course in courses):

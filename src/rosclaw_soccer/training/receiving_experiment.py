@@ -34,6 +34,10 @@ from rosclaw_soccer.skills.team.independent_team_world import (
 from rosclaw_soccer.skills.team.motor_option import TeamMotorOption
 from rosclaw_soccer.skills.team.navigation_option import TeamNavigationPolicy
 from rosclaw_soccer.skills.team.physics_evidence import PhysicsEvidenceConsumer
+from rosclaw_soccer.training.airborne_receiving_courses import (
+    AirborneReceivingCourse,
+    airborne_receiving_ball_launch,
+)
 from rosclaw_soccer.training.contact_teacher_ablation import ContactTeacherSuppression
 from rosclaw_soccer.training.contact_teacher_evidence import inspect_teacher_suppression
 from rosclaw_soccer.training.continuous_match_residual_ppo import collection_fixture
@@ -59,7 +63,7 @@ def simulate_r0_receiving_course(
     *,
     asset_root: Path,
     reference_policy_path: Path,
-    course: ReceivingCourse,
+    course: ReceivingCourse | AirborneReceivingCourse,
     scenario_id: str,
     checkpoint_frame: int = 0,
     capture_support: bool = False,
@@ -113,7 +117,10 @@ def simulate_r0_receiving_course(
     separate M0 bank audit is responsible for its pre-contact entry requirement.
     Only the focal player can receive an experimental oracle or motor option.
     """
-    if not isinstance(course, ReceivingCourse) or course.agent_id not in ROSTER:
+    if (
+        not isinstance(course, (ReceivingCourse, AirborneReceivingCourse))
+        or course.agent_id not in ROSTER
+    ):
         raise ValueError("typed focal receiving course required")
     if configuration_profile not in ("R0", "R1_CONTACT_TAP"):
         raise ValueError("explicit versioned receiving classroom required")
@@ -471,14 +478,22 @@ def simulate_r0_receiving_course(
     ):
         raise ValueError("read-only team motor capture requires frame-45 SONIC physics")
     # Validate physical launch values before allocating/loading the simulator.
-    receiving_ball_launch(course, origin=(0.0, 0.0, 0.0), radius_m=0.115)
+    if isinstance(course, AirborneReceivingCourse):
+        airborne_receiving_ball_launch(course, origin=(0.0, 0.0, 0.0), radius_m=0.115)
+    else:
+        receiving_ball_launch(course, origin=(0.0, 0.0, 0.0), radius_m=0.115)
     fixture = collection_fixture(asset_root, keeper_preview=True)
     policy = NearBallResidualPolicy.load(reference_policy_path)
     cells = coached_receiving_cells(fixture.cells, focal_agent_id=course.agent_id)
     player = next(player for player in fixture.players if player.agent_id == course.agent_id)
-    position, velocity = receiving_ball_launch(
-        course, origin=player.origin_m, radius_m=fixture.goal.ball_radius_m
-    )
+    if isinstance(course, AirborneReceivingCourse):
+        position, velocity = airborne_receiving_ball_launch(
+            course, origin=player.origin_m, radius_m=fixture.goal.ball_radius_m
+        )
+    else:
+        position, velocity = receiving_ball_launch(
+            course, origin=player.origin_m, radius_m=fixture.goal.ball_radius_m
+        )
     world, teacher = (
         r0_receiving_configuration()
         if configuration_profile == "R0"
