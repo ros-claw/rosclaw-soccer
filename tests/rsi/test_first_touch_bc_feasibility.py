@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from scripts.rsi_first_touch_bc_feasibility import causal_examples
+from scripts.rsi_first_touch_bc_feasibility import causal_examples, kick_phase_examples
 
 
 def test_examples_use_previous_native_state_and_previous_applied_target():
@@ -30,3 +30,20 @@ def test_examples_reject_missing_or_nonfinite_data():
     raw["qvel"] = np.zeros((10, 41))
     with pytest.raises(ValueError):
         causal_examples(raw)
+
+
+def test_kick_phase_clock_is_causal_and_excludes_velocity():
+    raw = dict(
+        qpos=np.zeros((50, 43)),
+        qvel=np.zeros((50, 41)),
+        joint_targets=np.arange(145, dtype=float).reshape(5, 29),
+        velocity_control_active=np.array([True, True, False, False, False]),
+    )
+    x, y = kick_phase_examples(raw)
+    assert x.shape == (3, 105)
+    np.testing.assert_array_equal(x[:, -1], [0.0, 0.02, 0.04])
+    np.testing.assert_array_equal(x[:, -30:-1], raw["joint_targets"][1:4])
+    np.testing.assert_array_equal(y, raw["joint_targets"][2:])
+    raw["velocity_control_active"][4] = True
+    with pytest.raises(ValueError):
+        kick_phase_examples(raw)

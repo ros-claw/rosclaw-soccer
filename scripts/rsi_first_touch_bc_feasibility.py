@@ -35,6 +35,21 @@ def causal_examples(raw):
     return x, y
 
 
+def kick_phase_examples(raw):
+    """Teacher kick controls with a causal elapsed-since-switch clock."""
+    x, y = causal_examples(raw)
+    active = np.asarray(raw["velocity_control_active"])
+    if active.shape != (len(x) + 1,) or active.dtype != np.bool_ or not active[0]:
+        raise ValueError("valid measured velocity-to-kick phase required")
+    transitions = np.flatnonzero(~active)
+    if not len(transitions) or np.any(active[transitions[0] :]):
+        raise ValueError("one observed kick transition without reset required")
+    entry = int(transitions[0])
+    indices = np.arange(entry, len(active))
+    time_since_entry = ((indices - entry) * 0.02).reshape(-1, 1)
+    return np.concatenate((x[indices - 1], time_since_entry), axis=1), y[indices - 1]
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--source", type=Path, action="append", required=True)
@@ -43,6 +58,7 @@ def main():
     p.add_argument("--protocol-hash", required=True)
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--kick-phase-only", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     if len(a.source) != 4 or len(a.source_hash) != 4 or a.output.exists():
@@ -89,7 +105,7 @@ def main():
             )
             rows.append(row)
             if admitted:
-                x, y = causal_examples(raw)
+                x, y = kick_phase_examples(raw) if a.kick_phase_only else causal_examples(raw)
                 datasets.append((row, x, y))
     if len({(r["course"], r["arm"]) for r in rows}) != 80:
         raise ValueError("duplicate or missing course/arm")
@@ -131,7 +147,15 @@ def main():
                     split=row["split"],
                     frames=len(targets),
                     model_mse=float(np.mean((pred - targets) ** 2)),
-                    persistence_mse=float(np.mean((features[:, -29:] - targets) ** 2)),
+                    persistence_mse=float(
+                        np.mean(
+                            (
+                                (features[:, -30:-1] if a.kick_phase_only else features[:, -29:])
+                                - targets
+                            )
+                            ** 2
+                        )
+                    ),
                 )
             )
     if (
@@ -165,6 +189,7 @@ def main():
             rows=rows,
             metrics=metrics,
             train_frames=len(x),
+            kick_phase_only=a.kick_phase_only,
             optimizer_steps=1000,
             seed=24029,
             model_hash=file_digest(model),
