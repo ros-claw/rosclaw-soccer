@@ -11,6 +11,7 @@ def main():
         p.add_argument("--" + name, type=Path, required=True)
     for name in ("source-hash", "audit-hash", "scene-hash", "expected-head"):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--precontact-continuation", action="store_true")
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import digest
@@ -23,7 +24,12 @@ def main():
         raise ValueError("unused output and exact source, scene, and own replay required")
     source, audit = (json.loads(p.read_text()) for p in (source_path, a.audit))
     if (
-        source.get("status") != "NEURAL_RELAY_RECEIVER_COORDINATED_INTERCEPT16_PENDING_OWN_REPLAY"
+        source.get("status")
+        != (
+            "NEURAL_RELAY_RECEIVER_PRECONTACT_CONTINUATION16_PENDING_OWN_REPLAY"
+            if a.precontact_continuation
+            else "NEURAL_RELAY_RECEIVER_COORDINATED_INTERCEPT16_PENDING_OWN_REPLAY"
+        )
         or audit.get("status") != "ALL_NEURAL_RELAY_OWN_HISTORY_NATIVE_REPLAY_MATCH"
         or audit.get("producer_hash") != a.source_hash
         or len(source.get("records", [])) != 16
@@ -108,6 +114,7 @@ def main():
             rows=rows,
             fresh=False,
             new_physics=False,
+            precontact_continuation=a.precontact_continuation,
             closest_search_begins_at_recorded_outgoing_foot_strike=True,
             promotion_authorized=False,
             hardware_authorized=False,
