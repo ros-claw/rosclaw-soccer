@@ -26,11 +26,22 @@ def main():
     p.add_argument("--motion-reference-receipt-hash")
     p.add_argument("--reference-ball-initial-velocity", action="store_true")
     p.add_argument("--reference-all-initial-velocities", action="store_true")
+    p.add_argument("--ground-reference-ball", action="store_true")
+    p.add_argument("--zero-reference-ball-spin", action="store_true")
+    p.add_argument("--factorial-protocol", type=Path)
+    p.add_argument("--factorial-protocol-hash")
     p.add_argument("--reference-phase-start", type=int, default=0)
     p.add_argument("--ankle-roll-reference", action="store_true")
     p.add_argument("--motor-pilot", type=Path)
     p.add_argument("--motor-pilot-hash")
     a = p.parse_args()
+    factorial = a.ground_reference_ball or a.zero_reference_ball_spin
+    if factorial != (a.factorial_protocol is not None) or factorial != (
+        a.factorial_protocol_hash is not None
+    ):
+        p.error("ball factors require their exact predeclared protocol and hash")
+    if factorial and not a.reference_all_initial_velocities:
+        p.error("ball factors require complete recorded initial velocities")
     if (
         a.reference_ball_initial_velocity or a.reference_all_initial_velocities
     ) and a.motion_reference_receipt is None:
@@ -46,6 +57,11 @@ def main():
     from scripts.rsi_native_fresh_common import clean, source_pins
 
     clean(a.expected_head)
+    if factorial and (
+        a.factorial_protocol.is_symlink()
+        or digest(a.factorial_protocol) != a.factorial_protocol_hash
+    ):
+        raise ValueError("exact predeclared factorial protocol required")
     external = a.external_source.resolve()
     head = subprocess.check_output(
         ["git", "-C", str(external), "rev-parse", "HEAD"], text=True
@@ -164,7 +180,7 @@ def main():
             if motion is None
             else [
                 *motion["object_pos_w"][0, :2].tolist(),
-                max(0.11, float(motion["object_pos_w"][0, 2])),
+                0.11 if a.ground_reference_ball else max(0.11, float(motion["object_pos_w"][0, 2])),
             ],
             goal=[5.0, 0.0, 0.11],
             initial_joint_pose="external_DefaultPose"
@@ -210,6 +226,9 @@ def main():
             initial_reference_velocity_components=None
             if reference_initial is None
             else {k: v.tolist() for k, v in reference_initial.items()},
+            ground_reference_ball=a.ground_reference_ball,
+            zero_reference_ball_spin=a.zero_reference_ball_spin,
+            factorial_protocol_hash=a.factorial_protocol_hash,
             direct_approach_reference=a.direct_approach_reference,
             ankle_roll_reference=a.ankle_roll_reference,
             motor_plan=asdict(motor_plan) if motor_plan else None,
@@ -289,11 +308,22 @@ def main():
                 raise ValueError("bounded finite reference ball linear velocity required")
             data.qvel[lo.bv : lo.bv + 3] = initial_velocity
         if reference_initial is not None:
+            adjusted_spin = reference_initial["ball_angular_local"]
+            if factorial:
+                from rosclaw_soccer.rsi.initial_ball_factorial import initial_ball_factorial
+
+                adjusted_position, adjusted_spin = initial_ball_factorial(
+                    data.qpos[lo.bq : lo.bq + 3],
+                    adjusted_spin,
+                    ground_ball=a.ground_reference_ball,
+                    zero_spin=a.zero_reference_ball_spin,
+                )
+                data.qpos[lo.bq : lo.bq + 3] = adjusted_position
             data.qvel[lo.rv : lo.rv + 3] = reference_initial["root_linear"]
             data.qvel[lo.rv + 3 : lo.rv + 6] = reference_initial["root_angular_local"]
             data.qvel[lo.vi] = reference_initial["joints"]
             data.qvel[lo.bv : lo.bv + 3] = reference_initial["ball_linear"]
-            data.qvel[lo.bv + 3 : lo.bv + 6] = reference_initial["ball_angular_local"]
+            data.qvel[lo.bv + 3 : lo.bv + 6] = adjusted_spin
     mujoco.mj_forward(model, data)
     order = policy.lab2mj
     params = NativePDParameters(
@@ -419,6 +449,8 @@ def main():
     artifact = a.output / "actual-unvalidated.npz"
     np.savez_compressed(artifact, **arrays)
     check_pins(pins)
+    if factorial and digest(a.factorial_protocol) != a.factorial_protocol_hash:
+        raise ValueError("factorial protocol changed during actual physics")
     clean(a.expected_head)
     forces = arrays.get("ball_forces", np.zeros((0, 1, 3)))[:, 0]
     foot = np.flatnonzero((forces[:, :2] > 1).any(axis=1))
@@ -439,6 +471,9 @@ def main():
             motion_source=str(motion_source) if motion_source else None,
             reference_ball_initial_velocity=a.reference_ball_initial_velocity,
             reference_all_initial_velocities=a.reference_all_initial_velocities,
+            ground_reference_ball=a.ground_reference_ball,
+            zero_reference_ball_spin=a.zero_reference_ball_spin,
+            factorial_protocol_hash=a.factorial_protocol_hash,
             reference_phase_start=a.reference_phase_start,
             controls=world.control_steps,
             native_steps=world.native_steps,

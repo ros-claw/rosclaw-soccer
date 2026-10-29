@@ -44,6 +44,7 @@ def main() -> None:
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("qualification-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
+    p.add_argument("--factorial-protocol", type=Path)
     a = p.parse_args()
     clean(a.expected_head)
     complete = a.qualification / "complete.json"
@@ -55,6 +56,22 @@ def main() -> None:
     ):
         raise ValueError("unused output and exact original candidate required")
     original = json.loads(complete.read_text())
+    ground = original.get("ground_reference_ball", False)
+    no_spin = original.get("zero_reference_ball_spin", False)
+    factorial = ground or no_spin
+    if (
+        type(ground) is not bool
+        or type(no_spin) is not bool
+        or factorial != (a.factorial_protocol is not None)
+        or (
+            factorial
+            and (
+                a.factorial_protocol.is_symlink()
+                or digest(a.factorial_protocol) != original.get("factorial_protocol_hash")
+            )
+        )
+    ):
+        raise ValueError("source-bound explicit factorial protocol required")
     if (
         original.get("status") != "CFTRACK_NATIVE_BASELINE_RECORDED_NOT_PROMOTED"
         or original.get("runtime_failure") is not None
@@ -120,6 +137,17 @@ def main() -> None:
         state.qvel[layout.bv + 3 : layout.bv + 6] = initial["ball_angular_local"]
     else:
         state.qvel[layout.bv : layout.bv + 3] = motion["object_lin_vel_w"][0]
+    if factorial:
+        from rosclaw_soccer.rsi.initial_ball_factorial import initial_ball_factorial
+
+        position, spin = initial_ball_factorial(
+            state.qpos[layout.bq : layout.bq + 3],
+            state.qvel[layout.bv + 3 : layout.bv + 6],
+            ground_ball=ground,
+            zero_spin=no_spin,
+        )
+        state.qpos[layout.bq : layout.bq + 3] = position
+        state.qvel[layout.bv + 3 : layout.bv + 6] = spin
     mujoco.mj_forward(model, state)
     params = NativePDParameters(
         np.array(config_data["kp_lab"], np.float32)[order],
@@ -149,6 +177,8 @@ def main() -> None:
     except Exception as exc:
         failure = dict(type=type(exc).__name__, message=str(exc))
     check_pins(pins)
+    if factorial and digest(a.factorial_protocol) != original.get("factorial_protocol_hash"):
+        raise ValueError("factorial protocol changed during replay")
     clean(a.expected_head)
     write_once(
         a.output / "complete.json",

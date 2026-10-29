@@ -43,6 +43,7 @@ def main():
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--derived-moving-partial", action="store_true")
+    p.add_argument("--factorial-protocol", type=Path)
     a = p.parse_args()
     from scripts.rsi_atomic_artifacts import write_once
     from scripts.rsi_native_context_recovery_common import check_pins, digest
@@ -59,6 +60,23 @@ def main():
         raise ValueError("unused isolated readback and exact producer required")
     report = json.loads(complete.read_text())
     controls = validate_scope(report, derived_moving_partial=a.derived_moving_partial)
+    ground = report.get("ground_reference_ball", False)
+    no_spin = report.get("zero_reference_ball_spin", False)
+    factorial = ground or no_spin
+    if (
+        type(ground) is not bool
+        or type(no_spin) is not bool
+        or factorial != (a.factorial_protocol is not None)
+        or (factorial and not a.derived_moving_partial)
+        or (
+            factorial
+            and (
+                a.factorial_protocol.is_symlink()
+                or digest(a.factorial_protocol) != report.get("factorial_protocol_hash")
+            )
+        )
+    ):
+        raise ValueError("source-bound explicit factorial protocol required")
     pins = dict(report["input_file_hashes"])
     pins[str(complete)] = a.qualification_hash
     artifact = a.qualification / report["artifact"]["path"]
@@ -198,6 +216,17 @@ def main():
             data.qvel[lo.vi] = initial["joints"]
             data.qvel[lo.bv : lo.bv + 3] = initial["ball_linear"]
             data.qvel[lo.bv + 3 : lo.bv + 6] = initial["ball_angular_local"]
+            if factorial:
+                from rosclaw_soccer.rsi.initial_ball_factorial import initial_ball_factorial
+
+                position, spin = initial_ball_factorial(
+                    data.qpos[lo.bq : lo.bq + 3],
+                    data.qvel[lo.bv + 3 : lo.bv + 6],
+                    ground_ball=ground,
+                    zero_spin=no_spin,
+                )
+                data.qpos[lo.bq : lo.bq + 3] = position
+                data.qvel[lo.bv + 3 : lo.bv + 6] = spin
     mujoco.mj_kinematics(model, data)
     mujoco.mj_comPos(model, data)
     # A view of scratch measurements, NOT a SharedNativeMotorWorld. Assigning
@@ -319,6 +348,8 @@ def main():
     if data.time != 0:
         raise ValueError("readback unexpectedly advanced native time")
     check_pins(pins)
+    if factorial and digest(a.factorial_protocol) != report.get("factorial_protocol_hash"):
+        raise ValueError("factorial protocol changed during neural readback")
     clean(a.expected_head)
     write_once(
         a.output / "complete.json",
