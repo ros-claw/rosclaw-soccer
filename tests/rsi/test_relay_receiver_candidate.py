@@ -200,6 +200,50 @@ def test_candidate_loader_requires_exact_audit_and_model_identity(tmp_path, monk
     with pytest.raises(ValueError, match="exact audited candidate"):
         load_research_receiver(*args, dense_mode=True)
     assert load_research_receiver(*args, dense_mode=True, functional_mode=True) is actor
+    timed_state = torch.load(checkpoint, weights_only=True)
+    timed_state["feedback_profile"] = "functional-receive-timed-proxy-v2"
+    timed_state["failure_timing_hash"] = "timing"
+    torch.save(timed_state, checkpoint)
+    timed_review = json.loads(audit.read_text())
+    timed_review.update(
+        status="FUNCTIONAL_TIMED_RECEIVER_CANDIDATE_READBACK_MATCH",
+        checkpoint_hash=file_hash(checkpoint),
+        feedback_profile="functional-receive-timed-proxy-v2",
+        failure_timing_hash="timing",
+    )
+    audit.write_text(json.dumps(timed_review))
+    args = (
+        setup,
+        checkpoint,
+        file_hash(checkpoint),
+        audit,
+        file_hash(audit),
+        dataset,
+        file_hash(dataset),
+    )
+    with pytest.raises(ValueError, match="exact audited candidate"):
+        load_research_receiver(*args, dense_mode=True, functional_mode=True)
+    assert (
+        load_research_receiver(
+            *args, dense_mode=True, functional_mode=True, functional_timed_mode=True
+        )
+        is actor
+    )
+    timed_review["failure_timing_hash"] = "different"
+    audit.write_text(json.dumps(timed_review))
+    args = (
+        setup,
+        checkpoint,
+        file_hash(checkpoint),
+        audit,
+        file_hash(audit),
+        dataset,
+        file_hash(dataset),
+    )
+    with pytest.raises(ValueError, match="unpromoted SIM"):
+        load_research_receiver(
+            *args, dense_mode=True, functional_mode=True, functional_timed_mode=True
+        )
 
 
 def test_continuation_requires_exact_unpromoted_lineage(tmp_path, monkeypatch):

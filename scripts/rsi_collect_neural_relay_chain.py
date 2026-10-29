@@ -44,6 +44,7 @@ def main():
     p.add_argument("--receiver-learned-pair", action="store_true")
     p.add_argument("--receiver-dense-pair", action="store_true")
     p.add_argument("--receiver-functional-pair", action="store_true")
+    p.add_argument("--receiver-functional-timed-pair", action="store_true")
     p.add_argument("--receiver-motion-pair", action="store_true")
     p.add_argument("--receiver-continuation-pair", action="store_true")
     p.add_argument("--passer-residual-pair", action="store_true")
@@ -241,6 +242,8 @@ def main():
         or a.reference_bridge_controls != [0]
     ):
         p.error("lateral authority requires one isolated development block")
+    if a.receiver_functional_timed_pair and not a.receiver_functional_pair:
+        p.error("timed functional pair requires functional pair protocol")
     if a.receiver_functional_pair and (
         not a.receiver_dense_pair
         or a.receiver_motion_pair
@@ -785,6 +788,8 @@ def main():
                 if a.receiver_learned_exploration
                 else "soccer.neural_relay_receiver_motion_pair.development.v18"
                 if a.receiver_motion_pair
+                else "soccer.neural_relay_receiver_functional_timed_pair.development.v40"
+                if a.receiver_functional_timed_pair
                 else "soccer.neural_relay_receiver_functional_pair.development.v39"
                 if a.receiver_functional_pair
                 else "soccer.neural_relay_receiver_dense_pair.development.v17"
@@ -1007,6 +1012,7 @@ def main():
                 motion_mode=a.receiver_motion_pair,
                 continuation_mode=a.receiver_continuation_pair,
                 functional_mode=a.receiver_functional_pair,
+                functional_timed_mode=a.receiver_functional_timed_pair,
             )
             if a.receiver_learned_pair
             else None
@@ -1949,6 +1955,8 @@ def main():
                     if a.receiver_learned_exploration
                     else "NEURAL_RELAY_RECEIVER_MOTION_PAIR16_PENDING_OWN_REPLAY"
                     if a.receiver_motion_pair
+                    else "NEURAL_RELAY_RECEIVER_FUNCTIONAL_TIMED_PAIR16_PENDING_OWN_REPLAY"
+                    if a.receiver_functional_timed_pair
                     else "NEURAL_RELAY_RECEIVER_FUNCTIONAL_PAIR16_PENDING_OWN_REPLAY"
                     if a.receiver_functional_pair
                     else "NEURAL_RELAY_RECEIVER_DENSE_PAIR16_PENDING_OWN_REPLAY"

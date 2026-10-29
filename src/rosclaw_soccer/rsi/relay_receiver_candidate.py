@@ -22,12 +22,15 @@ def load_research_receiver(
     motion_mode: bool = False,
     continuation_mode: bool = False,
     functional_mode: bool = False,
+    functional_timed_mode: bool = False,
 ):
     if (
         type(dense_mode) is not bool
         or type(motion_mode) is not bool
         or type(continuation_mode) is not bool
         or type(functional_mode) is not bool
+        or type(functional_timed_mode) is not bool
+        or (functional_timed_mode and not functional_mode)
         or (functional_mode and (not dense_mode or motion_mode or continuation_mode))
         or (motion_mode and not dense_mode)
         or (continuation_mode and (not dense_mode or motion_mode))
@@ -95,7 +98,9 @@ def load_research_receiver(
     if (
         review.get("status")
         != (
-            "FUNCTIONAL_RECEIVER_CANDIDATE_READBACK_MATCH"
+            "FUNCTIONAL_TIMED_RECEIVER_CANDIDATE_READBACK_MATCH"
+            if functional_timed_mode
+            else "FUNCTIONAL_RECEIVER_CANDIDATE_READBACK_MATCH"
             if functional_mode
             else "MOTION_RECEIVER_CANDIDATE_READBACK_MATCH"
             if motion_mode
@@ -135,8 +140,25 @@ def load_research_receiver(
         or (
             functional_mode
             and (
-                state.get("feedback_profile") != "functional-receive-proxy-v1"
-                or review.get("feedback_profile") != "functional-receive-proxy-v1"
+                state.get("feedback_profile")
+                != (
+                    "functional-receive-timed-proxy-v2"
+                    if functional_timed_mode
+                    else "functional-receive-proxy-v1"
+                )
+                or review.get("feedback_profile")
+                != (
+                    "functional-receive-timed-proxy-v2"
+                    if functional_timed_mode
+                    else "functional-receive-proxy-v1"
+                )
+                or (
+                    functional_timed_mode
+                    and (
+                        not state.get("failure_timing_hash")
+                        or state.get("failure_timing_hash") != review.get("failure_timing_hash")
+                    )
+                )
             )
         )
         or (
