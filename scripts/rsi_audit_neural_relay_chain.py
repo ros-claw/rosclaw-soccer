@@ -31,7 +31,8 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
-    passer_velocity_blend = (
+    return_pair = dec["protocol"] == "soccer.neural_relay_passer_return_pair.development.v35"
+    passer_velocity_blend = return_pair or (
         dec["protocol"] == "soccer.neural_relay_passer_velocity_blend.development.v31"
     )
     passer_velocity_recovery = passer_velocity_blend or (
@@ -43,7 +44,7 @@ def main():
     leg_limit_pair = projected_memory or (
         dec["protocol"] == "soccer.neural_relay_receiver_leg_target_projection.development.v26"
     )
-    coordinated_intercept = (
+    coordinated_intercept = return_pair or (
         dec["protocol"] == "soccer.neural_relay_receiver_coordinated_intercept.development.v34"
     )
     contact_lead = coordinated_intercept or (
@@ -162,7 +163,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_PASSER_VELOCITY_BLEND16_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_PASSER_RETURN_PAIR16_PENDING_OWN_REPLAY"
+        if return_pair
+        else "NEURAL_RELAY_PASSER_VELOCITY_BLEND16_PENDING_OWN_REPLAY"
         if passer_velocity_blend
         else "NEURAL_RELAY_PASSER_VELOCITY_RECOVERY16_PENDING_OWN_REPLAY"
         if passer_velocity_recovery
@@ -256,6 +259,7 @@ def main():
             "soccer.neural_relay_receiver_early_intercept.development.v28",
             "soccer.neural_relay_receiver_contact_lead.development.v29",
             "soccer.neural_relay_receiver_coordinated_intercept.development.v34",
+            "soccer.neural_relay_passer_return_pair.development.v35",
             "soccer.neural_relay_passer_velocity_recovery.development.v30",
             "soccer.neural_relay_passer_velocity_blend.development.v31",
             "soccer.neural_relay_receiver_leg_target_projection.development.v26",
@@ -286,6 +290,18 @@ def main():
             raise ValueError("exact development context identity and reference required")
         arms = (
             [
+                dict(
+                    start=80,
+                    memory="own_shadow_carry",
+                    reference_bridge_controls=0,
+                    receiver_foot_teacher_strength=0.5,
+                    receiver_adaptive_intercept=True,
+                    passer_velocity_recovery=enabled,
+                )
+                for enabled in (False, True)
+            ]
+            if return_pair
+            else [
                 dict(
                     start=80,
                     memory="own_shadow_carry",
@@ -503,6 +519,8 @@ def main():
             and dec.get("coordinated_intercept_is_unlearned_teacher") is not True
         ):
             raise ValueError("explicit unlearned coordinated intercept required")
+        if return_pair and dec.get("passer_return_role_is_unlearned") is not True:
+            raise ValueError("explicit unlearned return role required")
         if (
             longitudinal_authority
             and dec.get("longitudinal_intercept_is_unlearned_teacher") is not True
@@ -721,6 +739,7 @@ def main():
         from rosclaw_soccer.rsi.relay_post_touch_follow import post_touch_follow
         from rosclaw_soccer.rsi.relay_receiver_candidate import load_research_receiver
         from rosclaw_soccer.rsi.relay_whole_receiver_identity import zero_receiver_actor
+        from rosclaw_soccer.rsi.return_role_intent import return_receive_command, return_strike_seen
         from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
         from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
         from rosclaw_soccer.rsi.shared_native_receiving_player import SharedNativeReceivingPlayer
@@ -899,6 +918,7 @@ def main():
             balance_teacher = None
             ready = launch = False
             passer_foot_seen = False
+            return_seen = False
             passer_exit_gate = PasserContactExitGate()
             handoff_control = None
             transition_start_action = None
@@ -950,9 +970,17 @@ def main():
                 if receiver is None and step >= 300:
                     raise ValueError("source exceeded original velocity H300")
                 mujoco.mj_forward(w.model, w.data)
-                if passer.phase == "MOTION_COMPLETE" and not (
-                    passer_recovery is not None and passer_recovery.active
-                ):
+                if return_pair and passer.phase == "MOTION_COMPLETE":
+                    passer.begin_standing()
+                if (
+                    (passer.phase == "MOTION_COMPLETE" and not return_pair)
+                    or (
+                        return_pair
+                        and passer_recovery is not None
+                        and passer.phase == "STANDING"
+                        and return_seen
+                    )
+                ) and not (passer_recovery is not None and passer_recovery.active):
                     if passer_recovery is not None and passer_foot_seen:
                         vp = passer_recovery.stream.params
                         passer_old_pd = w.parameters["a/"].owned_copy()
@@ -978,13 +1006,21 @@ def main():
                                         raise ValueError("own unchanged passer boundary differs")
                         passer_recovery.activate(motion_complete=True, passer_foot_seen=True)
                         passer_recovery_start = step
-                        if passer_velocity_blend:
+                        if passer_velocity_blend and not return_pair:
                             passer.begin_standing()
                     else:
                         passer.begin_standing()
                 recovery_trace = None
                 if passer_recovery is not None:
-                    recovery_target = passer_recovery.observe(np.zeros(3, np.float32))
+                    q_a, v_a = w.layouts["a/"].canonical(w.data)
+                    recovery_command = (
+                        return_receive_command(
+                            q_a, v_a, return_direction=-forward, launch_seen=return_seen
+                        )
+                        if return_pair
+                        else np.zeros(3, np.float32)
+                    )
+                    recovery_target = passer_recovery.observe(recovery_command)
                     recovery_trace = dict(
                         control=np.array(step),
                         obs=passer_recovery.stream.last_observation.copy(),
@@ -1229,6 +1265,13 @@ def main():
                 passer_foot_seen = passer_foot_seen or bool(
                     (row["ball_forces"][:, 0, :2] > 10).any()
                 )
+                if return_pair and receiver is not None:
+                    return_seen = return_seen or return_strike_seen(
+                        row["ball_forces"],
+                        row["qvel"],
+                        ball_v=w.layouts["a/"].bv,
+                        return_direction=-forward,
+                    )
                 if contact_exit:
                     passer_exit_gate.observe(row["ball_forces"][:, 0, :])
                 if receiver is None:

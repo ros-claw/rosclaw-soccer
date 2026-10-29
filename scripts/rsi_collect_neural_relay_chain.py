@@ -27,6 +27,7 @@ def main():
     p.add_argument("--receiver-lateral-authority", action="store_true")
     p.add_argument("--receiver-adaptive-intercept", action="store_true")
     p.add_argument("--receiver-coordinated-intercept", action="store_true")
+    p.add_argument("--passer-return-pair", action="store_true")
     p.add_argument("--receiver-longitudinal-authority", action="store_true")
     p.add_argument("--receiver-foot-teacher-pair", action="store_true")
     p.add_argument("--receiver-predictive-foot-shin", action="store_true")
@@ -129,6 +130,12 @@ def main():
         )
     ):
         p.error("passer strike teacher requires one isolated development block")
+    if a.passer_return_pair and not (
+        a.receiver_coordinated_intercept
+        and not a.passer_velocity_recovery_pair
+        and not a.passer_velocity_blend
+    ):
+        p.error("return pair requires the isolated coordinated receiver protocol")
     if a.receiver_coordinated_intercept and not (
         a.receiver_foot_teacher_pair
         and a.receiver_predictive_foot_shin
@@ -588,6 +595,18 @@ def main():
             )
             for strength in (0.0, 0.5)
         ]
+    if a.passer_return_pair:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                receiver_foot_teacher_strength=0.5,
+                receiver_adaptive_intercept=True,
+                passer_velocity_recovery=enabled,
+            )
+            for enabled in (False, True)
+        ]
     if a.receiver_leg_limit_pair:
         arms = [
             dict(
@@ -680,7 +699,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_passer_reference_tempo.development.v1"
+                "soccer.neural_relay_passer_return_pair.development.v35"
+                if a.passer_return_pair
+                else "soccer.neural_relay_passer_reference_tempo.development.v1"
                 if a.passer_reference_tempo_pair
                 else "soccer.neural_relay_passer_strike_torque.development.v1"
                 if a.passer_strike_teacher_pair
@@ -824,8 +845,11 @@ def main():
                 a.receiver_exploration or a.receiver_learned_exploration
             ),
             passer_residual_is_unlearned_teacher=a.passer_residual_pair,
-            passer_velocity_recovery_pair=a.passer_velocity_recovery_pair,
-            passer_velocity_blend_controls=20 if a.passer_velocity_blend else 0,
+            passer_velocity_recovery_pair=a.passer_velocity_recovery_pair or a.passer_return_pair,
+            passer_velocity_blend_controls=20
+            if a.passer_velocity_blend or a.passer_return_pair
+            else 0,
+            passer_return_role_is_unlearned=a.passer_return_pair,
             precontact_fullbody_is_unlearned_teacher=a.precontact_fullbody_pair,
             precontact_smooth_controls=10 if a.precontact_smooth else 0,
             receiver_sampling_profile="contact-v1"
@@ -848,9 +872,9 @@ def main():
         ),
     )
     counts = dict(native_steps=0, actual_actor_calls=0, shadow_actor_calls=0)
-    if a.passer_velocity_recovery_pair:
+    if a.passer_velocity_recovery_pair or a.passer_return_pair:
         counts["passer_velocity_inferences"] = 0
-    if a.passer_velocity_blend:
+    if a.passer_velocity_blend or a.passer_return_pair:
         counts["passer_blend_actor_inferences"] = 0
     if a.receiver_whole_identity or a.receiver_exploration or a.receiver_learned_pair:
         counts.update(receiver_onnx_calls=0, receiver_plastic_calls=0, receiver_anchor_calls=0)
@@ -896,6 +920,7 @@ def main():
         from rosclaw_soccer.rsi.relay_post_touch_follow import post_touch_follow
         from rosclaw_soccer.rsi.relay_receiver_candidate import load_research_receiver
         from rosclaw_soccer.rsi.relay_whole_receiver_identity import zero_receiver_actor
+        from rosclaw_soccer.rsi.return_role_intent import return_receive_command, return_strike_seen
         from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
         from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
         from rosclaw_soccer.rsi.shared_native_receiving_player import SharedNativeReceivingPlayer
@@ -1123,6 +1148,7 @@ def main():
             balance_teacher = None
             launch = False
             passer_foot_seen = False
+            return_seen = False
             passer_exit_gate = PasserContactExitGate()
             passer_strike_teacher = None
             folder = a.output / f"trial{index}"
@@ -1183,9 +1209,17 @@ def main():
                     termination = "NO_RECEIVING_HANDOFF_WITHIN_ORIGINAL_VELOCITY_H300"
                     break
                 mujoco.mj_forward(w.model, w.data)
-                if passer.phase == "MOTION_COMPLETE" and not (
-                    passer_recovery is not None and passer_recovery.active
-                ):
+                if a.passer_return_pair and passer.phase == "MOTION_COMPLETE":
+                    passer.begin_standing()
+                if (
+                    (passer.phase == "MOTION_COMPLETE" and not a.passer_return_pair)
+                    or (
+                        a.passer_return_pair
+                        and passer_recovery is not None
+                        and passer.phase == "STANDING"
+                        and return_seen
+                    )
+                ) and not (passer_recovery is not None and passer_recovery.active):
                     if passer_recovery is not None and passer_foot_seen:
                         vp = passer_recovery.stream.params
                         passer_old_pd = w.parameters["a/"].owned_copy()
@@ -1196,7 +1230,9 @@ def main():
                         )
                         profile_a = w.switch_pd_profile(
                             "a/",
-                            passer_old_pd if a.passer_velocity_blend else passer_new_pd,
+                            passer_old_pd
+                            if a.passer_velocity_blend or a.passer_return_pair
+                            else passer_new_pd,
                         )
                         boundary_a = folder / "passer_recovery_boundary.npz"
                         np.savez_compressed(
@@ -1220,7 +1256,15 @@ def main():
                         passer.begin_standing()
                 recovery_trace = None
                 if passer_recovery is not None:
-                    recovery_target = passer_recovery.observe(np.zeros(3, np.float32))
+                    q_a, v_a = w.layouts["a/"].canonical(w.data)
+                    recovery_command = (
+                        return_receive_command(
+                            q_a, v_a, return_direction=-forward, launch_seen=return_seen
+                        )
+                        if a.passer_return_pair
+                        else np.zeros(3, np.float32)
+                    )
+                    recovery_target = passer_recovery.observe(recovery_command)
                     recovery_trace = dict(
                         control=np.array(step),
                         obs=passer_recovery.stream.last_observation.copy(),
@@ -1232,12 +1276,13 @@ def main():
                 teacher_arm = fraction != 1.0
                 blend_index = (
                     step - passer_recovery_boundary["control"]
-                    if a.passer_velocity_blend and passer_recovery_boundary is not None
+                    if (a.passer_velocity_blend or a.passer_return_pair)
+                    and passer_recovery_boundary is not None
                     else -1
                 )
                 blend_active = 0 <= blend_index < 20
                 if passer_recovery is not None and passer_recovery.active and not blend_active:
-                    if a.passer_velocity_blend and blend_index == 20:
+                    if (a.passer_velocity_blend or a.passer_return_pair) and blend_index == 20:
                         w.switch_pd_profile("a/", passer_new_pd)
                     target_a, trace_a = recovery_target, None
                 else:
@@ -1256,7 +1301,7 @@ def main():
                     # recurrent policy's own last-action history.
                     target_a = passer.offset + executed_a[passer.order] * passer.scale
                     counts["passer_blend_actor_inferences"] += 1
-                if recovery_trace is not None and a.passer_velocity_blend:
+                if recovery_trace is not None and (a.passer_velocity_blend or a.passer_return_pair):
                     recovery_trace["blend_index"] = np.array(blend_index)
                 if teacher_arm:
                     active = (
@@ -1467,6 +1512,13 @@ def main():
                 passer_foot_seen = passer_foot_seen or bool(
                     (row["ball_forces"][:, 0, :2] > 10).any()
                 )
+                if a.passer_return_pair and receiver is not None:
+                    return_seen = return_seen or return_strike_seen(
+                        row["ball_forces"],
+                        row["qvel"],
+                        ball_v=w.layouts["a/"].bv,
+                        return_direction=-forward,
+                    )
                 if a.passer_contact_exit:
                     passer_exit_gate.observe(row["ball_forces"][:, 0, :])
                 if receiver is None:
@@ -1644,7 +1696,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_PASSER_REFERENCE_TEMPO16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_PASSER_RETURN_PAIR16_PENDING_OWN_REPLAY"
+                    if a.passer_return_pair
+                    else "NEURAL_RELAY_PASSER_REFERENCE_TEMPO16_PENDING_OWN_REPLAY"
                     if a.passer_reference_tempo_pair
                     else "NEURAL_RELAY_PASSER_STRIKE_TEACHER16_PENDING_OWN_REPLAY"
                     if a.passer_strike_teacher_pair
