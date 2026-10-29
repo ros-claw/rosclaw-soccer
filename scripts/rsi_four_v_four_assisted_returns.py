@@ -19,7 +19,10 @@ def main():
     p.add_argument("--protocol-hash", required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--exploration-seed", type=int, choices=(24001, 24002))
+    p.add_argument("--only-explore-after-return", action="store_true")
     a = p.parse_args()
+    if a.only_explore_after_return and a.exploration_seed is None:
+        raise ValueError("returned-live exploration requires an explicit seed")
     clean(a.expected_head)
     if a.output.resolve().is_relative_to(Path.cwd()) or a.output.resolve().is_relative_to(
         a.asset_root.resolve()
@@ -36,6 +39,7 @@ def main():
             policy_hash=a.policy_hash,
             mode="ASSISTED_TRAINING_ONLY",
             exploration_seed=a.exploration_seed,
+            only_explore_after_return=a.only_explore_after_return,
             exploration_agent_ids=(
                 ["blue.playmaker", "red.finisher"] if a.exploration_seed is not None else []
             ),
@@ -115,6 +119,7 @@ def main():
                 near_ball_exploration_agent_ids=(
                     ("blue.playmaker", "red.finisher") if a.exploration_seed is not None else None
                 ),
+                near_ball_explore_after_return=a.only_explore_after_return,
             )
             sampled_by_role = None
             if a.exploration_seed is not None:
@@ -168,6 +173,7 @@ def main():
                 protocol_hash=a.protocol_hash,
                 policy_hash=a.policy_hash,
                 exploration_seed=a.exploration_seed,
+                only_explore_after_return=a.only_explore_after_return,
                 fixture_hash=fixture.fixture_hash,
                 world_config=asdict(world),
                 artifacts=artifacts,

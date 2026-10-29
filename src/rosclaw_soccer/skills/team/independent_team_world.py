@@ -188,6 +188,17 @@ _HASH = re.compile(r"^sha256:[0-9a-f]{64}$")
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_.:-]{0,127}$")
 
 
+def _returned_live_exploration_state(current: bool, event_code: int) -> bool:
+    """Explore only between a measured re-entry and the next measured exit."""
+    if type(current) is not bool or type(event_code) is not int or event_code not in (0, 1, 2, 3):
+        raise ValueError("explicit returned-ball lifecycle event required")
+    if event_code in (1, 2):
+        return False
+    if event_code == 3:
+        return True
+    return current
+
+
 @dataclass(frozen=True)
 class IndependentTeamWorldConfig:
     simulation_duration_sec: float = 10.0
@@ -1094,6 +1105,7 @@ def simulate_independent_team_world(
     near_ball_seed: int = 0,
     near_ball_explore: bool = False,
     near_ball_exploration_agent_ids: tuple[str, ...] | None = None,
+    near_ball_explore_after_return: bool = False,
     motor_options: Mapping[str, TeamMotorOption] | None = None,
     receiving_students: Mapping[str, QualifiedReceivingStudent] | None = None,
     receiving_student_probe_torque_nm: float = 0.0,
@@ -1246,6 +1258,11 @@ def simulate_independent_team_world(
         exploration_mask = np.asarray(
             [agent in scope for agent in near_ball_policy.agent_ids], dtype=bool
         )
+    if type(near_ball_explore_after_return) is not bool or (
+        near_ball_explore_after_return
+        and (active.training_ball_return is None or exploration_mask is None)
+    ):
+        raise ValueError("returned-live exploration requires training return and scoped policy")
     motors = dict(motor_options or {})
     from rosclaw_soccer.providers.g1.receiving_sonic import (
         ReceivingSonicBallFollowOption,
@@ -1803,6 +1820,7 @@ def simulate_independent_team_world(
         if active.training_ball_return is not None
         else None
     )
+    returned_live_exploration = False
     episode_research_stiffness_substeps = 0
     episode_research_shin_reflex_substeps = 0
     for frame in range(total_frames):
@@ -1905,6 +1923,9 @@ def simulate_independent_team_world(
                     (float(data.qpos[c.qpos_base]), float(data.qpos[c.qpos_base + 1]))
                     for c in controllers
                 ),
+            )
+            returned_live_exploration = _returned_live_exploration_state(
+                returned_live_exploration, 0 if event is None else event.code
             )
             if event is not None and event.code == 2:
                 # Explicit user-requested dead-ball training assist, never a
@@ -3241,14 +3262,28 @@ def simulate_independent_team_world(
                 ],
                 dtype=bool,
             )
+            explore_now = near_ball_explore and (
+                not near_ball_explore_after_return or returned_live_exploration
+            )
+            active_exploration_mask = (
+                (exploration_mask if explore_now else np.zeros_like(exploration_mask))
+                if exploration_mask is not None
+                else None
+            )
             latent, log_probability, values = near_ball_policy.act(
                 observations_np,
                 residual_rng,
-                explore=near_ball_explore,
-                **({"exploration_mask": exploration_mask} if exploration_mask is not None else {}),
+                explore=explore_now,
+                **(
+                    {"exploration_mask": active_exploration_mask}
+                    if explore_now and active_exploration_mask is not None
+                    else {}
+                ),
             )
             if exploration_mask is not None:
-                trace.setdefault("residual_exploration_mask", []).append(exploration_mask.copy())
+                trace.setdefault("residual_exploration_mask", []).append(
+                    active_exploration_mask.copy()
+                )
             residual_previous = bounded_residual(latent, residual_previous, residual_active)
             for i, c in enumerate(ordered):
                 if (
