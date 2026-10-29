@@ -130,6 +130,62 @@ def test_ball_offset_is_forwarded_only_to_initial_setup():
         )
 
 
+@pytest.mark.parametrize("rate", [0, 0.49, 1.01, float("nan"), float("inf"), True, "0.75"])
+def test_invalid_passer_reference_rate_fails_before_world_allocation(rate):
+    class ForbiddenSetup:
+        def prepare(self, *args, **kwargs):
+            raise AssertionError("invalid rate allocated physics")
+
+    with pytest.raises(ValueError):
+        run_shared_cftrack_trial(
+            ForbiddenSetup(),
+            object(),
+            context=2,
+            lateral_m=0.35,
+            use_cftrack=False,
+            policy_factory=lambda: None,
+            expected_policy_type=object,
+            passer_reference_rate=rate,
+        )
+
+
+def test_passer_reference_rate_targets_only_the_first_player(monkeypatch):
+    from rosclaw_soccer.rsi import cftrack_shared_relay_trial as module
+
+    class Observed(Exception):
+        pass
+
+    world = SimpleNamespace(data=SimpleNamespace(qpos=np.zeros(3), qvel=np.zeros(3)))
+    episode = SimpleNamespace(
+        clip=object(),
+        torso_index=0,
+        build_observation=object(),
+        goal=object(),
+        offset=object(),
+        scale=object(),
+        order=object(),
+    )
+    setup = SimpleNamespace(prepare=lambda context, side: (episode, world, None, None, None))
+    monkeypatch.setattr(module, "motion_segment", lambda clip, length: object())
+
+    def observe(actual_world, prefix, actor, **kwargs):
+        assert actual_world is world and prefix == "a/" and kwargs["reference_rate"] == 0.75
+        raise Observed
+
+    monkeypatch.setattr(module, "SharedNativeNeuralPlayer", observe)
+    with pytest.raises(Observed):
+        run_shared_cftrack_trial(
+            setup,
+            object(),
+            context=2,
+            lateral_m=0.35,
+            use_cftrack=False,
+            policy_factory=lambda: None,
+            expected_policy_type=object,
+            passer_reference_rate=0.75,
+        )
+
+
 def test_historical_baseline_identity_ignores_only_local_index_and_paths():
     from scripts.rsi_run_shared_router_relay import same_baseline_metadata
 

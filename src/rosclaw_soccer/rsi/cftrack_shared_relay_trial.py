@@ -65,6 +65,7 @@ def run_shared_cftrack_trial(
     record_witness: bool = False,
     passer_velocity_recovery: bool = False,
     ball_planar_offset_world: np.ndarray | None = None,
+    passer_reference_rate: float = 1.0,
 ) -> dict[str, Any]:
     """Use real measured readiness; no body/ball resets after initialization."""
     if (
@@ -75,6 +76,9 @@ def run_shared_cftrack_trial(
         or type(context) is not int
         or lateral_m not in (-0.35, 0.35)
         or (receiver_actor is not None and use_cftrack)
+        or type(passer_reference_rate) is not float
+        or not np.isfinite(passer_reference_rate)
+        or not 0.5 <= passer_reference_rate <= 1.0
     ):
         raise ValueError("explicit predeclared context, side and study arm required")
     from rosclaw_soccer.rsi.pass_transfer_curriculum import initial_ball_offset
@@ -98,6 +102,7 @@ def run_shared_cftrack_trial(
         offset=ep.offset,
         scale=ep.scale,
         order=ep.order,
+        reference_rate=passer_reference_rate,
     )
     shadow = SharedShadowMotor(
         w,

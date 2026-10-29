@@ -53,6 +53,7 @@ def main():
     p.add_argument("--recovery-protocol-hash", required=True)
     p.add_argument("--passer-recovery-pair", action="store_true")
     p.add_argument("--public-offset-study", action="store_true")
+    p.add_argument("--slow-pass-pair", action="store_true")
     p.add_argument("--study-protocol", type=Path)
     p.add_argument("--study-protocol-hash")
     p.add_argument("--baseline-root", type=Path)
@@ -61,6 +62,8 @@ def main():
     clean(a.expected_head)
     if a.public_offset_study and not a.passer_recovery_pair:
         raise ValueError("public offset is only supported by the registered paired study")
+    if a.slow_pass_pair and not (a.public_offset_study and a.passer_recovery_pair):
+        raise ValueError("slow-pass pair requires the registered public offset and recovery")
     study_fields = (a.study_protocol, a.study_protocol_hash, a.baseline_root, a.baseline_hash)
     if a.passer_recovery_pair != all(study_fields) or (
         not a.passer_recovery_pair and any(study_fields)
@@ -68,14 +71,20 @@ def main():
         raise ValueError("passer recovery requires exact study protocol and baseline")
     if a.passer_recovery_pair:
         expected_study_hash = (
-            "sha256:c7d2503c9b70928c9d5eaba54f6b53b51f6bf2aec9a313cb987da8b0d8751e6b"
+            "sha256:b26f87341d08a318bbed329694a4ed569c1b7275642aaff796ed5751ae190b1e"
+            if a.slow_pass_pair
+            else "sha256:c7d2503c9b70928c9d5eaba54f6b53b51f6bf2aec9a313cb987da8b0d8751e6b"
             if a.public_offset_study
             else "sha256:0a0ec2f59e9f94461b2a1f728cb4fb5d60f63fe33fcf34c54b42d484cdbd4b88"
         )
+        expected_baseline_hash = (
+            "sha256:350f270c6fc22517eef5f8d601f462a82492e26d75a3de22e9b75d277c94b55b"
+            if a.slow_pass_pair
+            else "sha256:93bf688c6e35c302c4a61be0e86f690227fe5a1084d04a08e127c8d27571f8bd"
+        )
         if (
             a.study_protocol_hash != expected_study_hash
-            or a.baseline_hash
-            != "sha256:93bf688c6e35c302c4a61be0e86f690227fe5a1084d04a08e127c8d27571f8bd"
+            or a.baseline_hash != expected_baseline_hash
         ):
             raise ValueError("exact preregistration and historical baseline required")
         baseline_file = a.baseline_root / "complete.json"
@@ -239,7 +248,11 @@ def main():
         raise ValueError("exact frozen router required")
     router = freeze_router(router)
     setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor, context_indices=indices)
-    arms = ("router", "router_recovery") if a.passer_recovery_pair else ("dual", "router")
+    arms = (
+        ("router_recovery", "router_slow_recovery")
+        if a.slow_pass_pair
+        else (("router", "router_recovery") if a.passer_recovery_pair else ("dual", "router"))
+    )
     courses = [(i, side, arm) for i in indices for side in (-0.35, 0.35) for arm in arms]
     typed = []
     for i in indices:
@@ -273,6 +286,7 @@ def main():
             study_protocol_hash=a.study_protocol_hash,
             baseline_hash=a.baseline_hash,
             public_offset_study=a.public_offset_study,
+            slow_pass_pair=a.slow_pass_pair,
             ball_planar_offset_world=None if ball_offset is None else ball_offset.tolist(),
             hardware_authorized=False,
             promotion_authorized=False,
@@ -290,9 +304,12 @@ def main():
                 use_cftrack=False,
                 policy_factory=lambda: None,
                 expected_policy_type=object,
-                receiver_actor=router if arm in ("router", "router_recovery") else None,
-                passer_velocity_recovery=arm == "router_recovery",
+                receiver_actor=router
+                if arm in ("router", "router_recovery", "router_slow_recovery")
+                else None,
+                passer_velocity_recovery=arm in ("router_recovery", "router_slow_recovery"),
                 ball_planar_offset_world=ball_offset,
+                passer_reference_rate=0.75 if arm == "router_slow_recovery" else 1.0,
             )
             folder = a.output / f"trial{index}"
             folder.mkdir()
@@ -306,7 +323,11 @@ def main():
                 "receiver_shadow",
                 "receiver_velocity",
                 "cftrack",
-                *(("passer_velocity",) if arm == "router_recovery" else ()),
+                *(
+                    ("passer_velocity",)
+                    if arm in ("router_recovery", "router_slow_recovery")
+                    else ()
+                ),
             ):
                 arrays = result.pop(key)
                 arrays_all[key] = arrays
@@ -348,11 +369,13 @@ def main():
                     k: v for k, v in saved.items() if k != "artifacts"
                 } or set(artifacts) != set(saved["artifacts"]):
                     raise ValueError("source metadata or artifacts differ")
-            if a.passer_recovery_pair and arm == "router" and not a.public_offset_study:
+            if (a.passer_recovery_pair and arm == "router" and not a.public_offset_study) or (
+                a.slow_pass_pair and arm == "router_recovery"
+            ):
                 (previous,) = [
                     r
                     for r in baseline_receipt["records"]
-                    if r["context"] == context and r["lateral_m"] == side and r["arm"] == "router"
+                    if r["context"] == context and r["lateral_m"] == side and r["arm"] == arm
                 ]
                 if not same_baseline_metadata(record, previous) or set(artifacts) != set(
                     previous["artifacts"]
@@ -377,7 +400,9 @@ def main():
                     for k in ("qpos", "qvel")
                 ):
                     raise ValueError("paired initial states differ")
-                if a.passer_recovery_pair:
+                if a.slow_pass_pair:
+                    common, compare_keys = 0, ()
+                elif a.passer_recovery_pair:
                     common = result["passer_recovery_boundary"]
                     observed = min(prior_result["controls"], result["controls"])
                     common = observed if common is None else min(common, observed)
