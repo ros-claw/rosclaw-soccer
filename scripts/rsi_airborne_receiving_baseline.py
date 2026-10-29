@@ -2,7 +2,8 @@
 
 import argparse
 import importlib
-from dataclasses import asdict
+import math
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import numpy as np
@@ -31,7 +32,11 @@ def main():
     for key in ("policy-hash", "protocol-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
     p.add_argument("--shard", type=int, choices=range(4), required=True)
+    p.add_argument("--standard-ball", action="store_true")
+    p.add_argument("--focal-nearest", action="store_true")
     a = p.parse_args()
+    if a.focal_nearest and not a.standard_ball:
+        raise ValueError("focal-nearest study requires the declared standard ball")
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("unused external evidence path required")
@@ -60,11 +65,12 @@ def main():
     from rosclaw_soccer.physics.native_ball_dimensions import inspect_native_ball_dimensions
     from rosclaw_soccer.providers.g1.asset_qualification import qualify_g1_assets
     from rosclaw_soccer.providers.g1.mujoco_primitives import load_robonaldo
-    from rosclaw_soccer.sim.physical_checkpoint import PhysicalCheckpoint
+    from rosclaw_soccer.sim.physical_checkpoint import PhysicalCheckpoint, compiled_model_hash
     from rosclaw_soccer.skills.team.independent_team_world import _make_player_controller
     from rosclaw_soccer.training.airborne_receiving_courses import (
         airborne_receiving_ball_launch,
         airborne_receiving_course_bank,
+        focal_nearest_airborne_course_bank,
     )
     from rosclaw_soccer.training.continuous_competitive_match_growth import _write_trajectory
     from rosclaw_soccer.training.continuous_match_residual_ppo import collection_fixture
@@ -80,9 +86,17 @@ def main():
 
     if Path(rosclaw.__file__).resolve() != core / "__init__.py":
         raise ValueError("imported core differs from pinned source")
-    courses = airborne_receiving_course_bank()
+    courses = (
+        focal_nearest_airborne_course_bank()
+        if a.focal_nearest
+        else airborne_receiving_course_bank()
+    )
     bank_hash = preflight_receiving_courses(courses)
     fixture = collection_fixture(assets, keeper_preview=True)
+    if a.standard_ball:
+        fixture = replace(
+            fixture, goal=replace(fixture.goal, ball_radius_m=0.110, ball_mass_kg=0.430)
+        )
     world, _ = r1_contact_tap_receiving_configuration()
     qualification = qualify_g1_assets(assets)
     qualification.require_eligible()
@@ -99,6 +113,12 @@ def main():
                 world.glove_material.apply(model, prefix=player.body_prefix)
     ball_geom = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "ball_geom"))
     dimensions = inspect_native_ball_dimensions(model, geom_id=ball_geom)
+    if a.standard_ball and (
+        not math.isclose(dimensions.radius_m, 0.110, rel_tol=0.0, abs_tol=1e-12)
+        or not math.isclose(dimensions.body_mass_kg, 0.430, rel_tol=0.0, abs_tol=1e-12)
+        or not dimensions.size_and_mass_in_ifab_range
+    ):
+        raise ValueError("compiled standard-sized sphere mismatch")
     ball_joint = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "ball_free"))
     if ball_joint < 0:
         raise ValueError("compiled free ball joint required")
@@ -124,12 +144,25 @@ def main():
         )
     # Whole-bank physical startup preflight before running any episode.
     starts = {}
+    focal_nearest_margins = {}
     for course in courses:
         data = mujoco.MjData(model)
         data.qpos[:] = template.qpos
         position, velocity = airborne_receiving_ball_launch(
             course, origin=by_player[course.agent_id].origin_m, radius_m=dimensions.radius_m
         )
+        if a.focal_nearest:
+            distances = sorted(
+                (
+                    math.hypot(player.origin_m[0] - position[0], player.origin_m[1] - position[1]),
+                    player.agent_id,
+                )
+                for player in fixture.players
+            )
+            margin = distances[1][0] - distances[0][0]
+            if distances[0][1] != course.agent_id or margin < 0.30:
+                raise ValueError("focal-nearest launch margin rejected for whole bank")
+            focal_nearest_margins[course.seed] = margin
         data.qpos[ball_q : ball_q + 7] = (*position, 1.0, 0.0, 0.0, 0.0)
         data.qvel[ball_v : ball_v + 3] = velocity
         mujoco.mj_forward(model, data)
@@ -137,6 +170,7 @@ def main():
         if ball_contacts:
             raise ValueError(f"initial ball contact in course {course.seed}; reject whole bank")
         starts[course.seed] = PhysicalCheckpoint.capture(model, data).state_hash
+    model_hash = compiled_model_hash(model)
     indices = list(range(a.shard, len(courses), 4))
     a.output.mkdir(parents=True)
     write_once(
@@ -150,6 +184,11 @@ def main():
             courses=[asdict(c) for c in courses],
             initial_integration_hashes=starts,
             ball_dimensions=asdict(dimensions),
+            compiled_model_hash=model_hash,
+            fixture_hash=fixture.fixture_hash,
+            focal_nearest_margins_m=focal_nearest_margins,
+            standard_ball=a.standard_ball,
+            focal_nearest=a.focal_nearest,
             input_file_hashes=pins,
             coach_assigned_receive=True,
             classroom_profile="R1_CONTACT_TAP",
@@ -169,9 +208,12 @@ def main():
                     course=course,
                     scenario_id=f"s199.airborne-receive-{course.seed}",
                     configuration_profile="R1_CONTACT_TAP",
+                    airborne_standard_ball=a.standard_ball,
                 )
                 if str(trace["initial_integration_hash"][0]) != starts[course.seed]:
                     raise ValueError("actual initial state differs from whole-bank preflight")
+                if str(trace["initial_physics_hash"][0]) != model_hash:
+                    raise ValueError("actual compiled model differs from physical preflight")
                 if original is not None and not exact_arrays(trace, original):
                     raise ValueError("full native reexecution differs")
                 if original is None:
@@ -204,6 +246,8 @@ def main():
                 records=records,
                 coach_assigned_receive=True,
                 classroom_profile="R1_CONTACT_TAP",
+                standard_ball=a.standard_ball,
+                focal_nearest=a.focal_nearest,
                 promotion_authorized=False,
                 hardware_authorized=False,
             ),

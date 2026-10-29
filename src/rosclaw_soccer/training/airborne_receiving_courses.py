@@ -67,6 +67,19 @@ def airborne_receiving_course_bank() -> tuple[AirborneReceivingCourse, ...]:
     return tuple(cases)
 
 
+def focal_nearest_airborne_course_bank() -> tuple[AirborneReceivingCourse, ...]:
+    """A separately declared, still contested eight-player development bank."""
+    cases: list[AirborneReceivingCourse] = []
+    for agent in ("red.finisher", "blue.playmaker"):
+        for sign in (-1.0, 1.0):
+            for position, velocity in (
+                ((0.60, sign * 0.20, 0.80), (-0.25, -sign * 0.60, -0.80)),
+                ((0.65, sign * 0.25, 0.60), (-0.35, -sign * 0.80, -1.10)),
+            ):
+                cases.append(AirborneReceivingCourse(agent, 96400 + len(cases), position, velocity))
+    return tuple(cases)
+
+
 def preflight_airborne_receiving_courses(courses: tuple[AirborneReceivingCourse, ...]) -> str:
     if type(courses) is not tuple or not 1 <= len(courses) <= 4096:
         raise ValueError("bounded immutable airborne receiving bank required")

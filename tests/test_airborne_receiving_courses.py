@@ -1,4 +1,5 @@
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -6,8 +7,10 @@ import pytest
 from rosclaw_soccer.training.airborne_receiving_courses import (
     airborne_receiving_ball_launch,
     airborne_receiving_course_bank,
+    focal_nearest_airborne_course_bank,
 )
 from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
+from rosclaw_soccer.training.receiving_experiment import simulate_r0_receiving_course
 from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse, receiving_ball_launch
 from scripts.rsi_airborne_receiving_baseline import exact_arrays
 
@@ -22,6 +25,16 @@ def test_fixed_bank_is_unique_preflighted_and_mirrors_team_frame():
     pb, vb = airborne_receiving_ball_launch(b, origin=(0.0, 0.0, 0.0), radius_m=0.115)
     assert pb == (-pa[0], -pa[1], pa[2])
     assert vb == (-va[0], -va[1], va[2])
+
+
+def test_focal_nearest_bank_is_distinct_and_fixed():
+    bank = focal_nearest_airborne_course_bank()
+    assert len(bank) == 8
+    assert [x.seed for x in bank] == list(range(96400, 96408))
+    assert preflight_receiving_courses(bank) != preflight_receiving_courses(
+        airborne_receiving_course_bank()
+    )
+    assert {x.position_local_m[0] for x in bank} == {0.60, 0.65}
 
 
 def test_invalid_and_duplicate_states_rejected_without_clipping():
@@ -46,6 +59,14 @@ def test_legacy_ground_ball_contract_is_unchanged():
     )
     with pytest.raises(ValueError):
         preflight_receiving_courses((course, airborne_receiving_course_bank()[0]))
+    with pytest.raises(ValueError, match="explicit airborne"):
+        simulate_r0_receiving_course(
+            asset_root=Path("nonexistent"),
+            reference_policy_path=Path("nonexistent"),
+            course=course,
+            scenario_id="s199.test",
+            airborne_standard_ball=True,
+        )
 
 
 def test_exact_replay_fails_on_missing_changed_or_different_dtype():

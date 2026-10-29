@@ -65,6 +65,7 @@ def simulate_r0_receiving_course(
     reference_policy_path: Path,
     course: ReceivingCourse | AirborneReceivingCourse,
     scenario_id: str,
+    airborne_standard_ball: bool = False,
     checkpoint_frame: int = 0,
     capture_support: bool = False,
     capture_oracle_authority: bool = False,
@@ -122,6 +123,10 @@ def simulate_r0_receiving_course(
         or course.agent_id not in ROSTER
     ):
         raise ValueError("typed focal receiving course required")
+    if type(airborne_standard_ball) is not bool or (
+        airborne_standard_ball and not isinstance(course, AirborneReceivingCourse)
+    ):
+        raise ValueError("standard-ball experiment requires an explicit airborne course")
     if configuration_profile not in ("R0", "R1_CONTACT_TAP"):
         raise ValueError("explicit versioned receiving classroom required")
     if type(sonic_command_replanning) is not bool or (
@@ -483,6 +488,10 @@ def simulate_r0_receiving_course(
     else:
         receiving_ball_launch(course, origin=(0.0, 0.0, 0.0), radius_m=0.115)
     fixture = collection_fixture(asset_root, keeper_preview=True)
+    if airborne_standard_ball:
+        fixture = replace(
+            fixture, goal=replace(fixture.goal, ball_radius_m=0.110, ball_mass_kg=0.430)
+        )
     policy = NearBallResidualPolicy.load(reference_policy_path)
     cells = coached_receiving_cells(fixture.cells, focal_agent_id=course.agent_id)
     player = next(player for player in fixture.players if player.agent_id == course.agent_id)
