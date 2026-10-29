@@ -8,6 +8,8 @@ from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters, Sha
 from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
 from rosclaw_soccer.rsi.shared_robonaldo_player import SharedRoboNaldoPlayer
 
+ISAAC_TO_MUJOCO = np.arange(29)
+
 
 class Session:
     def get_inputs(self):
@@ -27,6 +29,11 @@ class Policy:
         self.state_cmd, self.policy_output = SimpleNamespace(), SimpleNamespace()
         self.ort_session = Session()
         self.measured = []
+        self.default_q_mj = np.zeros(29)
+        self.action_scale_mj = np.ones(29)
+        self.action_clip_lo_il = np.full(29, -1.0)
+        self.action_clip_hi_il = np.full(29, 1.0)
+        self.last_action_il = np.zeros(29, dtype=np.float32)
 
     def enter(self):
         self.entry_position = self.state_cmd.pelvis_pos_w.copy()
@@ -94,6 +101,48 @@ def test_commit_requires_actual_control_and_unmodified_target():
     with pytest.raises(ValueError, match="executed target differs"):
         a.commit()
     assert a.failed
+
+
+def test_shadow_commit_encodes_the_actual_executed_target_without_modifying_physics():
+    w = setup()
+    a = player(w)
+    a.propose()
+    target = np.full(29, 0.125)
+    w.advance({"a/": target, "b/": np.zeros(29)})
+    q = w.data.qpos.copy()
+    receipt = a.commit_observed_target()
+    assert not receipt["original_proposal_executed"]
+    np.testing.assert_array_equal(a.policy.last_action_il, target.astype(np.float32))
+    np.testing.assert_array_equal(w.data.qpos, q)
+    a.propose()
+    assert a.commits == 1
+
+
+def test_shadow_commit_rejects_unrepresentable_actual_action_and_latches():
+    w = setup()
+    a = player(w)
+    a.propose()
+    w.advance({"a/": np.full(29, 1.5), "b/": np.zeros(29)})
+    with pytest.raises(ValueError, match="outside kick action codec"):
+        a.commit_observed_target()
+    assert a.failed
+    with pytest.raises(ValueError):
+        a.propose()
+
+
+def test_shadow_commit_respects_joint_permutation(monkeypatch):
+    import sys
+
+    permutation = np.arange(28, -1, -1)
+    monkeypatch.setattr(sys.modules[__name__], "ISAAC_TO_MUJOCO", permutation)
+    w = setup()
+    a = player(w)
+    a.propose()
+    target = np.linspace(-0.5, 0.5, 29)
+    w.advance({"a/": target, "b/": np.zeros(29)})
+    result = a.commit_observed_target()
+    np.testing.assert_array_equal(a.policy.last_action_il, target[permutation].astype(np.float32))
+    assert result["maximum_decode_error_rad"] < 5e-7
 
 
 def test_retirement_releases_only_unused_owner_without_body_or_pd_change():

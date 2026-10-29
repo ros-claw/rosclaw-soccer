@@ -257,3 +257,58 @@ class SharedRoboNaldoPlayer:
         self.pending = None
         self.boundary = self.world.control_steps
         self.commits += 1
+
+    def commit_observed_target(self) -> dict[str, Any]:
+        """Advance a SIM shadow using the other controller's actual executed target.
+
+        This never changes physics or grants action authority. It fails closed
+        if the exact observed target cannot be represented by the frozen kick
+        policy's own action codec; unlike history warmstart it does not clip.
+        """
+        import importlib
+
+        if (
+            self.failed
+            or self.retired
+            or self.pending is None
+            or self.world.control_steps != self.boundary + 1
+        ):
+            raise ValueError("one completed physical step after shadow proposal required")
+        actual = self.world.last_applied_target(self.prefix)
+        if np.array_equal(actual, self.pending):
+            self.commit()
+            return dict(original_proposal_executed=True, maximum_decode_error_rad=0.0)
+        self.failed = True
+        p = self.policy
+        module = importlib.import_module(type(p).__module__)
+        inverse = np.asarray(module.ISAAC_TO_MUJOCO)
+        default = np.asarray(p.default_q_mj, dtype=np.float64)
+        scale = np.asarray(p.action_scale_mj, dtype=np.float64)
+        low = np.asarray(p.action_clip_lo_il, dtype=np.float64)
+        high = np.asarray(p.action_clip_hi_il, dtype=np.float64)
+        if (
+            p.runtime_mode != "sim"
+            or inverse.shape != (29,)
+            or inverse.dtype.kind not in "iu"
+            or sorted(inverse.tolist()) != list(range(29))
+            or any(
+                x.shape != (29,) or not np.isfinite(x).all()
+                for x in (actual, default, scale, low, high)
+            )
+            or np.any(np.abs(scale) < 1e-9)
+            or np.any(low > high)
+        ):
+            raise ValueError("valid owned SIM kick codec and executed target required")
+        encoded = ((actual - default) / scale)[inverse].astype(np.float32)
+        if np.any(encoded < low - 1e-6) or np.any(encoded > high + 1e-6):
+            raise ValueError("actual target is outside kick action codec; no clipping")
+        decoded = default + scale * encoded[np.argsort(inverse)]
+        error = float(np.max(np.abs(decoded - actual)))
+        if error > 5e-7:
+            raise ValueError("actual target cannot be represented by kick codec")
+        p.last_action_il = encoded.copy()
+        self.pending = None
+        self.boundary = self.world.control_steps
+        self.commits += 1
+        self.failed = False
+        return dict(original_proposal_executed=False, maximum_decode_error_rad=error)
