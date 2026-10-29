@@ -132,10 +132,21 @@ def main():
     kick_types = None
     kick_path = None
     kick_hash = None
+    kick_dependencies = []
     if a.phase_policy:
         from rosclaw.simforge.backends.unitree_mujoco_backend import _load_robonaldo
 
         kick_path, kick_hash = asset("/policy/robonaldo/FreeKick.py")
+        for suffix in (
+            "/FSM/FSMState.py",
+            "/common/ctrlcomp.py",
+            "/common/utils.py",
+            "/common/path_config.py",
+            "/policy/robonaldo/config/freekick.yaml",
+            "/policy/robonaldo/model/freekick_motion.npz",
+            "/policy/robonaldo/model/policy-obs-aic.onnx",
+        ):
+            kick_dependencies.append(asset(suffix))
         kick_types = _load_robonaldo(kick_path.parents[2])
     a.output.mkdir(parents=True)
     write_once(
@@ -153,6 +164,7 @@ def main():
             student_prefix_controls=20 if reference_report is not None else None,
             phase_policy=a.phase_policy,
             kick_source_hash=kick_hash,
+            kick_dependency_hashes={str(path): digest for path, digest in kick_dependencies},
             courses=list(range(0, 40, 5)),
             promotion_authorized=False,
             hardware_authorized=False,
@@ -370,6 +382,7 @@ def main():
             or any(file_digest(path) != digest for path, digest in parent_pins)
             or any(file_digest(path) != digest for path, digest in reference_pins)
             or (kick_path is not None and file_digest(kick_path) != kick_hash)
+            or any(file_digest(path) != digest for path, digest in kick_dependencies)
             or (
                 a.student_reference is not None
                 and file_digest(a.student_reference / "complete.json") != a.student_reference_hash
