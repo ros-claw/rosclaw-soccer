@@ -44,6 +44,9 @@ def main():
     return_player_seeded_sampling = (
         dec["protocol"] == "soccer.neural_relay_return_player_own_sampling_seeded.development.v47"
     )
+    prepared_candidate = (
+        dec["protocol"] == "soccer.neural_relay_prepared_return_candidate.development.v50"
+    )
     prepared_sampling = (
         dec["protocol"] == "soccer.neural_relay_prepared_return_sampling.development.v49"
     )
@@ -52,8 +55,10 @@ def main():
         or return_player_seeded_sampling
         or (dec["protocol"] == "soccer.neural_relay_return_player_own_sampling.development.v46")
     )
-    return_player_prepare = prepared_sampling or (
-        dec["protocol"] == "soccer.neural_relay_return_player_prepare.development.v48"
+    return_player_prepare = (
+        prepared_candidate
+        or prepared_sampling
+        or (dec["protocol"] == "soccer.neural_relay_return_player_prepare.development.v48")
     )
     sampling_seed = 94111
     if return_player_seeded_sampling or prepared_sampling:
@@ -66,8 +71,12 @@ def main():
             (94111, 94137, 94163) if prepared_sampling else (94137, 94163)
         ):
             raise ValueError("preregistered sampled seed required")
-    return_player_identity = return_player_sampling or (
-        dec["protocol"] == "soccer.neural_relay_return_player_adaptive_identity.development.v45"
+    return_player_identity = (
+        prepared_candidate
+        or return_player_sampling
+        or (
+            dec["protocol"] == "soccer.neural_relay_return_player_adaptive_identity.development.v45"
+        )
     )
     child_return_role = (
         return_player_prepare
@@ -237,6 +246,8 @@ def main():
         if successor_pair
         else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
         if return_align_pair
+        else "NEURAL_RELAY_PREPARED_RETURN_CANDIDATE16_PENDING_OWN_REPLAY"
+        if prepared_candidate
         else "NEURAL_RELAY_PREPARED_RETURN_SAMPLING16_PENDING_OWN_REPLAY"
         if prepared_sampling
         else "NEURAL_RELAY_RETURN_PLAYER_PREPARE16_PENDING_OWN_REPLAY"
@@ -353,6 +364,7 @@ def main():
             "soccer.neural_relay_return_player_own_sampling_seeded.development.v47",
             "soccer.neural_relay_return_player_prepare.development.v48",
             "soccer.neural_relay_prepared_return_sampling.development.v49",
+            "soccer.neural_relay_prepared_return_candidate.development.v50",
             "soccer.neural_relay_receiver_motion_pair.development.v18",
             "soccer.neural_relay_receiver_dense_exploration.development.v19",
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
@@ -430,13 +442,15 @@ def main():
                     receiver_whole=True,
                     receiver_learned=True,
                     passer_velocity_recovery=True,
-                    passer_prepare=True if prepared_sampling else enabled,
+                    passer_prepare=True if (prepared_sampling or prepared_candidate) else enabled,
                     **(
-                        {
+                        {"passer_adaptive": enabled}
+                        if prepared_candidate
+                        else {
                             "passer_adaptive": enabled,
                             "passer_sampling_seed": sampling_seed if enabled else None,
                         }
-                        if prepared_sampling
+                        if prepared_sampling or prepared_candidate
                         else {}
                     ),
                 )
@@ -762,6 +776,12 @@ def main():
     else:
         indices = (1, 4, 20, 21)
     pins = dict(s["input_file_hashes"])
+    if prepared_candidate:
+        for key in ("return_player_candidate", "return_player_training_receipt"):
+            path = Path(dec[key])
+            expected = dec[key + "_hash"]
+            if path.is_symlink() or pins.get(str(path)) != expected or digest(path) != expected:
+                raise ValueError("exact pinned return candidate required for own replay")
     if learned_pair:
         for key in ("receiver_checkpoint", "receiver_candidate_audit", "receiver_dataset"):
             path = Path(dec[key])
@@ -914,6 +934,7 @@ def main():
         from rosclaw_soccer.rsi.passer_velocity_recovery import PasserVelocityRecovery
         from rosclaw_soccer.rsi.precontact_fullbody_gate import precontact_fullbody_gate
         from rosclaw_soccer.rsi.precontact_receiving_motor import PrecontactReceivingMotor
+        from rosclaw_soccer.rsi.prepared_return_candidate import load_prepared_return_candidate
         from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
         from rosclaw_soccer.rsi.receiver_target_limit_projection import (
             projected_action_memory,
@@ -1088,6 +1109,14 @@ def main():
                         .eval()
                         .requires_grad_(False)
                     )
+                    if prepared_candidate:
+                        adapted_actor = load_prepared_return_candidate(
+                            setup,
+                            Path(dec["return_player_candidate"]),
+                            dec["return_player_candidate_hash"],
+                            Path(dec["return_player_training_receipt"]),
+                            dec["return_player_training_receipt_hash"],
+                        )
                     passer_recovery = AdaptivePasserVelocityRecovery(
                         w,
                         "a/",

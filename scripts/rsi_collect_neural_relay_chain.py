@@ -54,6 +54,10 @@ def main():
     p.add_argument("--return-player-own-sampling", action="store_true")
     p.add_argument("--return-player-sampling-seed", type=int, choices=(94137, 94163))
     p.add_argument("--return-player-prepared-pair", action="store_true")
+    p.add_argument("--return-player-candidate", type=Path)
+    p.add_argument("--return-player-candidate-hash")
+    p.add_argument("--return-player-training-receipt", type=Path)
+    p.add_argument("--return-player-training-receipt-hash")
     p.add_argument("--passer-residual-pair", action="store_true")
     p.add_argument("--passer-strike-teacher-pair", action="store_true")
     p.add_argument("--passer-reference-tempo-pair", action="store_true")
@@ -83,9 +87,26 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    candidate_fields = (
+        a.return_player_candidate,
+        a.return_player_candidate_hash,
+        a.return_player_training_receipt,
+        a.return_player_training_receipt_hash,
+    )
+    if any(candidate_fields) and (
+        not all(candidate_fields)
+        or not a.return_player_prepared_pair
+        or not a.return_player_adaptive_identity
+        or a.return_player_own_sampling
+    ):
+        p.error("return candidate requires isolated prepared adaptive pair and exact evidence")
     if a.return_player_prepared_pair and (
         not a.receiver_child_return_role_pair
-        or (a.return_player_adaptive_identity and not a.return_player_own_sampling)
+        or (
+            a.return_player_adaptive_identity
+            and not a.return_player_own_sampling
+            and not a.return_player_candidate
+        )
     ):
         p.error("prepared pair requires isolated child return-role study")
     if a.return_player_sampling_seed is not None and not a.return_player_own_sampling:
@@ -428,6 +449,14 @@ def main():
             if path.is_symlink() or digest(path) != expected:
                 raise ValueError("exact candidate evidence required before physics")
             pins[str(path)] = expected
+    if a.return_player_candidate:
+        for path, expected in (
+            (a.return_player_candidate, a.return_player_candidate_hash),
+            (a.return_player_training_receipt, a.return_player_training_receipt_hash),
+        ):
+            if path.is_symlink() or digest(path) != expected:
+                raise ValueError("exact pinned return-player candidate required")
+            pins[str(path)] = expected
     if a.receiver_exploration:
         if a.identity_review.is_symlink() or digest(a.identity_review) != a.identity_review_hash:
             raise ValueError("exact independent whole-receiver identity review required")
@@ -765,15 +794,19 @@ def main():
                 receiver_whole=True,
                 receiver_learned=True,
                 passer_velocity_recovery=True,
-                passer_prepare=True if a.return_player_own_sampling else enabled,
+                passer_prepare=True
+                if (a.return_player_own_sampling or a.return_player_candidate)
+                else enabled,
                 **(
-                    {
+                    {"passer_adaptive": enabled}
+                    if a.return_player_candidate
+                    else {
                         "passer_adaptive": enabled,
                         "passer_sampling_seed": (a.return_player_sampling_seed or 94111)
                         if enabled
                         else None,
                     }
-                    if a.return_player_own_sampling
+                    if a.return_player_own_sampling or a.return_player_candidate
                     else {}
                 ),
             )
@@ -824,6 +857,8 @@ def main():
                 if a.passer_successor_pair
                 else "soccer.neural_relay_passer_return_alignment.development.v36"
                 if a.passer_return_align_pair
+                else "soccer.neural_relay_prepared_return_candidate.development.v50"
+                if a.return_player_candidate
                 else "soccer.neural_relay_prepared_return_sampling.development.v49"
                 if a.return_player_prepared_pair and a.return_player_own_sampling
                 else "soccer.neural_relay_return_player_prepare.development.v48"
@@ -932,6 +967,14 @@ def main():
             identity_review_head=a.identity_review_head,
             receiver_checkpoint=str(a.receiver_checkpoint) if a.receiver_learned_pair else None,
             receiver_checkpoint_hash=a.receiver_checkpoint_hash,
+            return_player_candidate=str(a.return_player_candidate)
+            if a.return_player_candidate
+            else None,
+            return_player_candidate_hash=a.return_player_candidate_hash,
+            return_player_training_receipt=str(a.return_player_training_receipt)
+            if a.return_player_training_receipt
+            else None,
+            return_player_training_receipt_hash=a.return_player_training_receipt_hash,
             receiver_candidate_audit=str(a.receiver_candidate_audit)
             if a.receiver_learned_pair
             else None,
@@ -1065,6 +1108,7 @@ def main():
         from rosclaw_soccer.rsi.passer_velocity_recovery import PasserVelocityRecovery
         from rosclaw_soccer.rsi.precontact_fullbody_gate import precontact_fullbody_gate
         from rosclaw_soccer.rsi.precontact_receiving_motor import PrecontactReceivingMotor
+        from rosclaw_soccer.rsi.prepared_return_candidate import load_prepared_return_candidate
         from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
         from rosclaw_soccer.rsi.receiver_target_limit_projection import (
             projected_action_memory,
@@ -1257,6 +1301,14 @@ def main():
                         .eval()
                         .requires_grad_(False)
                     )
+                    if a.return_player_candidate:
+                        adapted_actor = load_prepared_return_candidate(
+                            setup,
+                            a.return_player_candidate,
+                            a.return_player_candidate_hash,
+                            a.return_player_training_receipt,
+                            a.return_player_training_receipt_hash,
+                        )
                     passer_recovery = AdaptivePasserVelocityRecovery(
                         w,
                         "a/",
@@ -2062,6 +2114,8 @@ def main():
                     if a.passer_successor_pair
                     else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
                     if a.passer_return_align_pair
+                    else "NEURAL_RELAY_PREPARED_RETURN_CANDIDATE16_PENDING_OWN_REPLAY"
+                    if a.return_player_candidate
                     else "NEURAL_RELAY_PREPARED_RETURN_SAMPLING16_PENDING_OWN_REPLAY"
                     if a.return_player_prepared_pair and a.return_player_own_sampling
                     else "NEURAL_RELAY_RETURN_PLAYER_PREPARE16_PENDING_OWN_REPLAY"

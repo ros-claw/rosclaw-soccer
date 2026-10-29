@@ -140,3 +140,34 @@ def test_prepared_pair_requires_child_study(tmp_path):
     assert result.returncode == 2
     assert "prepared pair requires isolated child return-role study" in result.stderr
     assert not (tmp_path / "output").exists()
+
+
+def test_return_candidate_rejects_incomplete_lineage(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.rsi_collect_neural_relay_chain",
+            "--frontier-root",
+            str(tmp_path / "frontier"),
+            "--frontier-head",
+            "unused",
+            "--frontier-hash",
+            "unused",
+            "--expected-head",
+            "unused",
+            "--output",
+            str(tmp_path / "output"),
+            "--return-player-candidate",
+            str(tmp_path / "candidate.pt"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert (
+        "return candidate requires isolated prepared adaptive pair and exact evidence"
+        in result.stderr
+    )
+    assert not (tmp_path / "output").exists()
