@@ -52,21 +52,28 @@ def main():
     p.add_argument("--recovery-protocol", type=Path, required=True)
     p.add_argument("--recovery-protocol-hash", required=True)
     p.add_argument("--passer-recovery-pair", action="store_true")
+    p.add_argument("--public-offset-study", action="store_true")
     p.add_argument("--study-protocol", type=Path)
     p.add_argument("--study-protocol-hash")
     p.add_argument("--baseline-root", type=Path)
     p.add_argument("--baseline-hash")
     a = p.parse_args()
     clean(a.expected_head)
+    if a.public_offset_study and not a.passer_recovery_pair:
+        raise ValueError("public offset is only supported by the registered paired study")
     study_fields = (a.study_protocol, a.study_protocol_hash, a.baseline_root, a.baseline_hash)
     if a.passer_recovery_pair != all(study_fields) or (
         not a.passer_recovery_pair and any(study_fields)
     ):
         raise ValueError("passer recovery requires exact study protocol and baseline")
     if a.passer_recovery_pair:
+        expected_study_hash = (
+            "sha256:c7d2503c9b70928c9d5eaba54f6b53b51f6bf2aec9a313cb987da8b0d8751e6b"
+            if a.public_offset_study
+            else "sha256:0a0ec2f59e9f94461b2a1f728cb4fb5d60f63fe33fcf34c54b42d484cdbd4b88"
+        )
         if (
-            a.study_protocol_hash
-            != "sha256:0a0ec2f59e9f94461b2a1f728cb4fb5d60f63fe33fcf34c54b42d484cdbd4b88"
+            a.study_protocol_hash != expected_study_hash
             or a.baseline_hash
             != "sha256:93bf688c6e35c302c4a61be0e86f690227fe5a1084d04a08e127c8d27571f8bd"
         ):
@@ -199,6 +206,8 @@ def main():
             raise ValueError("exact source code, inputs and 16 original worlds required")
     import numpy as np
 
+    ball_offset = np.array([0.02, 0.0], dtype=np.float64) if a.public_offset_study else None
+
     from rosclaw_soccer.rsi.cftrack_shared_relay_trial import run_shared_cftrack_trial
     from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
     from rosclaw_soccer.rsi.paid_ancestor_router_student import FrozenAncestralRouterActor
@@ -235,7 +244,11 @@ def main():
     typed = []
     for i in indices:
         for side in (-0.35, 0.35):
-            _, w, _, _, _ = setup.prepare(i, side)
+            _, w, _, _, _ = (
+                setup.prepare(i, side)
+                if ball_offset is None
+                else setup.prepare(i, side, ball_planar_offset_world=ball_offset)
+            )
             typed.append(
                 NativePassCourse(
                     i,
@@ -259,6 +272,8 @@ def main():
             passer_recovery_pair=a.passer_recovery_pair,
             study_protocol_hash=a.study_protocol_hash,
             baseline_hash=a.baseline_hash,
+            public_offset_study=a.public_offset_study,
+            ball_planar_offset_world=None if ball_offset is None else ball_offset.tolist(),
             hardware_authorized=False,
             promotion_authorized=False,
         ),
@@ -277,6 +292,7 @@ def main():
                 expected_policy_type=object,
                 receiver_actor=router if arm in ("router", "router_recovery") else None,
                 passer_velocity_recovery=arm == "router_recovery",
+                ball_planar_offset_world=ball_offset,
             )
             folder = a.output / f"trial{index}"
             folder.mkdir()
@@ -332,7 +348,7 @@ def main():
                     k: v for k, v in saved.items() if k != "artifacts"
                 } or set(artifacts) != set(saved["artifacts"]):
                     raise ValueError("source metadata or artifacts differ")
-            if a.passer_recovery_pair and arm == "router":
+            if a.passer_recovery_pair and arm == "router" and not a.public_offset_study:
                 (previous,) = [
                     r
                     for r in baseline_receipt["records"]

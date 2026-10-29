@@ -64,6 +64,7 @@ def run_shared_cftrack_trial(
     receiver_actor: Any | None = None,
     record_witness: bool = False,
     passer_velocity_recovery: bool = False,
+    ball_planar_offset_world: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Use real measured readiness; no body/ball resets after initialization."""
     if (
@@ -76,7 +77,14 @@ def run_shared_cftrack_trial(
         or (receiver_actor is not None and use_cftrack)
     ):
         raise ValueError("explicit predeclared context, side and study arm required")
-    ep, w, forward, home, anchor = setup.prepare(context, lateral_m)
+    from rosclaw_soccer.rsi.pass_transfer_curriculum import initial_ball_offset
+
+    offset = initial_ball_offset(ball_planar_offset_world)
+    ep, w, forward, home, anchor = (
+        setup.prepare(context, lateral_m)
+        if offset is None
+        else setup.prepare(context, lateral_m, ball_planar_offset_world=offset)
+    )
     initial_q, initial_v = w.data.qpos.copy(), w.data.qvel.copy()
     segment = motion_segment(ep.clip, 80)
     passer = SharedNativeNeuralPlayer(

@@ -88,6 +88,48 @@ def test_passer_recovery_must_be_explicit_boolean_before_world_allocation():
         )
 
 
+@pytest.mark.parametrize("offset", [np.array([np.nan, 0.0]), np.array([0.06, 0.0]), [0.02, 0.0]])
+def test_invalid_ball_offset_fails_before_world_allocation(offset):
+    class ForbiddenSetup:
+        def prepare(self, *args, **kwargs):
+            raise AssertionError("invalid offset allocated physics")
+
+    with pytest.raises(ValueError):
+        run_shared_cftrack_trial(
+            ForbiddenSetup(),
+            object(),
+            context=2,
+            lateral_m=0.35,
+            use_cftrack=False,
+            policy_factory=lambda: None,
+            expected_policy_type=object,
+            ball_planar_offset_world=offset,
+        )
+
+
+def test_ball_offset_is_forwarded_only_to_initial_setup():
+    class Prepared(Exception):
+        pass
+
+    class InspectSetup:
+        def prepare(self, context, side, *, ball_planar_offset_world):
+            assert (context, side) == (2, 0.35)
+            np.testing.assert_array_equal(ball_planar_offset_world, [0.02, 0.0])
+            raise Prepared
+
+    with pytest.raises(Prepared):
+        run_shared_cftrack_trial(
+            InspectSetup(),
+            object(),
+            context=2,
+            lateral_m=0.35,
+            use_cftrack=False,
+            policy_factory=lambda: None,
+            expected_policy_type=object,
+            ball_planar_offset_world=np.array([0.02, 0.0]),
+        )
+
+
 def test_historical_baseline_identity_ignores_only_local_index_and_paths():
     from scripts.rsi_run_shared_router_relay import same_baseline_metadata
 
