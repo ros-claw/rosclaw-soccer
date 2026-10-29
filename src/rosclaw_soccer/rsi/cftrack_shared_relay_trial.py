@@ -44,6 +44,7 @@ def run_shared_cftrack_trial(
     policy_factory: Callable[[], Any],
     expected_policy_type: type[Any],
     early_cftrack: bool = False,
+    receiver_actor: Any | None = None,
 ) -> dict[str, Any]:
     """Use real measured readiness; no body/ball resets after initialization."""
     if (
@@ -51,6 +52,7 @@ def run_shared_cftrack_trial(
         or type(early_cftrack) is not bool
         or type(context) is not int
         or lateral_m not in (-0.35, 0.35)
+        or (receiver_actor is not None and use_cftrack)
     ):
         raise ValueError("explicit predeclared context, side and study arm required")
     ep, w, forward, home, anchor = setup.prepare(context, lateral_m)
@@ -71,7 +73,7 @@ def run_shared_cftrack_trial(
     shadow = SharedShadowMotor(
         w,
         "b/",
-        actor,
+        actor if receiver_actor is None else receiver_actor,
         clip=segment,
         torso_index=ep.torso_index,
         build_observation=ep.build_observation,

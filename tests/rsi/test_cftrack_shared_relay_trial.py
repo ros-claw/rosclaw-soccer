@@ -50,3 +50,21 @@ def test_early_incoming_uses_current_world_and_requires_five_boundaries():
     velocity[35] = np.nan
     with pytest.raises(ValueError):
         early_incoming_boundary(world, "b/", np.array([1.0, 0.0]))
+
+
+def test_explicit_receiver_actor_cannot_be_mixed_with_cftrack():
+    class ForbiddenSetup:
+        def prepare(self, *args):
+            raise AssertionError("invalid declaration allocated physics")
+
+    with pytest.raises(ValueError):
+        run_shared_cftrack_trial(
+            ForbiddenSetup(),
+            object(),
+            context=2,
+            lateral_m=0.35,
+            use_cftrack=True,
+            receiver_actor=object(),
+            policy_factory=lambda: None,
+            expected_policy_type=object,
+        )
