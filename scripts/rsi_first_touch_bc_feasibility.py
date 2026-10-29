@@ -59,12 +59,39 @@ def main():
     p.add_argument("--expected-head", required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--kick-phase-only", action="store_true")
+    p.add_argument("--bounded-codec", type=Path)
+    p.add_argument("--bounded-codec-hash")
+    p.add_argument("--source-declaration-hash")
     a = p.parse_args()
     clean(a.expected_head)
     if len(a.source) != 4 or len(a.source_hash) != 4 or a.output.exists():
         raise ValueError("four pinned source shards and unused output required")
     if a.output.resolve().is_relative_to(Path.cwd()) or file_digest(a.protocol) != a.protocol_hash:
         raise ValueError("external output and exact protocol required")
+    if bool(a.bounded_codec) != bool(a.bounded_codec_hash) or bool(a.bounded_codec) != bool(
+        a.source_declaration_hash
+    ):
+        raise ValueError("bounded codec requires source-bound configuration")
+    bounds = None
+    if a.bounded_codec:
+        import yaml
+
+        from rosclaw_soccer.rsi.bounded_kick_decoder import kick_target_bounds
+
+        if not a.kick_phase_only:
+            raise ValueError("bounded kick codec requires kick-phase training")
+        declaration = a.source[0] / "declaration.json"
+        if (
+            file_digest(declaration) != a.source_declaration_hash
+            or file_digest(a.bounded_codec) != a.bounded_codec_hash
+        ):
+            raise ValueError("source declaration and codec hash mismatch")
+        if (
+            json.loads(declaration.read_text())["input_file_hashes"].get(str(a.bounded_codec))
+            != a.bounded_codec_hash
+        ):
+            raise ValueError("codec is not bound to source declaration")
+        bounds = kick_target_bounds(yaml.safe_load(a.bounded_codec.read_text()))
     rows, datasets, pins = [], [], []
     for shard, (root, expected) in enumerate(zip(a.source, a.source_hash, strict=True)):
         receipt = root / "complete.json"
@@ -106,6 +133,10 @@ def main():
             rows.append(row)
             if admitted:
                 x, y = kick_phase_examples(raw) if a.kick_phase_only else causal_examples(raw)
+                if bounds is not None and (
+                    np.any(y < bounds[0] - 1e-6) or np.any(y > bounds[1] + 1e-6)
+                ):
+                    raise ValueError("teacher target violates declared source codec")
                 datasets.append((row, x, y))
     if len({(r["course"], r["arm"]) for r in rows}) != 80:
         raise ValueError("duplicate or missing course/arm")
@@ -127,19 +158,33 @@ def main():
         torch.nn.Linear(128, 29),
     )
     optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
+    if bounds is not None:
+        from rosclaw_soccer.rsi.bounded_kick_decoder import decode_bounded
+
+        lower = torch.tensor(bounds[0], dtype=torch.float32)
+        upper = torch.tensor(bounds[1], dtype=torch.float32)
+
+    def predict(inputs):
+        logits = net(inputs)
+        return decode_bounded(logits, lower, upper) if bounds is not None else logits
+
     tx = torch.tensor((x - mean) / scale, dtype=torch.float32)
     ty = torch.tensor(y, dtype=torch.float32)
     generator = torch.Generator().manual_seed(24029)
     for _ in range(1000):
         ix = torch.randint(len(tx), (256,), generator=generator)
-        loss = torch.nn.functional.mse_loss(net(tx[ix]), ty[ix])
+        loss = torch.nn.functional.mse_loss(predict(tx[ix]), ty[ix])
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
     metrics = []
     with torch.no_grad():
         for row, features, targets in datasets:
-            pred = net(torch.tensor((features - mean) / scale, dtype=torch.float32)).numpy()
+            pred = predict(torch.tensor((features - mean) / scale, dtype=torch.float32)).numpy()
+            if bounds is not None and (
+                np.any(pred < bounds[0] - 1e-6) or np.any(pred > bounds[1] + 1e-6)
+            ):
+                raise ValueError("bounded student escaped its source codec")
             metrics.append(
                 dict(
                     course=row["course"],
@@ -161,6 +206,13 @@ def main():
     if (
         file_digest(a.protocol) != a.protocol_hash
         or any(file_digest(path) != h for path, h in pins)
+        or (
+            a.bounded_codec is not None
+            and (
+                file_digest(a.bounded_codec) != a.bounded_codec_hash
+                or file_digest(a.source[0] / "declaration.json") != a.source_declaration_hash
+            )
+        )
         or any(
             file_digest(root / "complete.json") != h
             for root, h in zip(a.source, a.source_hash, strict=True)
@@ -176,6 +228,15 @@ def main():
             mean=torch.from_numpy(mean),
             scale=torch.from_numpy(scale),
             feature_dim=x.shape[1],
+            **(
+                {
+                    "target_lower": torch.from_numpy(bounds[0]),
+                    "target_upper": torch.from_numpy(bounds[1]),
+                    "codec_hash": a.bounded_codec_hash,
+                }
+                if bounds is not None
+                else {}
+            ),
         ),
         model,
     )
@@ -190,6 +251,7 @@ def main():
             metrics=metrics,
             train_frames=len(x),
             kick_phase_only=a.kick_phase_only,
+            bounded_codec_hash=a.bounded_codec_hash,
             optimizer_steps=1000,
             seed=24029,
             model_hash=file_digest(model),

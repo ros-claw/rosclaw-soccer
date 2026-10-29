@@ -106,6 +106,12 @@ def main():
     )
     net.load_state_dict(checkpoint["state_dict"], strict=True)
     net.eval()
+    has_bounds = "target_lower" in checkpoint or "target_upper" in checkpoint
+    if has_bounds and (
+        not a.phase_policy
+        or not {"target_lower", "target_upper", "codec_hash"}.issubset(checkpoint)
+    ):
+        raise ValueError("complete phase policy codec bounds required")
     mean, scale = checkpoint["mean"].numpy(), checkpoint["scale"].numpy()
     if (
         mean.shape != (dimension,)
@@ -147,6 +153,24 @@ def main():
             "/policy/robonaldo/model/policy-obs-aic.onnx",
         ):
             kick_dependencies.append(asset(suffix))
+        if has_bounds:
+            import yaml
+
+            from rosclaw_soccer.rsi.bounded_kick_decoder import kick_target_bounds
+
+            codec_path, codec_hash = asset("/policy/robonaldo/config/freekick.yaml")
+            expected_bounds = kick_target_bounds(yaml.safe_load(codec_path.read_text()))
+            if (
+                checkpoint["codec_hash"] != codec_hash
+                or trained["bounded_codec_hash"] != codec_hash
+                or not all(
+                    np.array_equal(checkpoint[key].numpy(), expected)
+                    for key, expected in zip(
+                        ("target_lower", "target_upper"), expected_bounds, strict=True
+                    )
+                )
+            ):
+                raise ValueError("student bounds differ from actual source kick codec")
         kick_types = _load_robonaldo(kick_path.parents[2])
     a.output.mkdir(parents=True)
     write_once(
@@ -311,11 +335,16 @@ def main():
                     if a.phase_policy:
                         observation = np.r_[observation, (frame - switch_frame) * 0.02]
                     with torch.no_grad():
-                        target = (
-                            net(torch.tensor((observation - mean) / scale, dtype=torch.float32))
-                            .numpy()
-                            .astype(np.float64)
+                        logits = net(
+                            torch.tensor((observation - mean) / scale, dtype=torch.float32)
                         )
+                        if has_bounds:
+                            from rosclaw_soccer.rsi.bounded_kick_decoder import decode_bounded
+
+                            logits = decode_bounded(
+                                logits, checkpoint["target_lower"], checkpoint["target_upper"]
+                            )
+                        target = logits.numpy().astype(np.float64)
                 if shadow is not None and frame >= 20:
                     target = proposal
                 if target.shape != (29,) or not np.isfinite(target).all():
