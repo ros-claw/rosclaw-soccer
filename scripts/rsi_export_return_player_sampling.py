@@ -1,6 +1,7 @@
 """Export audited own-action return-player samples, preserving all failed cases."""
 
 import argparse
+import json
 from pathlib import Path
 
 import numpy as np
@@ -28,14 +29,25 @@ def main():
     clean(a.expected_head)
     if a.output.exists() or a.output.resolve().is_relative_to(Path.cwd()):
         raise ValueError("unused external output required")
+    declaration = a.source / "declaration.json"
+    protocol = json.loads(declaration.read_text())["protocol"]
+    statuses = {
+        "soccer.neural_relay_return_player_own_sampling.development.v46": (
+            "NEURAL_RELAY_RETURN_PLAYER_OWN_SAMPLING16_PENDING_OWN_REPLAY"
+        ),
+        "soccer.neural_relay_return_player_own_sampling_seeded.development.v47": (
+            "NEURAL_RELAY_RETURN_PLAYER_SEEDED_SAMPLING16_PENDING_OWN_REPLAY"
+        ),
+    }
+    if protocol not in statuses:
+        raise ValueError("exact admitted own sampling protocol required")
     source, _, source_hash = report(
         a.source,
         a.audit,
         a.audit_hash,
-        "NEURAL_RELAY_RETURN_PLAYER_OWN_SAMPLING16_PENDING_OWN_REPLAY",
+        statuses[protocol],
         worlds=16,
     )
-    declaration = a.source / "declaration.json"
     if (
         source_hash != a.source_hash
         or source.get("source_head") != a.producer_head
@@ -52,7 +64,9 @@ def main():
     for row in source["records"]:
         if row["course"]["arm"].get("passer_sampling_seed") is None:
             continue
-        if row["course"]["arm"]["passer_sampling_seed"] != 94111:
+        if row["course"]["arm"]["passer_sampling_seed"] not in (
+            (94111,) if protocol.endswith(".v46") else (94137, 94163)
+        ):
             raise ValueError("declared pilot seed required")
         vp, pp = bind(a.source, row, "passer_velocity"), bind(a.source, row, "physics")
         if vp is None or pp is None:

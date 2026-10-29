@@ -52,6 +52,7 @@ def main():
     p.add_argument("--receiver-child-return-role-pair", action="store_true")
     p.add_argument("--return-player-adaptive-identity", action="store_true")
     p.add_argument("--return-player-own-sampling", action="store_true")
+    p.add_argument("--return-player-sampling-seed", type=int, choices=(94137, 94163))
     p.add_argument("--passer-residual-pair", action="store_true")
     p.add_argument("--passer-strike-teacher-pair", action="store_true")
     p.add_argument("--passer-reference-tempo-pair", action="store_true")
@@ -81,6 +82,8 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.return_player_sampling_seed is not None and not a.return_player_own_sampling:
+        p.error("explicit sampling seed requires own sampling")
     if a.return_player_own_sampling and not a.return_player_adaptive_identity:
         p.error("own sampling requires the adaptive identity pair")
     if a.return_player_adaptive_identity and not a.receiver_child_return_role_pair:
@@ -736,7 +739,11 @@ def main():
                 passer_velocity_recovery=True,
                 passer_adaptive=enabled,
                 **(
-                    {"passer_sampling_seed": 94111 if enabled else None}
+                    {
+                        "passer_sampling_seed": (a.return_player_sampling_seed or 94111)
+                        if enabled
+                        else None
+                    }
                     if a.return_player_own_sampling
                     else {}
                 ),
@@ -788,6 +795,8 @@ def main():
                 if a.passer_successor_pair
                 else "soccer.neural_relay_passer_return_alignment.development.v36"
                 if a.passer_return_align_pair
+                else "soccer.neural_relay_return_player_own_sampling_seeded.development.v47"
+                if a.return_player_sampling_seed is not None
                 else "soccer.neural_relay_return_player_own_sampling.development.v46"
                 if a.return_player_own_sampling
                 else "soccer.neural_relay_return_player_adaptive_identity.development.v45"
@@ -2017,6 +2026,8 @@ def main():
                     if a.passer_successor_pair
                     else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
                     if a.passer_return_align_pair
+                    else "NEURAL_RELAY_RETURN_PLAYER_SEEDED_SAMPLING16_PENDING_OWN_REPLAY"
+                    if a.return_player_sampling_seed is not None
                     else "NEURAL_RELAY_RETURN_PLAYER_OWN_SAMPLING16_PENDING_OWN_REPLAY"
                     if a.return_player_own_sampling
                     else "NEURAL_RELAY_RETURN_PLAYER_ADAPTIVE_IDENTITY16_PENDING_OWN_REPLAY"
