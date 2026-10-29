@@ -7,6 +7,7 @@ import pytest
 from rosclaw_soccer.training.airborne_receiving_courses import (
     airborne_receiving_ball_launch,
     airborne_receiving_course_bank,
+    disjoint_focal_airborne_validation_bank,
     focal_nearest_airborne_course_bank,
 )
 from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
@@ -35,6 +36,18 @@ def test_focal_nearest_bank_is_distinct_and_fixed():
         airborne_receiving_course_bank()
     )
     assert {x.position_local_m[0] for x in bank} == {0.60, 0.65}
+
+
+def test_validation_bank_is_fixed_and_physically_disjoint_from_collection():
+    bank = disjoint_focal_airborne_validation_bank()
+    collection = focal_nearest_airborne_course_bank()
+    assert len(bank) == 8
+    assert [x.seed for x in bank] == list(range(96500, 96508))
+    assert not {x.seed for x in bank} & {x.seed for x in collection}
+    assert not {(x.agent_id, x.position_local_m, x.velocity_local_mps) for x in bank} & {
+        (x.agent_id, x.position_local_m, x.velocity_local_mps) for x in collection
+    }
+    assert preflight_receiving_courses(bank) != preflight_receiving_courses(collection)
 
 
 def test_invalid_and_duplicate_states_rejected_without_clipping():

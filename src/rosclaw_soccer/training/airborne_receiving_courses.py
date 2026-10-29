@@ -80,6 +80,19 @@ def focal_nearest_airborne_course_bank() -> tuple[AirborneReceivingCourse, ...]:
     return tuple(cases)
 
 
+def disjoint_focal_airborne_validation_bank() -> tuple[AirborneReceivingCourse, ...]:
+    """Fixed separate developmental validation launches, not a private holdout."""
+    cases: list[AirborneReceivingCourse] = []
+    for agent in ("red.finisher", "blue.playmaker"):
+        for sign in (-1.0, 1.0):
+            for position, velocity in (
+                ((0.62, sign * 0.18, 0.72), (-0.30, -sign * 0.70, -0.95)),
+                ((0.67, sign * 0.22, 0.68), (-0.40, -sign * 0.90, -1.20)),
+            ):
+                cases.append(AirborneReceivingCourse(agent, 96500 + len(cases), position, velocity))
+    return tuple(cases)
+
+
 def preflight_airborne_receiving_courses(courses: tuple[AirborneReceivingCourse, ...]) -> str:
     if type(courses) is not tuple or not 1 <= len(courses) <= 4096:
         raise ValueError("bounded immutable airborne receiving bank required")
