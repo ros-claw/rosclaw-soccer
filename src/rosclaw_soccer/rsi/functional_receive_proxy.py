@@ -8,6 +8,43 @@ not establish possession, a legal touch, a successful pass, or safety.
 import numpy as np
 
 
+def timed_failure_penalty(reward, *, failure_control, gamma):
+    """Place a measured failure at its control time, discounting an unobserved tail.
+
+    This is temporal credit assignment, not evidence of causation or safety.
+    The full physical failure must still be retained for acceptance evaluation.
+    """
+    values = np.asarray(reward)
+    if (
+        values.ndim != 1
+        or values.size == 0
+        or not np.issubdtype(values.dtype, np.floating)
+        or not np.isfinite(values).all()
+        or isinstance(gamma, bool)
+        or not np.isscalar(gamma)
+        or not np.isfinite(gamma)
+        or not 0 < gamma <= 1
+        or (
+            failure_control is not None
+            and (type(failure_control) is not int or failure_control < 0)
+        )
+    ):
+        raise ValueError("finite reward, valid gamma and nonnegative failure control required")
+    result = values.astype(np.float32, copy=True)
+    if failure_control is None:
+        return result, None
+    index = min(failure_control, len(result) - 1)
+    delay = failure_control - index
+    penalty = -2.0 * float(gamma) ** delay
+    result[index] += np.float32(penalty)
+    return result, {
+        "failure_control": failure_control,
+        "assigned_control": index,
+        "delay": delay,
+        "penalty": penalty,
+    }
+
+
 def functional_receive_proxy(receiver_xy, ball_xy, ball_forces, body_failed, *, eventual_failure):
     """Give one causal window bonus and preserve an observed terminal failure cost."""
     r, b, f, failed = map(np.asarray, (receiver_xy, ball_xy, ball_forces, body_failed))
