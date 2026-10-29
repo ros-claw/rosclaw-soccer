@@ -21,11 +21,14 @@ def load_research_receiver(
     dense_mode: bool = False,
     motion_mode: bool = False,
     continuation_mode: bool = False,
+    functional_mode: bool = False,
 ):
     if (
         type(dense_mode) is not bool
         or type(motion_mode) is not bool
         or type(continuation_mode) is not bool
+        or type(functional_mode) is not bool
+        or (functional_mode and (not dense_mode or motion_mode or continuation_mode))
         or (motion_mode and not dense_mode)
         or (continuation_mode and (not dense_mode or motion_mode))
     ):
@@ -92,7 +95,9 @@ def load_research_receiver(
     if (
         review.get("status")
         != (
-            "MOTION_RECEIVER_CANDIDATE_READBACK_MATCH"
+            "FUNCTIONAL_RECEIVER_CANDIDATE_READBACK_MATCH"
+            if functional_mode
+            else "MOTION_RECEIVER_CANDIDATE_READBACK_MATCH"
             if motion_mode
             else "DENSE_RECEIVER_CANDIDATE_READBACK_MATCH"
             if dense_mode
@@ -127,6 +132,13 @@ def load_research_receiver(
         or state.get("hardware_authorized") is not False
         or state.get("physical_retention_proven") is not False
         or (dense_mode and state.get("dense_audit_hash") != review.get("dense_audit_hash"))
+        or (
+            functional_mode
+            and (
+                state.get("feedback_profile") != "functional-receive-proxy-v1"
+                or review.get("feedback_profile") != "functional-receive-proxy-v1"
+            )
+        )
         or (
             motion_mode
             and (

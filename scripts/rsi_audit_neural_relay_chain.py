@@ -98,8 +98,12 @@ def main():
         "soccer.neural_relay_receiver_motion_pair.development.v18",
         "soccer.neural_relay_receiver_motion_exploration.development.v20",
     )
+    functional_pair = (
+        dec["protocol"] == "soccer.neural_relay_receiver_functional_pair.development.v39"
+    )
     dense_pair = (
-        motion_pair
+        functional_pair
+        or motion_pair
         or continuation_pair
         or learned_exploration
         or dec["protocol"] == "soccer.neural_relay_receiver_dense_pair.development.v17"
@@ -225,6 +229,8 @@ def main():
         if learned_exploration
         else "NEURAL_RELAY_RECEIVER_MOTION_PAIR16_PENDING_OWN_REPLAY"
         if motion_pair
+        else "NEURAL_RELAY_RECEIVER_FUNCTIONAL_PAIR16_PENDING_OWN_REPLAY"
+        if functional_pair
         else "NEURAL_RELAY_RECEIVER_DENSE_PAIR16_PENDING_OWN_REPLAY"
         if dense_pair
         else "NEURAL_RELAY_RECEIVER_LEARNED_PAIR16_PENDING_OWN_REPLAY"
@@ -264,6 +270,7 @@ def main():
             "soccer.neural_relay_receiver_exploration.development.v9",
             "soccer.neural_relay_receiver_learned_pair.development.v10",
             "soccer.neural_relay_receiver_dense_pair.development.v17",
+            "soccer.neural_relay_receiver_functional_pair.development.v39",
             "soccer.neural_relay_receiver_motion_pair.development.v18",
             "soccer.neural_relay_receiver_dense_exploration.development.v19",
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
@@ -836,6 +843,7 @@ def main():
                 dense_mode=dense_pair,
                 motion_mode=motion_pair,
                 continuation_mode=continuation_pair,
+                functional_mode=functional_pair,
             )
             if learned_pair
             else None

@@ -158,6 +158,48 @@ def test_candidate_loader_requires_exact_audit_and_model_identity(tmp_path, monk
     with pytest.raises(ValueError, match="explicit simulation"):
         load_research_receiver(*args, motion_mode=True)
     assert load_research_receiver(*args, dense_mode=True, motion_mode=True) is actor
+    torch.save(
+        dict(
+            actor=state,
+            dataset_hash=file_hash(dataset),
+            dense_audit_hash="dense-audit",
+            feedback_profile="functional-receive-proxy-v1",
+            promotion_authorized=False,
+            hardware_authorized=False,
+            physical_retention_proven=False,
+        ),
+        checkpoint,
+    )
+    audit.write_text(
+        json.dumps(
+            dict(
+                status="FUNCTIONAL_RECEIVER_CANDIDATE_READBACK_MATCH",
+                checkpoint_hash=file_hash(checkpoint),
+                dataset_hash=file_hash(dataset),
+                dense_audit_hash="dense-audit",
+                feedback_profile="functional-receive-proxy-v1",
+                episodes=72,
+                sampled_controls=18903,
+                physical_retention_proven=False,
+                promotion_authorized=False,
+                hardware_authorized=False,
+            )
+        )
+    )
+    args = (
+        setup,
+        checkpoint,
+        file_hash(checkpoint),
+        audit,
+        file_hash(audit),
+        dataset,
+        file_hash(dataset),
+    )
+    with pytest.raises(ValueError, match="explicit simulation"):
+        load_research_receiver(*args, functional_mode=True)
+    with pytest.raises(ValueError, match="exact audited candidate"):
+        load_research_receiver(*args, dense_mode=True)
+    assert load_research_receiver(*args, dense_mode=True, functional_mode=True) is actor
 
 
 def test_continuation_requires_exact_unpromoted_lineage(tmp_path, monkeypatch):
