@@ -937,7 +937,7 @@ def main():
                 if a.passer_successor_pair
                 else "soccer.neural_relay_passer_return_alignment.development.v36"
                 if a.passer_return_align_pair
-                else "soccer.neural_relay_child_velocity_candidate.development.v53"
+                else "soccer.neural_relay_child_velocity_candidate_fixed.development.v54"
                 if a.receiver_velocity_candidate
                 else "soccer.neural_relay_child_velocity_sampling.development.v52"
                 if a.receiver_child_velocity_sampling
@@ -1187,6 +1187,8 @@ def main():
         or a.receiver_child_velocity_sampling
     ):
         counts["receiver_stochastic_calls"] = 0
+    if a.receiver_velocity_candidate:
+        counts["receiver_candidate_calls"] = 0
     records = []
     try:
         import mujoco
@@ -1229,6 +1231,7 @@ def main():
         )
         from rosclaw_soccer.rsi.relay_balance_teacher import RelayBalanceTeacher
         from rosclaw_soccer.rsi.relay_post_touch_follow import post_touch_follow
+        from rosclaw_soccer.rsi.relay_receiver_actor_selection import select_relay_receiver_actor
         from rosclaw_soccer.rsi.relay_receiver_candidate import load_research_receiver
         from rosclaw_soccer.rsi.relay_whole_receiver_identity import zero_receiver_actor
         from rosclaw_soccer.rsi.return_player_sampling_trace import return_player_sampling_trace
@@ -1341,11 +1344,12 @@ def main():
                 SharedNativeReceivingPlayer(
                     w,
                     "b/",
-                    new_b_actor
-                    if course["arm"].get("receiver_child_candidate", False)
-                    else learned_actor
-                    if course["arm"].get("receiver_learned", False)
-                    else whole_actor,
+                    select_relay_receiver_actor(
+                        course["arm"],
+                        whole=whole_actor,
+                        parent=learned_actor,
+                        candidate=new_b_actor,
+                    ),
                     model=setup.velocity_path,
                     config=setup.velocity_config,
                     expected_model_hash=pins[str(setup.velocity_path)],
@@ -1447,16 +1451,21 @@ def main():
             if course["arm"].get("receiver_whole", False):
                 if whole_actor is None:
                     raise ValueError("qualified zero whole receiver required")
+                selected_b_actor = select_relay_receiver_actor(
+                    course["arm"], whole=whole_actor, parent=learned_actor, candidate=new_b_actor
+                )
                 whole_receiver = SharedNativeReceivingPlayer(
                     w,
                     "b/",
-                    learned_actor if course["arm"].get("receiver_learned", False) else whole_actor,
+                    selected_b_actor,
                     model=setup.velocity_path,
                     config=setup.velocity_config,
                     expected_model_hash=pins[str(setup.velocity_path)],
                     expected_config_hash=pins[str(setup.velocity_config)],
                     horizon_controls=300,
                 )
+                if whole_receiver.actor is not selected_b_actor:
+                    raise ValueError("actual B world must retain the selected actor")
                 if course["arm"].get("exploration_seed") is not None:
                     receiver_sampler = ReceiverExplorationStream(
                         np.asarray(setup.velocity_parameters.action_scale, dtype=np.float32),
@@ -1859,6 +1868,12 @@ def main():
                     else:
                         anchor3 = np.array([anchor[0], anchor[1], 0.11], dtype=np.float64)
                         target_b, trace_v = whole_receiver.propose(command, anchor3, frame=step)
+                        if a.receiver_velocity_candidate:
+                            selected = course["arm"].get("receiver_child_candidate", False)
+                            if selected and whole_receiver.actor is not new_b_actor:
+                                raise ValueError("candidate arm must execute candidate actor")
+                            trace_v["candidate_actor_selected"] = np.array(selected)
+                            counts["receiver_candidate_calls"] += int(selected)
                         if receiver_sampler is not None:
                             from rosclaw_soccer.providers.g1.velocity_policy import target29
 
@@ -2237,7 +2252,7 @@ def main():
                     if a.passer_successor_pair
                     else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
                     if a.passer_return_align_pair
-                    else "NEURAL_RELAY_CHILD_VELOCITY_CANDIDATE16_PENDING_OWN_REPLAY"
+                    else "NEURAL_RELAY_CHILD_VELOCITY_CANDIDATE_FIXED16_PENDING_OWN_REPLAY"
                     if a.receiver_velocity_candidate
                     else "NEURAL_RELAY_CHILD_VELOCITY_SAMPLING32_PENDING_OWN_REPLAY"
                     if a.receiver_child_velocity_sampling

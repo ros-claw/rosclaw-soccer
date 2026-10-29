@@ -1,3 +1,4 @@
+import copy
 from dataclasses import replace
 
 import numpy as np
@@ -10,6 +11,7 @@ from test_velocity_prior_actor import tensors
 from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
 from rosclaw_soccer.providers.g1.velocity_policy import target29
 from rosclaw_soccer.rsi.anchored_receiving_motor import AnchoredReceivingMotor
+from rosclaw_soccer.rsi.relay_receiver_actor_selection import select_relay_receiver_actor
 from rosclaw_soccer.rsi.shared_native_receiving_player import SharedNativeReceivingPlayer
 from rosclaw_soccer.rsi.velocity_prior_actor import VelocityPriorActor
 
@@ -70,6 +72,38 @@ def test_zero_identity_preserves_legacy_codec_phase_and_three_own_queries(monkey
         assert p.whole_mlp_neural_calls == 2 * (frame + 1)
         assert p.attempted_neural_calls == 3 * (frame + 1)
     assert w.native_steps == 40
+
+
+def test_selected_candidate_changes_actual_simulated_target(monkeypatch):
+    w, parent_player, _ = fixture(monkeypatch)
+    parent = parent_player.actor
+    candidate = copy.deepcopy(parent)
+    with torch.no_grad():
+        list(candidate.plastic.parameters())[-1].add_(0.02)
+    selected = select_relay_receiver_actor(
+        {"receiver_learned": True, "receiver_child_candidate": True},
+        whole=parent,
+        parent=parent,
+        candidate=candidate,
+    )
+    candidate_player = SharedNativeReceivingPlayer(
+        w,
+        "b/",
+        selected,
+        model=None,
+        config=None,
+        expected_model_hash="mock",
+        expected_config_hash="mock",
+    )
+    cmd, anchor = np.zeros(3, np.float32), np.array([3.0, 0.0, 0.11])
+    parent_target, _ = parent_player.propose(cmd, anchor, frame=0)
+    candidate_target, trace = candidate_player.propose(cmd, anchor, frame=0)
+    assert candidate_player.actor is candidate
+    assert not np.array_equal(parent_target, candidate_target)
+    w.advance({"a/": np.zeros(29), "b/": candidate_target})
+    candidate_player.commit()
+    np.testing.assert_array_equal(candidate_player.last_action, trace["action"])
+    np.testing.assert_array_equal(w.last_applied_target("b/"), candidate_target)
 
 
 def test_only_actual_executed_action_is_feedback_and_does_not_alias_caller(monkeypatch):
