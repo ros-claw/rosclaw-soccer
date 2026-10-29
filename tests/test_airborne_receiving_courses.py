@@ -1,5 +1,6 @@
 from dataclasses import replace
 
+import numpy as np
 import pytest
 
 from rosclaw_soccer.training.airborne_receiving_courses import (
@@ -8,6 +9,7 @@ from rosclaw_soccer.training.airborne_receiving_courses import (
 )
 from rosclaw_soccer.training.receiving_course_preflight import preflight_receiving_courses
 from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse, receiving_ball_launch
+from scripts.rsi_airborne_receiving_baseline import exact_arrays
 
 
 def test_fixed_bank_is_unique_preflighted_and_mirrors_team_frame():
@@ -44,3 +46,13 @@ def test_legacy_ground_ball_contract_is_unchanged():
     )
     with pytest.raises(ValueError):
         preflight_receiving_courses((course, airborne_receiving_course_bank()[0]))
+
+
+def test_exact_replay_fails_on_missing_changed_or_different_dtype():
+    baseline = {"q": np.array([1.0, 2.0]), "tag": np.array(["ball"])}
+    assert exact_arrays(baseline, {k: v.copy() for k, v in baseline.items()})
+    assert not exact_arrays(baseline, {"q": baseline["q"]})
+    assert not exact_arrays(baseline, {"q": np.array([1.0, 2.1]), "tag": baseline["tag"]})
+    assert not exact_arrays(
+        baseline, {"q": baseline["q"].astype(np.float32), "tag": baseline["tag"]}
+    )
