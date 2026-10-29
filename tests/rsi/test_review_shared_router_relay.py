@@ -1,11 +1,14 @@
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from test_receiving_handoff_diagnosis import trajectory
 
 from scripts.rsi_native_context_recovery_common import digest
 from scripts.rsi_review_shared_router_relay import (
     admit,
+    optimistic_handoff_diagnosis,
     verify_own_handoff,
     verify_previous_target_feedback,
 )
@@ -103,3 +106,17 @@ def test_shadow_feedback_comes_from_actual_applied_target():
         verify_previous_target_feedback(
             shadow, returned, targets, handoff=2, offset=offset, scale=scale, order=order
         )
+
+
+def test_optimistic_no_handoff_bound_never_claims_excluded_contact_known():
+    q, v, force, failed = trajectory()
+    physics = dict(qpos=q, qvel=v, ball_forces=force, body_failed=failed)
+    layout = SimpleNamespace(rq=0, rv=0, bq=36, bv=35)
+    bound = optimistic_handoff_diagnosis(physics, layout)
+    assert bound["actual_excluded_contact_unknown"]
+    assert bound["upper_bound_insufficient_for_15_controls"]
+    assert "predicate_reconstruction_exact" not in bound["diagnostic"]
+    force[285, 4, 1, 0] = 2
+    bound = optimistic_handoff_diagnosis(physics, layout)
+    assert not bound["upper_bound_insufficient_for_15_controls"]
+    assert bound["actual_excluded_contact_unknown"]

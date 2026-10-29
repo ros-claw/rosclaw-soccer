@@ -8,6 +8,7 @@ import mujoco
 import numpy as np
 
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
+from rosclaw_soccer.rsi.receiving_handoff_diagnosis import diagnose_no_handoff
 from rosclaw_soccer.rsi.shared_native_scene import shared_native_scene
 from rosclaw_soccer.rsi.shared_target_forecast import compiled_model_hash
 from scripts.rsi_atomic_artifacts import write_once
@@ -78,6 +79,32 @@ def verify_previous_target_feedback(shadow, returned, targets, *, handoff, offse
         first[order] = ((targets[handoff - 1] - offset) / scale).astype(np.float32)
         if not np.array_equal(returned["NN_obs"][0, 125:154], first):
             raise ValueError("handoff observation does not contain its own last actual target")
+
+
+def optimistic_handoff_diagnosis(physics, layout):
+    """Upper bound assuming all >1 N contact groups were eligible body parts."""
+    diagnosis = diagnose_no_handoff(
+        physics["qpos"],
+        physics["qvel"],
+        physics["ball_forces"],
+        physics["body_failed"],
+        receiver_q=layout.rq,
+        receiver_v=layout.rv,
+        ball_q=layout.bq,
+        ball_v=layout.bv,
+        excluded_contact=False,
+    )
+    # Force groups are not anatomical witnesses. Never claim the assumption is fact.
+    diagnosis.pop("excluded_contact_ever")
+    diagnosis.pop("predicate_reconstruction_exact")
+    diagnosis.pop("no_handoff_reconstruction_consistent")
+    return dict(
+        assumption="optimistic_all_observed_contact_groups_are_eligible",
+        actual_excluded_contact_unknown=True,
+        upper_bound_insufficient_for_15_controls=diagnosis["best_consecutive_candidate_controls"]
+        < 15,
+        diagnostic=diagnosis,
+    )
 
 
 def admit(source, replay, source_hash, replay_hash):
@@ -238,6 +265,10 @@ def main():
                             scale=scale,
                             order=order,
                         )
+        no_handoff_bound = None
+        if ba is None and base["controls"] == 300:
+            with np.load(bind_world(a.source, base, "physics"), allow_pickle=False) as physics:
+                no_handoff_bound = optimistic_handoff_diagnosis(physics, layout)
         rows.append(
             dict(
                 context=base["context"],
@@ -254,6 +285,7 @@ def main():
                     a.source, candidate, common, model, layout, proximity_start_control=prefix
                 ),
                 candidate_neural_controls=candidate["controls"] - ba["control"] if ba else 0,
+                no_handoff_optimistic_bound=no_handoff_bound,
             )
         )
     clean(a.expected_head)
