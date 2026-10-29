@@ -54,6 +54,7 @@ def main():
     p.add_argument("--passer-recovery-pair", action="store_true")
     p.add_argument("--public-offset-study", action="store_true")
     p.add_argument("--slow-pass-pair", action="store_true")
+    p.add_argument("--early-router-pair", action="store_true")
     p.add_argument("--study-protocol", type=Path)
     p.add_argument("--study-protocol-hash")
     p.add_argument("--baseline-root", type=Path)
@@ -64,6 +65,10 @@ def main():
         raise ValueError("public offset is only supported by the registered paired study")
     if a.slow_pass_pair and not (a.public_offset_study and a.passer_recovery_pair):
         raise ValueError("slow-pass pair requires the registered public offset and recovery")
+    if a.early_router_pair and (
+        a.slow_pass_pair or not (a.public_offset_study and a.passer_recovery_pair)
+    ):
+        raise ValueError("early router requires its exclusive registered pair")
     study_fields = (a.study_protocol, a.study_protocol_hash, a.baseline_root, a.baseline_hash)
     if a.passer_recovery_pair != all(study_fields) or (
         not a.passer_recovery_pair and any(study_fields)
@@ -71,7 +76,9 @@ def main():
         raise ValueError("passer recovery requires exact study protocol and baseline")
     if a.passer_recovery_pair:
         expected_study_hash = (
-            "sha256:b26f87341d08a318bbed329694a4ed569c1b7275642aaff796ed5751ae190b1e"
+            "sha256:46d3221361ea1ca7a298ab99e458aa29a10478b1234cbd59f7ab4518fa36748f"
+            if a.early_router_pair
+            else "sha256:b26f87341d08a318bbed329694a4ed569c1b7275642aaff796ed5751ae190b1e"
             if a.slow_pass_pair
             else "sha256:c7d2503c9b70928c9d5eaba54f6b53b51f6bf2aec9a313cb987da8b0d8751e6b"
             if a.public_offset_study
@@ -79,7 +86,7 @@ def main():
         )
         expected_baseline_hash = (
             "sha256:350f270c6fc22517eef5f8d601f462a82492e26d75a3de22e9b75d277c94b55b"
-            if a.slow_pass_pair
+            if a.slow_pass_pair or a.early_router_pair
             else "sha256:93bf688c6e35c302c4a61be0e86f690227fe5a1084d04a08e127c8d27571f8bd"
         )
         if (
@@ -249,7 +256,9 @@ def main():
     router = freeze_router(router)
     setup = SharedRelaySetup(pins, contexts, bench=bench, actor=actor, context_indices=indices)
     arms = (
-        ("router_recovery", "router_slow_recovery")
+        ("router_recovery", "router_early_recovery")
+        if a.early_router_pair
+        else ("router_recovery", "router_slow_recovery")
         if a.slow_pass_pair
         else (("router", "router_recovery") if a.passer_recovery_pair else ("dual", "router"))
     )
@@ -287,6 +296,7 @@ def main():
             baseline_hash=a.baseline_hash,
             public_offset_study=a.public_offset_study,
             slow_pass_pair=a.slow_pass_pair,
+            early_router_pair=a.early_router_pair,
             ball_planar_offset_world=None if ball_offset is None else ball_offset.tolist(),
             hardware_authorized=False,
             promotion_authorized=False,
@@ -305,11 +315,14 @@ def main():
                 policy_factory=lambda: None,
                 expected_policy_type=object,
                 receiver_actor=router
-                if arm in ("router", "router_recovery", "router_slow_recovery")
+                if arm
+                in ("router", "router_recovery", "router_slow_recovery", "router_early_recovery")
                 else None,
-                passer_velocity_recovery=arm in ("router_recovery", "router_slow_recovery"),
+                passer_velocity_recovery=arm
+                in ("router_recovery", "router_slow_recovery", "router_early_recovery"),
                 ball_planar_offset_world=ball_offset,
                 passer_reference_rate=0.75 if arm == "router_slow_recovery" else 1.0,
+                early_receiver_router=arm == "router_early_recovery",
             )
             folder = a.output / f"trial{index}"
             folder.mkdir()
@@ -325,7 +338,7 @@ def main():
                 "cftrack",
                 *(
                     ("passer_velocity",)
-                    if arm in ("router_recovery", "router_slow_recovery")
+                    if arm in ("router_recovery", "router_slow_recovery", "router_early_recovery")
                     else ()
                 ),
             ):
@@ -370,7 +383,7 @@ def main():
                 } or set(artifacts) != set(saved["artifacts"]):
                     raise ValueError("source metadata or artifacts differ")
             if (a.passer_recovery_pair and arm == "router" and not a.public_offset_study) or (
-                a.slow_pass_pair and arm == "router_recovery"
+                (a.slow_pass_pair or a.early_router_pair) and arm == "router_recovery"
             ):
                 (previous,) = [
                     r
@@ -400,7 +413,15 @@ def main():
                     for k in ("qpos", "qvel")
                 ):
                     raise ValueError("paired initial states differ")
-                if a.slow_pass_pair:
+                if a.early_router_pair:
+                    times = [
+                        x["control"]
+                        for x in (prior_result["handoff"], result["handoff"])
+                        if x is not None
+                    ]
+                    common = min([prior_result["controls"], result["controls"], *times])
+                    compare_keys = ("physics", "passer_nn", "receiver_velocity")
+                elif a.slow_pass_pair:
                     common, compare_keys = 0, ()
                 elif a.passer_recovery_pair:
                     common = result["passer_recovery_boundary"]

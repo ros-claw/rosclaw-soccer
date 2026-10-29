@@ -14,6 +14,7 @@ from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
 from rosclaw_soccer.rsi.online_receiving_boundary import OnlineReceivingBoundary
 from rosclaw_soccer.rsi.paid_velocity_shadow import policy_action_from_hg_target
 from rosclaw_soccer.rsi.passer_velocity_recovery import PasserVelocityRecovery
+from rosclaw_soccer.rsi.receiving_early_arrival import approaching_contact_window
 from rosclaw_soccer.rsi.receiving_witness import body_contact_witness, readiness_witness
 from rosclaw_soccer.rsi.shared_native_motor_world import NativePDParameters
 from rosclaw_soccer.rsi.shared_native_neural_player import SharedNativeNeuralPlayer
@@ -66,6 +67,7 @@ def run_shared_cftrack_trial(
     passer_velocity_recovery: bool = False,
     ball_planar_offset_world: np.ndarray | None = None,
     passer_reference_rate: float = 1.0,
+    early_receiver_router: bool = False,
 ) -> dict[str, Any]:
     """Use real measured readiness; no body/ball resets after initialization."""
     if (
@@ -73,9 +75,11 @@ def run_shared_cftrack_trial(
         or type(early_cftrack) is not bool
         or type(record_witness) is not bool
         or type(passer_velocity_recovery) is not bool
+        or type(early_receiver_router) is not bool
         or type(context) is not int
         or lateral_m not in (-0.35, 0.35)
         or (receiver_actor is not None and use_cftrack)
+        or (early_receiver_router and (receiver_actor is None or use_cftrack or early_cftrack))
         or type(passer_reference_rate) is not float
         or not np.isfinite(passer_reference_rate)
         or not 0.5 <= passer_reference_rate <= 1.0
@@ -273,11 +277,16 @@ def run_shared_cftrack_trial(
                     if use_cftrack and early_cftrack
                     else stable_ready
                 )
+                if early_receiver_router and not ready and launch:
+                    q, v = w.layouts["b/"].canonical(w.data)
+                    ready = approaching_contact_window(q, v)
             shadow_trace.append(s_trace)
         elif use_cftrack:
             receiver.commit()
         else:
             receiver.commit()
+            if early_receiver_router and not w.failed:
+                readiness.update()
         if a_trace is not None:
             passer_trace.append(a_trace)
         physical.append(
@@ -309,6 +318,8 @@ def run_shared_cftrack_trial(
         receiver_velocity=stack(velocity_trace),
         cftrack=stack(cf_trace),
     )
+    if early_receiver_router:
+        result["strict_readiness_control"] = readiness.first_ready_control
     if record_witness:
         result["witness"] = dict(contacts=contacts, readiness=readiness_records)
     if passer_velocity_recovery:

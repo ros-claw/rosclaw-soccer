@@ -70,6 +70,28 @@ def test_explicit_receiver_actor_cannot_be_mixed_with_cftrack():
         )
 
 
+@pytest.mark.parametrize(
+    "early,receiver,cftrack", [(1, object(), False), (True, None, False), (True, object(), True)]
+)
+def test_early_router_requires_explicit_router_before_world_allocation(early, receiver, cftrack):
+    class ForbiddenSetup:
+        def prepare(self, *args, **kwargs):
+            raise AssertionError("invalid router declaration allocated physics")
+
+    with pytest.raises(ValueError):
+        run_shared_cftrack_trial(
+            ForbiddenSetup(),
+            object(),
+            context=2,
+            lateral_m=0.35,
+            use_cftrack=cftrack,
+            receiver_actor=receiver,
+            early_receiver_router=early,
+            policy_factory=lambda: None,
+            expected_policy_type=object,
+        )
+
+
 def test_passer_recovery_must_be_explicit_boolean_before_world_allocation():
     class ForbiddenSetup:
         def prepare(self, *args):
