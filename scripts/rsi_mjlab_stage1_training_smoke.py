@@ -41,6 +41,7 @@ def main():
     p.add_argument("--protocol", type=Path, required=True)
     p.add_argument("--protocol-hash", required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--measure-normalizer-drift", action="store_true")
     a = p.parse_args()
     clean(a.expected_head)
     root = a.reference_root.resolve()
@@ -87,6 +88,7 @@ def main():
             environments=16,
             steps_per_iteration=24,
             iterations=2,
+            measure_normalizer_drift=a.measure_normalizer_drift,
             hardware_authorized=False,
             promotion_authorized=False,
         ),
@@ -100,6 +102,38 @@ def main():
         runner = MjlabOnPolicyRunner(
             wrapped, asdict(agent), str(a.output / "logs"), device="cuda:0"
         )
+        drift = []
+        if a.measure_normalizer_drift:
+            original_update = runner.alg.update
+
+            def update_with_drift_measurement():
+                storage = runner.alg.storage
+                old_mean, old_std = storage.distribution_params
+                with torch.no_grad():
+                    observations = storage.observations.flatten(0, 1)
+                    mean = runner.alg.actor(observations).reshape_as(old_mean)
+                    std = runner.alg.actor.distribution.std_param.expand_as(mean)
+                    old_dist = torch.distributions.Normal(old_mean, old_std)
+                    new_dist = torch.distributions.Normal(mean, std)
+                    kl = torch.distributions.kl_divergence(old_dist, new_dist).sum(-1)
+                    logp = new_dist.log_prob(storage.actions).sum(-1)
+                    delta = (logp - storage.actions_log_prob.squeeze(-1)).abs()
+                    if not torch.isfinite(kl).all() or not torch.isfinite(delta).all():
+                        raise ValueError("finite within-rollout distribution metrics required")
+                    drift.append(
+                        dict(
+                            samples=kl.numel(),
+                            mean_kl=kl.mean().item(),
+                            p95_kl=torch.quantile(kl.flatten(), 0.95).item(),
+                            max_kl=kl.max().item(),
+                            mean_abs_logp_delta=delta.mean().item(),
+                            p95_abs_logp_delta=torch.quantile(delta.flatten(), 0.95).item(),
+                            max_abs_logp_delta=delta.max().item(),
+                        )
+                    )
+                return original_update()
+
+            runner.alg.update = update_with_drift_measurement
         policy = runner.alg.get_policy()
         before = {name: value.detach().cpu().clone() for name, value in policy.named_parameters()}
         runner.learn(num_learning_iterations=2, init_at_random_ep_len=True)
@@ -129,6 +163,7 @@ def main():
                 declaration_hash=file_digest(a.output / "declaration.json"),
                 checkpoint_hash=file_digest(checkpoint),
                 actor_changed_parameters=changed,
+                within_rollout_normalizer_drift=drift if a.measure_normalizer_drift else None,
                 native_sim_steps=env._sim_step_counter,
                 world_steps=16 * 2 * 24,
                 hardware_authorized=False,
