@@ -30,6 +30,37 @@ def bind_world(root, row, name):
     return path
 
 
+def verify_own_handoff(shadow, returned, *, handoff, controls, width):
+    """Check recorded own recurrent continuity, independent of the producer."""
+    if (
+        type(handoff) is not int
+        or type(controls) is not int
+        or not 0 < handoff < controls
+        or width not in (128, 256)
+    ):
+        raise ValueError("bounded actual handoff and known model width required")
+    length = controls - handoff
+    for prefix in ("h", "c"):
+        before = returned["NN_" + prefix + "_before"]
+        after = returned["NN_" + prefix + "_after"]
+        shadow_after = shadow[prefix + "_after"]
+        if (
+            before.shape != (length, 2, 1, width)
+            or after.shape != before.shape
+            or shadow_after.shape != (handoff, 2, 1, width)
+            or not np.array_equal(before[0], shadow_after[-1])
+            or not np.array_equal(before[1:], after[:-1])
+        ):
+            raise ValueError("same player's shadow and return recurrent history must connect")
+    obs, action = returned["NN_obs"], returned["NN_action"]
+    if (
+        obs.shape != (length, 160)
+        or action.shape != (length, 29)
+        or not np.array_equal(obs[1:, 125:154], action[:-1])
+    ):
+        raise ValueError("actual committed action must enter next return observation")
+
+
 def admit(source, replay, source_hash, replay_hash):
     paths = (source / "complete.json", replay / "complete.json")
     if (
@@ -127,6 +158,23 @@ def main():
         ):
             compare_prefix(x, y, PHYSICAL_FIELDS, prefix)
         common = min(base["controls"], candidate["controls"])
+        if ba is not None:
+            for item, width in ((base, 256), (candidate, 128)):
+                with (
+                    np.load(
+                        bind_world(a.source, item, "receiver_shadow"), allow_pickle=False
+                    ) as shadow,
+                    np.load(
+                        bind_world(a.source, item, "receiver_return_nn"), allow_pickle=False
+                    ) as returned,
+                ):
+                    verify_own_handoff(
+                        shadow,
+                        returned,
+                        handoff=ba["control"],
+                        controls=item["controls"],
+                        width=width,
+                    )
         rows.append(
             dict(
                 context=base["context"],

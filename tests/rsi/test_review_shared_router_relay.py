@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from scripts.rsi_native_context_recovery_common import digest
-from scripts.rsi_review_shared_router_relay import admit
+from scripts.rsi_review_shared_router_relay import admit, verify_own_handoff
 
 
 def study(root, *, replay, source_hash=None):
@@ -59,3 +59,24 @@ def test_replay_must_bind_exact_source_hash(tmp_path):
     replay_hash = study(replay, replay=True, source_hash="wrong")
     with pytest.raises(ValueError, match="16-world"):
         admit(source, replay, source_hash, replay_hash)
+
+
+def test_handoff_recurrent_and_executed_action_continuity():
+    state = np.zeros((3, 2, 1, 128), np.float32)
+    shadow = {"h_after": state[:1].copy(), "c_after": state[:1].copy()}
+    returned = {
+        "NN_h_before": state[:2].copy(),
+        "NN_h_after": state[:2].copy(),
+        "NN_c_before": state[:2].copy(),
+        "NN_c_after": state[:2].copy(),
+        "NN_obs": np.zeros((2, 160), np.float32),
+        "NN_action": np.zeros((2, 29), np.float32),
+    }
+    verify_own_handoff(shadow, returned, handoff=1, controls=3, width=128)
+    returned["NN_obs"][1, 125] = 1
+    with pytest.raises(ValueError, match="committed action"):
+        verify_own_handoff(shadow, returned, handoff=1, controls=3, width=128)
+    returned["NN_obs"][1, 125] = 0
+    returned["NN_h_before"][0, 0, 0, 0] = 1
+    with pytest.raises(ValueError, match="recurrent"):
+        verify_own_handoff(shadow, returned, handoff=1, controls=3, width=128)
