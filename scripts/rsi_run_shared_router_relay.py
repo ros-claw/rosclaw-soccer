@@ -83,6 +83,10 @@ def main():
         pins[str(path.resolve())] = h
     source_pins(pins)
     check_pins(pins)
+    import rosclaw
+
+    if str(Path(rosclaw.__file__).resolve()) not in pins:
+        raise ValueError("loaded ROSClaw core must be in the verified source lineage")
     replay = None
     if a.replay_source is not None:
         rp = a.replay_source / "complete.json"
