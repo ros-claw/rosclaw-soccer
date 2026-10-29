@@ -16,6 +16,7 @@ def main():
     for key in ("student", "protocol", "output"):
         p.add_argument("--" + key, type=Path, required=True)
     p.add_argument("--source", type=Path, action="append", required=True)
+    p.add_argument("--previous-substep-kinematics", action="store_true")
     for key in (
         "student-hash",
         "student-declaration-hash",
@@ -110,10 +111,18 @@ def main():
             proposals, commands, errors = [], [], []
             n = len(raw["joint_targets"])
             for frame in range(n):
-                if frame:
+                if frame and a.previous_substep_kinematics:
+                    data.qpos[:] = raw["qpos"][10 * frame - 2]
+                    data.qvel[:] = raw["qvel"][10 * frame - 2]
+                    mujoco.mj_forward(model, data)
                     data.qpos[:] = raw["qpos"][10 * frame - 1]
                     data.qvel[:] = raw["qvel"][10 * frame - 1]
-                mujoco.mj_forward(model, data)
+                elif frame:
+                    data.qpos[:] = raw["qpos"][10 * frame - 1]
+                    data.qvel[:] = raw["qvel"][10 * frame - 1]
+                    mujoco.mj_forward(model, data)
+                else:
+                    mujoco.mj_forward(model, data)
                 q, v = lo.canonical(data)
                 command = approach_command(
                     q=q,
@@ -186,6 +195,7 @@ def main():
                 source_head=a.expected_head,
                 student_hash=a.student_hash,
                 protocol_hash=a.protocol_hash,
+                previous_substep_kinematics=a.previous_substep_kinematics,
                 rows=rows,
                 promotion_authorized=False,
                 hardware_authorized=False,
