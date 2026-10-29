@@ -42,7 +42,10 @@ def main():
     p.add_argument("--protocol-hash", required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--measure-normalizer-drift", action="store_true")
+    p.add_argument("--defer-normalizer", action="store_true")
     a = p.parse_args()
+    if a.defer_normalizer and not a.measure_normalizer_drift:
+        raise ValueError("deferred normalizer experiment requires drift measurement")
     clean(a.expected_head)
     root = a.reference_root.resolve()
     if (
@@ -89,6 +92,7 @@ def main():
             steps_per_iteration=24,
             iterations=2,
             measure_normalizer_drift=a.measure_normalizer_drift,
+            defer_normalizer=a.defer_normalizer,
             hardware_authorized=False,
             promotion_authorized=False,
         ),
@@ -102,6 +106,10 @@ def main():
         runner = MjlabOnPolicyRunner(
             wrapped, asdict(agent), str(a.output / "logs"), device="cuda:0"
         )
+        if a.defer_normalizer:
+            from scripts.rsi_deferred_normalizer import install_deferred_normalizers
+
+            deferred_normalizers = install_deferred_normalizers(runner.alg)
         drift = []
         if a.measure_normalizer_drift:
             original_update = runner.alg.update
@@ -124,14 +132,20 @@ def main():
                         dict(
                             samples=kl.numel(),
                             mean_kl=kl.mean().item(),
+                            p50_kl=torch.quantile(kl.flatten(), 0.5).item(),
                             p95_kl=torch.quantile(kl.flatten(), 0.95).item(),
                             max_kl=kl.max().item(),
                             mean_abs_logp_delta=delta.mean().item(),
+                            p50_abs_logp_delta=torch.quantile(delta.flatten(), 0.5).item(),
                             p95_abs_logp_delta=torch.quantile(delta.flatten(), 0.95).item(),
                             max_abs_logp_delta=delta.max().item(),
                         )
                     )
-                return original_update()
+                result = original_update()
+                if a.defer_normalizer:
+                    for normalizer in deferred_normalizers:
+                        normalizer.flush()
+                return result
 
             runner.alg.update = update_with_drift_measurement
         policy = runner.alg.get_policy()
