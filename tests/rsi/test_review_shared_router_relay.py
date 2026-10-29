@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 
 from scripts.rsi_native_context_recovery_common import digest
-from scripts.rsi_review_shared_router_relay import admit, verify_own_handoff
+from scripts.rsi_review_shared_router_relay import (
+    admit,
+    verify_own_handoff,
+    verify_previous_target_feedback,
+)
 
 
 def study(root, *, replay, source_hash=None):
@@ -80,3 +84,22 @@ def test_handoff_recurrent_and_executed_action_continuity():
     returned["NN_h_before"][0, 0, 0, 0] = 1
     with pytest.raises(ValueError, match="recurrent"):
         verify_own_handoff(shadow, returned, handoff=1, controls=3, width=128)
+
+
+def test_shadow_feedback_comes_from_actual_applied_target():
+    offset = np.zeros(29, np.float32)
+    scale = np.full(29, 0.5, np.float32)
+    order = np.arange(29)[::-1]
+    targets = np.ones((2, 29), np.float64) * 0.1
+    shadow = {"obs": np.zeros((2, 160), np.float32)}
+    shadow["obs"][1, 125:154] = 0.2
+    returned = {"NN_obs": np.zeros((1, 160), np.float32)}
+    returned["NN_obs"][0, 125:154] = 0.2
+    verify_previous_target_feedback(
+        shadow, returned, targets, handoff=2, offset=offset, scale=scale, order=order
+    )
+    shadow["obs"][1, 125] = 0
+    with pytest.raises(ValueError, match="shadow observation"):
+        verify_previous_target_feedback(
+            shadow, returned, targets, handoff=2, offset=offset, scale=scale, order=order
+        )

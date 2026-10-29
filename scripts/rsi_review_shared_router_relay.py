@@ -61,6 +61,25 @@ def verify_own_handoff(shadow, returned, *, handoff, controls, width):
         raise ValueError("actual committed action must enter next return observation")
 
 
+def verify_previous_target_feedback(shadow, returned, targets, *, handoff, offset, scale, order):
+    """Independently decode each actual executed HG target into policy action units."""
+    obs = shadow["obs"]
+    if obs.ndim != 2 or obs.shape[1] != 160 or len(obs) != handoff or targets.shape[0] < handoff:
+        raise ValueError("complete aligned shadow and applied targets required")
+    if any(x.shape != (29,) for x in (offset, scale, order)) or (scale <= 0).any():
+        raise ValueError("qualified original target codec required")
+    actual = np.empty((handoff, 29), dtype=np.float32)
+    actual[0] = 0
+    actual[1:, order] = ((targets[: handoff - 1] - offset) / scale).astype(np.float32)
+    if not np.array_equal(obs[:, 125:154], actual):
+        raise ValueError("shadow observation does not contain its own last actual target")
+    if returned is not None:
+        first = np.empty(29, dtype=np.float32)
+        first[order] = ((targets[handoff - 1] - offset) / scale).astype(np.float32)
+        if not np.array_equal(returned["NN_obs"][0, 125:154], first):
+            raise ValueError("handoff observation does not contain its own last actual target")
+
+
 def admit(source, replay, source_hash, replay_hash):
     paths = (source / "complete.json", replay / "complete.json")
     if (
@@ -136,6 +155,20 @@ def main():
     model = mujoco.MjModel.from_xml_string(
         shared_native_scene(scenes[0].read_text(), prefixes=("a/", "b/"))
     )
+    import onnx
+
+    from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
+    from rosclaw_soccer.rsi.paid_teacher_policy import strict_parameters
+
+    policies = [
+        Path(x) for x in pins if x.endswith("/paid-reference-source-20261021/ckp/policy_30000.onnx")
+    ]
+    if len(policies) != 1 or digest(policies[0]) != pins[str(policies[0])]:
+        raise ValueError("exact source-bound policy target codec required")
+    metadata = onnx.load(policies[0], load_external_data=False).metadata_props
+    names, params = strict_parameters({x.key: x.value for x in metadata})
+    order = np.array([names.index(name) for name in G1_DDS_JOINT_NAMES])
+    offset, scale = params["default_joint_pos"][order], params["action_scale"][order]
     layout = NativeVelocityLayout(
         model, robot_prefix="b/", ball_body_name="soccer_ball", player_count=2
     )
@@ -175,6 +208,36 @@ def main():
                         controls=item["controls"],
                         width=width,
                     )
+        for item in (base, candidate):
+            handoff = item["handoff"]["control"] if item["handoff"] else item["controls"]
+            with (
+                np.load(
+                    bind_world(a.source, item, "receiver_shadow"), allow_pickle=False
+                ) as shadow,
+                np.load(bind_world(a.source, item, "physics"), allow_pickle=False) as physics,
+            ):
+                return_path = bind_world(a.source, item, "receiver_return_nn")
+                if return_path is None:
+                    verify_previous_target_feedback(
+                        shadow,
+                        None,
+                        physics["target_b"],
+                        handoff=handoff,
+                        offset=offset,
+                        scale=scale,
+                        order=order,
+                    )
+                else:
+                    with np.load(return_path, allow_pickle=False) as returned:
+                        verify_previous_target_feedback(
+                            shadow,
+                            returned,
+                            physics["target_b"],
+                            handoff=handoff,
+                            offset=offset,
+                            scale=scale,
+                            order=order,
+                        )
         rows.append(
             dict(
                 context=base["context"],
