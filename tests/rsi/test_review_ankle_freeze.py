@@ -36,3 +36,22 @@ def test_teacher_review_checks_actual_frozen_ankles(monkeypatch, tmp_path):
     )
     with pytest.raises(ValueError, match="ankle"):
         review.teacher_metrics(tmp_path, {}, frozen=True)
+
+
+def test_review_rejects_target_that_was_not_executed(monkeypatch, tmp_path):
+    physics = tmp_path / "physics.npz"
+    trace = tmp_path / "trace.npz"
+    np.savez(physics, target_b=np.ones((1, 29)))
+    np.savez(
+        trace,
+        control=np.arange(1),
+        FOOT_applied_delta=np.zeros((1, 29)),
+        FOOT_target=np.zeros((1, 29)),
+        FOOT_delta_jump_rad=np.zeros(1),
+        FOOT_active=np.zeros(1, bool),
+    )
+    monkeypatch.setattr(
+        review, "bind", lambda root, row, key: physics if key == "physics" else trace
+    )
+    with pytest.raises(ValueError, match="executed teacher targets"):
+        review.teacher_metrics(tmp_path, {}, frozen=True)
