@@ -30,6 +30,7 @@ def main():
     p.add_argument("--passer-return-pair", action="store_true")
     p.add_argument("--passer-return-align-pair", action="store_true")
     p.add_argument("--passer-successor-pair", action="store_true")
+    p.add_argument("--passer-successor-blend-pair", action="store_true")
     p.add_argument("--receiver-longitudinal-authority", action="store_true")
     p.add_argument("--receiver-foot-teacher-pair", action="store_true")
     p.add_argument("--receiver-predictive-foot-shin", action="store_true")
@@ -132,6 +133,8 @@ def main():
         )
     ):
         p.error("passer strike teacher requires one isolated development block")
+    if a.passer_successor_blend_pair and not a.passer_successor_pair:
+        p.error("successor blend requires the passer successor protocol")
     if a.passer_successor_pair and not a.passer_return_align_pair:
         p.error("passer successor requires the return alignment protocol")
     if a.passer_return_align_pair and not a.passer_return_pair:
@@ -615,7 +618,12 @@ def main():
                     if a.passer_return_align_pair
                     else {}
                 ),
-                **({"passer_successor": enabled} if a.passer_successor_pair else {}),
+                **(
+                    {"passer_successor": True if a.passer_successor_blend_pair else enabled}
+                    if a.passer_successor_pair
+                    else {}
+                ),
+                **({"passer_successor_blend": enabled} if a.passer_successor_blend_pair else {}),
             )
             for enabled in (False, True)
         ]
@@ -711,7 +719,9 @@ def main():
         a.output / "declaration.json",
         dict(
             protocol=(
-                "soccer.neural_relay_passer_successor.development.v37"
+                "soccer.neural_relay_passer_successor_blend.development.v38"
+                if a.passer_successor_blend_pair
+                else "soccer.neural_relay_passer_successor.development.v37"
                 if a.passer_successor_pair
                 else "soccer.neural_relay_passer_return_alignment.development.v36"
                 if a.passer_return_align_pair
@@ -868,7 +878,9 @@ def main():
             passer_return_role_is_unlearned=a.passer_return_pair,
             passer_return_alignment_is_unlearned=a.passer_return_align_pair,
             passer_successor_selection_is_unlearned=a.passer_successor_pair,
-            passer_successor_direct_profile_switch=a.passer_successor_pair,
+            passer_successor_direct_profile_switch=a.passer_successor_pair
+            and not a.passer_successor_blend_pair,
+            passer_successor_blend_controls=20 if a.passer_successor_blend_pair else 0,
             precontact_fullbody_is_unlearned_teacher=a.precontact_fullbody_pair,
             precontact_smooth_controls=10 if a.precontact_smooth else 0,
             receiver_sampling_profile="contact-v1"
@@ -1192,6 +1204,7 @@ def main():
             successor_ready_count = 0
             successor_handoff = None
             successor_previous_target = None
+            successor_old_pd = successor_new_pd = None
             passer_exit_gate = PasserContactExitGate()
             passer_strike_teacher = None
             folder = a.output / f"trial{index}"
@@ -1220,8 +1233,13 @@ def main():
                 ):
                     assert successor_shadow is not None
                     successor_previous_target = w.last_applied_target("a/").copy()
+                    successor_old_pd = w.parameters["a/"].owned_copy()
+                    successor_new_pd = NativePDParameters(ep.kp, ep.kd, ep.effort)
                     profile_s = w.switch_pd_profile(
-                        "a/", NativePDParameters(ep.kp, ep.kd, ep.effort)
+                        "a/",
+                        successor_old_pd
+                        if course["arm"].get("passer_successor_blend", False)
+                        else successor_new_pd,
                     )
                     goal_s = receiving_target_for_player(w, "b/")
                     successor_boundary = folder / "passer_successor_boundary.npz"
@@ -1337,7 +1355,16 @@ def main():
                     else:
                         passer.begin_standing()
                 recovery_trace = None
-                if passer_recovery is not None and successor_motor is None:
+                successor_blend_index = (
+                    step - successor_handoff["control"] if successor_handoff is not None else -1
+                )
+                successor_blend_active = (
+                    course["arm"].get("passer_successor_blend", False)
+                    and 0 <= successor_blend_index < 20
+                )
+                if passer_recovery is not None and (
+                    successor_motor is None or successor_blend_active
+                ):
                     q_a, v_a = w.layouts["a/"].canonical(w.data)
                     recovery_command = (
                         return_receive_command(
@@ -1376,17 +1403,14 @@ def main():
                 )
                 blend_active = 0 <= blend_index < 20
                 if successor_motor is not None:
+                    if (
+                        course["arm"].get("passer_successor_blend", False)
+                        and successor_blend_index == 20
+                    ):
+                        w.switch_pd_profile("a/", successor_new_pd)
                     if successor_motor.phase == "MOTION_COMPLETE":
                         successor_motor.begin_standing()
                     target_a, trace_a = successor_motor.propose()
-                    if (
-                        successor_handoff is not None
-                        and "first_target_jump_rad" not in successor_handoff
-                    ):
-                        assert successor_previous_target is not None
-                        successor_handoff["first_target_jump_rad"] = float(
-                            np.max(np.abs(target_a - successor_previous_target))
-                        )
                 elif passer_recovery is not None and passer_recovery.active and not blend_active:
                     if (a.passer_velocity_blend or a.passer_return_pair) and blend_index == 20:
                         w.switch_pd_profile("a/", passer_new_pd)
@@ -1394,6 +1418,30 @@ def main():
                 else:
                     target_a, trace_a = passer.propose(with_reference_evidence=teacher_arm)
                 executed_a = None
+                if successor_blend_active:
+                    weight = quintic_weight(successor_blend_index, start=0, duration=20)
+                    target_a, profile = blend_live_targets(
+                        recovery_target, target_a, successor_old_pd, successor_new_pd, weight=weight
+                    )
+                    w.switch_pd_profile("a/", profile)
+                    executed_a = policy_action_from_hg_target(
+                        target_a,
+                        successor_motor.offset,
+                        successor_motor.scale,
+                        successor_motor.order,
+                    )
+                    target_a = (
+                        successor_motor.offset
+                        + executed_a[successor_motor.order] * successor_motor.scale
+                    )
+                if (
+                    successor_handoff is not None
+                    and "first_target_jump_rad" not in successor_handoff
+                ):
+                    assert successor_previous_target is not None
+                    successor_handoff["first_target_jump_rad"] = float(
+                        np.max(np.abs(target_a - successor_previous_target))
+                    )
                 if blend_active:
                     weight = quintic_weight(blend_index, start=0, duration=20)
                     target_a, profile = blend_live_targets(
@@ -1409,6 +1457,8 @@ def main():
                     counts["passer_blend_actor_inferences"] += 1
                 if recovery_trace is not None and (a.passer_velocity_blend or a.passer_return_pair):
                     recovery_trace["blend_index"] = np.array(blend_index)
+                    if a.passer_successor_blend_pair:
+                        recovery_trace["successor_blend_index"] = np.array(successor_blend_index)
                 if teacher_arm:
                     active = (
                         passer_exit_gate.active if a.passer_contact_exit else not passer_foot_seen
@@ -1604,13 +1654,26 @@ def main():
                 if trace_a is not None:
                     if blend_active:
                         passer.commit_sim_transition(executed_action=executed_a, target=target_a)
+                    elif successor_blend_active:
+                        if successor_motor.phase == "MOTION":
+                            successor_motor.commit_motion_sim_transition(
+                                executed_action=executed_a, target=target_a
+                            )
+                        else:
+                            successor_motor.commit_sim_transition(
+                                executed_action=executed_a, target=target_a
+                            )
                     else:
                         (successor_motor if successor_motor is not None else passer).commit(
                             executed_action=executed_a if teacher_arm and active else None
                         )
-                if passer_recovery is not None and successor_motor is None:
+                if passer_recovery is not None and (
+                    successor_motor is None or successor_blend_active
+                ):
                     recovery_row = passer_recovery.commit(
-                        transition_target=np.asarray(target_a, np.float64) if blend_active else None
+                        transition_target=np.asarray(target_a, np.float64)
+                        if blend_active or successor_blend_active
+                        else None
                     )
                     assert recovery_trace is not None
                     recovery_trace.update({k: np.asarray(v) for k, v in recovery_row.items()})
@@ -1821,7 +1884,9 @@ def main():
             a.output / "complete.json",
             dict(
                 status=(
-                    "NEURAL_RELAY_PASSER_SUCCESSOR16_PENDING_OWN_REPLAY"
+                    "NEURAL_RELAY_PASSER_SUCCESSOR_BLEND16_PENDING_OWN_REPLAY"
+                    if a.passer_successor_blend_pair
+                    else "NEURAL_RELAY_PASSER_SUCCESSOR16_PENDING_OWN_REPLAY"
                     if a.passer_successor_pair
                     else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
                     if a.passer_return_align_pair

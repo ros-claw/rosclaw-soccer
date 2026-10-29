@@ -282,6 +282,18 @@ class SharedNativeNeuralPlayer:
             raise ValueError("standing SIM transition and explicit executed target required")
         self._commit(executed_action=executed_action, transition_target=target)
 
+    def commit_motion_sim_transition(
+        self, *, executed_action: np.ndarray, target: np.ndarray
+    ) -> None:
+        """Commit an exact SIM transition target while advancing a motion reference.
+
+        This exposes no hardware authority and does not certify a safe blend.
+        The own physical target must match exactly, as in the standing variant.
+        """
+        if self.phase != "MOTION" or not isinstance(target, np.ndarray):
+            raise ValueError("motion SIM transition and explicit executed target required")
+        self._commit(executed_action=executed_action, transition_target=target)
+
     def _commit(
         self, *, executed_action: np.ndarray | None, transition_target: np.ndarray | None
     ) -> None:

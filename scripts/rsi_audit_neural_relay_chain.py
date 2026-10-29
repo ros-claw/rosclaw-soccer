@@ -31,7 +31,13 @@ def main():
     ):
         raise ValueError("unused own replay and exact completed source required")
     s, dec = [json.loads(x.read_text()) for x in (rp, dp)]
-    successor_pair = dec["protocol"] == "soccer.neural_relay_passer_successor.development.v37"
+    successor_blend_pair = (
+        dec["protocol"] == "soccer.neural_relay_passer_successor_blend.development.v38"
+    )
+    successor_pair = (
+        successor_blend_pair
+        or dec["protocol"] == "soccer.neural_relay_passer_successor.development.v37"
+    )
     return_align_pair = successor_pair or (
         dec["protocol"] == "soccer.neural_relay_passer_return_alignment.development.v36"
     )
@@ -169,7 +175,9 @@ def main():
             raise ValueError("team-entry study must isolate reference0")
         expected_worlds = 128
     expected_status = (
-        "NEURAL_RELAY_PASSER_SUCCESSOR16_PENDING_OWN_REPLAY"
+        "NEURAL_RELAY_PASSER_SUCCESSOR_BLEND16_PENDING_OWN_REPLAY"
+        if successor_blend_pair
+        else "NEURAL_RELAY_PASSER_SUCCESSOR16_PENDING_OWN_REPLAY"
         if successor_pair
         else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
         if return_align_pair
@@ -272,6 +280,7 @@ def main():
             "soccer.neural_relay_passer_return_pair.development.v35",
             "soccer.neural_relay_passer_return_alignment.development.v36",
             "soccer.neural_relay_passer_successor.development.v37",
+            "soccer.neural_relay_passer_successor_blend.development.v38",
             "soccer.neural_relay_passer_velocity_recovery.development.v30",
             "soccer.neural_relay_passer_velocity_blend.development.v31",
             "soccer.neural_relay_receiver_leg_target_projection.development.v26",
@@ -314,7 +323,12 @@ def main():
                         if return_align_pair
                         else {}
                     ),
-                    **({"passer_successor": enabled} if successor_pair else {}),
+                    **(
+                        {"passer_successor": True if successor_blend_pair else enabled}
+                        if successor_pair
+                        else {}
+                    ),
+                    **({"passer_successor_blend": enabled} if successor_blend_pair else {}),
                 )
                 for enabled in (False, True)
             ]
@@ -543,9 +557,11 @@ def main():
             raise ValueError("explicit unlearned return alignment required")
         if successor_pair and (
             dec.get("passer_successor_selection_is_unlearned") is not True
-            or dec.get("passer_successor_direct_profile_switch") is not True
+            or dec.get("passer_successor_direct_profile_switch") is not (not successor_blend_pair)
         ):
             raise ValueError("explicit unlearned direct-switch successor required")
+        if successor_blend_pair and dec.get("passer_successor_blend_controls") != 20:
+            raise ValueError("explicit 20-control successor blend required")
         if (
             longitudinal_authority
             and dec.get("longitudinal_intercept_is_unlearned_teacher") is not True
@@ -968,6 +984,7 @@ def main():
             successor_motor = None
             successor_ready_count = 0
             successor_previous_target = None
+            successor_old_pd = successor_new_pd = None
             passer_exit_gate = PasserContactExitGate()
             handoff_control = None
             transition_start_action = None
@@ -987,8 +1004,13 @@ def main():
                 ):
                     assert successor_shadow is not None
                     successor_previous_target = w.last_applied_target("a/").copy()
+                    successor_old_pd = w.parameters["a/"].owned_copy()
+                    successor_new_pd = NativePDParameters(ep.kp, ep.kd, ep.effort)
                     boundary_s = w.switch_pd_profile(
-                        "a/", NativePDParameters(ep.kp, ep.kd, ep.effort)
+                        "a/",
+                        successor_old_pd
+                        if course["arm"].get("passer_successor_blend", False)
+                        else successor_new_pd,
                     )
                     h_s = claim.get("passer_successor_handoff")
                     goal_s = receiving_target_for_player(w, "b/")
@@ -1099,7 +1121,18 @@ def main():
                     else:
                         passer.begin_standing()
                 recovery_trace = None
-                if passer_recovery is not None and successor_motor is None:
+                successor_blend_index = (
+                    step - claim["passer_successor_handoff"]["control"]
+                    if successor_motor is not None
+                    else -1
+                )
+                successor_blend_active = (
+                    course["arm"].get("passer_successor_blend", False)
+                    and 0 <= successor_blend_index < 20
+                )
+                if passer_recovery is not None and (
+                    successor_motor is None or successor_blend_active
+                ):
                     q_a, v_a = w.layouts["a/"].canonical(w.data)
                     recovery_command = (
                         return_receive_command(
@@ -1137,16 +1170,14 @@ def main():
                 )
                 blend_active = 0 <= blend_index < 20
                 if successor_motor is not None:
+                    if (
+                        course["arm"].get("passer_successor_blend", False)
+                        and successor_blend_index == 20
+                    ):
+                        w.switch_pd_profile("a/", successor_new_pd)
                     if successor_motor.phase == "MOTION_COMPLETE":
                         successor_motor.begin_standing()
                     target_a, trace = successor_motor.propose()
-                    if step == claim["passer_successor_handoff"]["control"]:
-                        assert successor_previous_target is not None
-                        if (
-                            float(np.max(np.abs(target_a - successor_previous_target)))
-                            != claim["passer_successor_handoff"]["first_target_jump_rad"]
-                        ):
-                            raise ValueError("own successor first target jump differs")
                 elif passer_recovery is not None and passer_recovery.active and not blend_active:
                     if passer_velocity_blend and blend_index == 20:
                         w.switch_pd_profile("a/", passer_new_pd)
@@ -1154,6 +1185,32 @@ def main():
                 else:
                     target_a, trace = passer.propose(with_reference_evidence=teacher_arm)
                 executed_a = None
+                if successor_blend_active:
+                    weight = quintic_weight(successor_blend_index, start=0, duration=20)
+                    target_a, profile = blend_live_targets(
+                        recovery_target, target_a, successor_old_pd, successor_new_pd, weight=weight
+                    )
+                    w.switch_pd_profile("a/", profile)
+                    executed_a = policy_action_from_hg_target(
+                        target_a,
+                        successor_motor.offset,
+                        successor_motor.scale,
+                        successor_motor.order,
+                    )
+                    target_a = (
+                        successor_motor.offset
+                        + executed_a[successor_motor.order] * successor_motor.scale
+                    )
+                if (
+                    successor_motor is not None
+                    and step == claim["passer_successor_handoff"]["control"]
+                ):
+                    assert successor_previous_target is not None
+                    if (
+                        float(np.max(np.abs(target_a - successor_previous_target)))
+                        != claim["passer_successor_handoff"]["first_target_jump_rad"]
+                    ):
+                        raise ValueError("own successor first target jump differs")
                 if blend_active:
                     weight = quintic_weight(blend_index, start=0, duration=20)
                     target_a, profile = blend_live_targets(
@@ -1167,6 +1224,8 @@ def main():
                     counts["passer_blend_actor_inferences"] += 1
                 if recovery_trace is not None and passer_velocity_blend:
                     recovery_trace["blend_index"] = np.array(blend_index)
+                    if successor_blend_pair:
+                        recovery_trace["successor_blend_index"] = np.array(successor_blend_index)
                 if teacher_arm:
                     active = passer_exit_gate.active if contact_exit else not passer_foot_seen
                     executed_a = blended_passer_action(
@@ -1361,13 +1420,26 @@ def main():
                 if trace is not None:
                     if blend_active:
                         passer.commit_sim_transition(executed_action=executed_a, target=target_a)
+                    elif successor_blend_active:
+                        if successor_motor.phase == "MOTION":
+                            successor_motor.commit_motion_sim_transition(
+                                executed_action=executed_a, target=target_a
+                            )
+                        else:
+                            successor_motor.commit_sim_transition(
+                                executed_action=executed_a, target=target_a
+                            )
                     else:
                         (successor_motor if successor_motor is not None else passer).commit(
                             executed_action=executed_a if teacher_arm and active else None
                         )
-                if passer_recovery is not None and successor_motor is None:
+                if passer_recovery is not None and (
+                    successor_motor is None or successor_blend_active
+                ):
                     recovery_row = passer_recovery.commit(
-                        transition_target=np.asarray(target_a, np.float64) if blend_active else None
+                        transition_target=np.asarray(target_a, np.float64)
+                        if blend_active or successor_blend_active
+                        else None
                     )
                     assert recovery_trace is not None
                     recovery_trace.update({k: np.asarray(v) for k, v in recovery_row.items()})
@@ -1490,7 +1562,11 @@ def main():
                     != (
                         w.control_steps
                         if successor_motor is None
-                        else claim["passer_successor_handoff"]["control"]
+                        else min(
+                            w.control_steps,
+                            claim["passer_successor_handoff"]["control"]
+                            + (20 if course["arm"].get("passer_successor_blend", False) else 0),
+                        )
                     )
                 )
                 or (passer_recovery is None and pvi != 0)

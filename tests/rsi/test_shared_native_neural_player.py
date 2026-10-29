@@ -186,6 +186,22 @@ def test_standing_requires_actual_reference_boundary():
         ps["a/"].begin_standing()
 
 
+def test_motion_transition_commits_only_exact_physically_executed_target():
+    w, ps = players()
+    a, b = ps["a/"], ps["b/"]
+    a.propose()
+    target_b, _ = b.propose()
+    executed = np.zeros(29, dtype=np.float32)
+    target_a = a.offset + executed[a.order] * a.scale
+    w.advance({"a/": target_a, "b/": target_b})
+    with pytest.raises(ValueError, match="ACTUAL executed target"):
+        a.commit_motion_sim_transition(executed_action=executed, target=target_a + 0.1)
+    a.commit_motion_sim_transition(executed_action=executed, target=target_a)
+    b.commit()
+    assert a.phase == "MOTION_COMPLETE" and a.decisions == 1
+    np.testing.assert_array_equal(a.last_action, executed)
+
+
 def test_default_commit_rejects_unexecuted_nominal_without_mutating_history():
     w, ps = players()
     targets = {prefix: p.propose()[0] for prefix, p in ps.items()}
