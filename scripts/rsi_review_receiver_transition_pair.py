@@ -10,6 +10,7 @@ import onnx
 from rosclaw_soccer.providers.g1.joint_contract import G1_DDS_JOINT_NAMES
 from rosclaw_soccer.rsi.native_velocity_transfer import NativeVelocityLayout
 from rosclaw_soccer.rsi.paid_teacher_policy import strict_parameters
+from rosclaw_soccer.rsi.receiver_command_tracking import receiver_command_tracking
 from rosclaw_soccer.rsi.transition_feasibility import transition_feasibility
 from scripts.rsi_atomic_artifacts import write_once
 from scripts.rsi_diagnose_pass_contact_timing import digest
@@ -88,6 +89,25 @@ def transition_target_metrics(root, row, codec=None):
                 lower_bound_is_not_a_safety_certificate=True,
             )
         return metrics
+
+
+def receiver_tracking(root, row, layout):
+    """Bind causal command samples to post-control physical body velocities."""
+    with (
+        np.load(bind(root, row, "receiver_velocity"), allow_pickle=False) as velocity,
+        np.load(bind(root, row, "physics"), allow_pickle=False) as physics,
+    ):
+        n = len(velocity["control"])
+        if not np.array_equal(velocity["control"], np.arange(n)) or len(physics["qpos"]) < n:
+            raise ValueError("complete own command and physical control prefix required")
+        q = physics["qpos"][:n, -1]
+        v = physics["qvel"][:n, -1]
+        return receiver_command_tracking(
+            velocity["command"],
+            q[:, layout.rq + 3 : layout.rq + 7],
+            v[:, layout.rv : layout.rv + 3],
+            velocity["contact_flags_before"],
+        )
 
 
 def main():
@@ -181,6 +201,8 @@ def main():
                 smooth_body_margins=observed_body_margins(a.source, new, common, la, lb),
                 direct_team=team_followup(a.source, old, common, model, la),
                 smooth_team=team_followup(a.source, new, common, model, la),
+                # Both paths have identical measured history before handoff.
+                receiver_pre_handoff_tracking=receiver_tracking(a.source, old, lb),
                 # The direct arm does not record reference_nominal. Do not
                 # invent it from the paired arm after trajectories diverge.
                 direct_target=transition_target_metrics(a.source, old),

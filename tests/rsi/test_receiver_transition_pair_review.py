@@ -38,6 +38,29 @@ def test_feasibility_uses_recorded_reference_and_actual_previous_target(monkeypa
         review.transition_target_metrics(tmp_path, {"handoff": {"control": 3}}, codec)
 
 
+def test_tracking_binds_sequential_commands_to_own_physics(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    physics = tmp_path / "physics.npz"
+    neural = tmp_path / "neural.npz"
+    qpos = np.zeros((2, 10, 7))
+    qpos[:, :, 3] = 1
+    qvel = np.zeros((2, 10, 6))
+    qvel[:, -1, 0] = 0.5
+    np.savez(physics, qpos=qpos, qvel=qvel)
+    np.savez(
+        neural,
+        control=np.arange(2),
+        command=np.tile([0.5, 0, 0], (2, 1)),
+        contact_flags_before=np.zeros((2, 2), bool),
+    )
+    monkeypatch.setattr(
+        review, "bind", lambda root, row, key: physics if key == "physics" else neural
+    )
+    result = review.receiver_tracking(tmp_path, {}, SimpleNamespace(rq=0, rv=0))
+    assert result["precontact_velocity_error_mean_mps"] == pytest.approx(0)
+
+
 def test_no_handoff_cannot_hide_a_different_physical_history():
     base = {
         "handoff": None,
