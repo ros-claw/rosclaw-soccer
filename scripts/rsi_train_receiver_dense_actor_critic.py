@@ -33,7 +33,10 @@ def main() -> None:
         p.add_argument("--" + name, required=True)
     p.add_argument("--seed", type=int, choices=(92401, 92402, 92403), required=True)
     p.add_argument("--receiver-motion-only", action="store_true")
+    p.add_argument("--functional-proxy", action="store_true")
     a = p.parse_args()
+    if a.functional_proxy and a.receiver_motion_only:
+        p.error("functional proxy and motion-only feedback are distinct protocols")
     clean(a.expected_head)
     paths = (
         (a.dataset / "complete.json", a.dataset_hash),
@@ -105,7 +108,7 @@ def main() -> None:
             torch.from_numpy(f["inputs"].copy()),
             torch.from_numpy(f["reference"].copy()),
         )
-    episodes, frozen = [], []
+    episodes, frozen, proxy_windows = [], [], []
     for original, shaped in zip(data["records"], dense["records"], strict=True):
         op, sp = a.dataset / original["path"], a.dense / shaped["path"]
         if (
@@ -126,7 +129,27 @@ def main() -> None:
                 or not np.array_equal(e["rewards"], d["strict_terminal_rewards"])
             ):
                 raise ValueError("actual actions and strict rewards must remain aligned")
-            reward = e["rewards"].astype(np.float32) + np.float32(0.2) * d["dense_rewards"]
+            if a.functional_proxy:
+                from rosclaw_soccer.rsi.functional_receive_proxy import functional_receive_proxy
+
+                reward, window = functional_receive_proxy(
+                    d["receiver_xy"],
+                    d["ball_xy"],
+                    d["ball_forces"],
+                    d["body_failed"],
+                    eventual_failure=original["actual"]["body_failure"],
+                )
+                proxy_windows.append(
+                    dict(
+                        context=original["context"],
+                        side=original["side"],
+                        seed=original["seed"],
+                        first_window_control=window,
+                        eventual_failure=original["actual"]["body_failure"],
+                    )
+                )
+            else:
+                reward = e["rewards"].astype(np.float32) + np.float32(0.2) * d["dense_rewards"]
             ret = np.empty(n, np.float32)
             running = 0.0
             for i in range(n - 1, -1, -1):
@@ -213,7 +236,9 @@ def main() -> None:
             dataset_hash=a.dataset_hash,
             dense_hash=a.dense_hash,
             dense_audit_hash=a.dense_audit_hash,
-            feedback_profile="receiver-motion-kinematic-v2"
+            feedback_profile="functional-receive-proxy-v1"
+            if a.functional_proxy
+            else "receiver-motion-kinematic-v2"
             if a.receiver_motion_only
             else "combined-distance-v1",
             physical_retention_proven=False,
@@ -226,13 +251,17 @@ def main() -> None:
         a.output / "complete.json",
         dict(
             status=(
-                "MOTION_RECEIVER_OFFLINE_CANDIDATE"
+                "FUNCTIONAL_RECEIVER_OFFLINE_CANDIDATE"
+                if a.functional_proxy
+                else "MOTION_RECEIVER_OFFLINE_CANDIDATE"
                 if a.receiver_motion_only
                 else "DENSE_RECEIVER_OFFLINE_CANDIDATE"
             )
             if result["accepted"]
             else (
-                "MOTION_RECEIVER_OFFLINE_REJECTED"
+                "FUNCTIONAL_RECEIVER_OFFLINE_REJECTED"
+                if a.functional_proxy
+                else "MOTION_RECEIVER_OFFLINE_REJECTED"
                 if a.receiver_motion_only
                 else "DENSE_RECEIVER_OFFLINE_REJECTED"
             ),
@@ -240,7 +269,9 @@ def main() -> None:
             dataset_hash=a.dataset_hash,
             dense_hash=a.dense_hash,
             dense_audit_hash=a.dense_audit_hash,
-            feedback_profile="receiver-motion-kinematic-v2"
+            feedback_profile="functional-receive-proxy-v1"
+            if a.functional_proxy
+            else "receiver-motion-kinematic-v2"
             if a.receiver_motion_only
             else "combined-distance-v1",
             checkpoint_hash=digest(checkpoint),
@@ -250,7 +281,9 @@ def main() -> None:
             strict_positive_conditions=0,
             critic_updates=3,
             critic_losses=losses,
-            dense_weight=0.2,
+            dense_weight=0.0 if a.functional_proxy else 0.2,
+            proxy_window_rows=proxy_windows if a.functional_proxy else None,
+            proxy_is_not_possession=a.functional_proxy,
             gamma=0.99,
             **result,
             actual_new_physics=False,

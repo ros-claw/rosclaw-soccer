@@ -33,7 +33,10 @@ def main() -> None:
         p.add_argument("--" + name, required=True)
     p.add_argument("--seed", type=int, choices=(92401, 92402, 92403), required=True)
     p.add_argument("--receiver-motion-only", action="store_true")
+    p.add_argument("--functional-proxy", action="store_true")
     a = p.parse_args()
+    if a.functional_proxy and a.receiver_motion_only:
+        p.error("functional proxy and motion-only feedback are distinct protocols")
     clean(a.expected_head)
     dp, ap, tp = (x / "complete.json" for x in (a.dataset, a.admission, a.training))
     pins = (
@@ -53,7 +56,9 @@ def main() -> None:
     if (
         training.get("status")
         != (
-            "MOTION_RECEIVER_OFFLINE_CANDIDATE"
+            "FUNCTIONAL_RECEIVER_OFFLINE_CANDIDATE"
+            if a.functional_proxy
+            else "MOTION_RECEIVER_OFFLINE_CANDIDATE"
             if a.receiver_motion_only
             else "DENSE_RECEIVER_OFFLINE_CANDIDATE"
         )
@@ -64,6 +69,13 @@ def main() -> None:
         or training.get("actor_updates") != 1
         or training.get("critic_updates") != 3
         or training.get("strict_positive_conditions") != 0
+        or (
+            a.functional_proxy
+            and (
+                training.get("feedback_profile") != "functional-receive-proxy-v1"
+                or training.get("proxy_is_not_possession") is not True
+            )
+        )
         or audit.get("status")
         != (
             "RECEIVER_MOTION_FEEDBACK_INDEPENDENTLY_RECOMPUTED_NOT_TRAINED"
@@ -110,6 +122,7 @@ def main() -> None:
         or state.get("dense_hash") != training["dense_hash"]
         or state.get("dense_audit_hash") != a.dense_audit_hash
         or state.get("seed") != a.seed
+        or (a.functional_proxy and state.get("feedback_profile") != "functional-receive-proxy-v1")
         or (
             a.receiver_motion_only
             and state.get("feedback_profile") != "receiver-motion-kinematic-v2"
@@ -199,10 +212,14 @@ def main() -> None:
     write_once(
         a.output / "complete.json",
         dict(
-            status="MOTION_RECEIVER_CANDIDATE_READBACK_MATCH"
+            status="FUNCTIONAL_RECEIVER_CANDIDATE_READBACK_MATCH"
+            if a.functional_proxy
+            else "MOTION_RECEIVER_CANDIDATE_READBACK_MATCH"
             if a.receiver_motion_only
             else "DENSE_RECEIVER_CANDIDATE_READBACK_MATCH",
-            feedback_profile="receiver-motion-kinematic-v2"
+            feedback_profile="functional-receive-proxy-v1"
+            if a.functional_proxy
+            else "receiver-motion-kinematic-v2"
             if a.receiver_motion_only
             else "combined-distance-v1",
             source_head=a.expected_head,
