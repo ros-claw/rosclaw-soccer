@@ -11,6 +11,7 @@ import numpy as np
 import torch
 
 from rosclaw_soccer.rsi.dual_recurrent_motor import DualRecurrentMotor
+from rosclaw_soccer.rsi.paid_ancestor_router_student import FrozenAncestralRouterActor
 from rosclaw_soccer.rsi.paid_velocity_shadow import policy_action_from_hg_target
 from rosclaw_soccer.rsi.shared_native_neural_player import (
     PlayerObservationView,
@@ -23,7 +24,7 @@ class SharedShadowMotor:
         self,
         world: Any,
         prefix: str,
-        actor: DualRecurrentMotor,
+        actor: DualRecurrentMotor | FrozenAncestralRouterActor,
         *,
         clip: Any,
         torso_index: int,
@@ -34,12 +35,15 @@ class SharedShadowMotor:
         order: np.ndarray,
     ) -> None:
         if (
-            type(actor) is not DualRecurrentMotor
+            type(actor) not in (DualRecurrentMotor, FrozenAncestralRouterActor)
             or actor.training
             or world.failed
             or any(p.requires_grad or p.device.type != "cpu" for p in actor.parameters())
         ):
             raise ValueError("frozen CPU Dual motor and healthy actual world required")
+        router = type(actor) is FrozenAncestralRouterActor
+        if router and world.control_steps:
+            raise ValueError("router shadow must begin at its own actual initial world boundary")
         self.world, self.prefix, self.actor, self.clip = world, prefix, actor, clip
         self.view = PlayerObservationView(world, prefix)
         self.torso_index, self.build_observation = torso_index, build_observation
@@ -55,12 +59,18 @@ class SharedShadowMotor:
             or sorted(self.order.tolist()) != list(range(29))
         ):
             raise ValueError("exact existing R2 observation/action ABI required")
+        if router and not np.array_equal(
+            actor.action_scale.detach().numpy(),
+            self.scale[np.argsort(self.order)].astype(np.float32),
+        ):
+            raise ValueError("router policy-order action scale must match actual HG29 codec")
         self.reference = (
             np.asarray(clip.joint_pos[0], np.float32).copy(),
             np.zeros(29, np.float32),
             np.zeros(3, np.float32),
         )
-        h, c = actor.initial_state()
+        h, c = (torch.zeros(2, 1, 128), torch.zeros(2, 1, 128)) if router else actor.initial_state()
+        self.hidden_width = 128 if router else 256
         self.state: tuple[torch.Tensor, torch.Tensor] = (h.detach().clone(), c.detach().clone())
         self.previous_action = np.zeros(29, np.float32)
         if world.control_steps:
@@ -99,7 +109,9 @@ class SharedShadowMotor:
         if (
             mean.shape != (1, 1, 29)
             or not torch.isfinite(mean).all()
-            or any(t.shape != (2, 1, 256) or not torch.isfinite(t).all() for t in after)
+            or any(
+                t.shape != (2, 1, self.hidden_width) or not torch.isfinite(t).all() for t in after
+            )
         ):
             raise ValueError("finite shadow mean and own256 history required")
         trace = dict(
@@ -136,6 +148,7 @@ class SharedShadowMotor:
             or not self.observations
             or self.boundary != self.world.control_steps
             or type(carry_memory) is not bool
+            or (type(self.actor) is FrozenAncestralRouterActor and not carry_memory)
         ):
             raise ValueError("own current committed healthy shadow history required")
         return SharedNativeNeuralPlayer(
