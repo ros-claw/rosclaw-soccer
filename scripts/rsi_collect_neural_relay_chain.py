@@ -50,6 +50,7 @@ def main():
     p.add_argument("--receiver-continuation-pair", action="store_true")
     p.add_argument("--receiver-precontact-continuation-pair", action="store_true")
     p.add_argument("--receiver-child-return-role-pair", action="store_true")
+    p.add_argument("--return-player-adaptive-identity", action="store_true")
     p.add_argument("--passer-residual-pair", action="store_true")
     p.add_argument("--passer-strike-teacher-pair", action="store_true")
     p.add_argument("--passer-reference-tempo-pair", action="store_true")
@@ -79,6 +80,8 @@ def main():
     for key in ("prior-relay-hash", "prior-audit-hash"):
         p.add_argument("--" + key)
     a = p.parse_args()
+    if a.return_player_adaptive_identity and not a.receiver_child_return_role_pair:
+        p.error("adaptive return-player identity requires the child return-role pair")
     if a.receiver_child_return_role_pair and (
         not a.receiver_precontact_continuation_pair
         or a.receiver_learned_exploration
@@ -719,6 +722,19 @@ def main():
             )
             for enabled in (False, True)
         ]
+    if a.return_player_adaptive_identity:
+        arms = [
+            dict(
+                start=80,
+                memory="own_shadow_carry",
+                reference_bridge_controls=0,
+                receiver_whole=True,
+                receiver_learned=True,
+                passer_velocity_recovery=True,
+                passer_adaptive=enabled,
+            )
+            for enabled in (False, True)
+        ]
     if a.receiver_exploration:
         arms = [
             dict(
@@ -764,6 +780,8 @@ def main():
                 if a.passer_successor_pair
                 else "soccer.neural_relay_passer_return_alignment.development.v36"
                 if a.passer_return_align_pair
+                else "soccer.neural_relay_return_player_adaptive_identity.development.v45"
+                if a.return_player_adaptive_identity
                 else "soccer.neural_relay_receiver_child_return_role.development.v44"
                 if a.receiver_child_return_role_pair
                 else "soccer.neural_relay_passer_return_pair.development.v35"
@@ -958,6 +976,8 @@ def main():
         counts["passer_velocity_inferences"] = 0
     if a.passer_velocity_blend or return_role_study:
         counts["passer_blend_actor_inferences"] = 0
+    if a.return_player_adaptive_identity:
+        counts["passer_adaptive_calls"] = 0
     if a.passer_successor_pair:
         counts["passer_successor_shadow_inferences"] = 0
     if a.receiver_whole_identity or a.receiver_exploration or a.receiver_learned_pair:
@@ -970,6 +990,7 @@ def main():
         import numpy as np
 
         from rosclaw_soccer.providers.g1.continuous_velocity_stream import ContinuousVelocityStream
+        from rosclaw_soccer.rsi.adaptive_passer_velocity import AdaptivePasserVelocityRecovery
         from rosclaw_soccer.rsi.dual_onpolicy_checkpoint import load_dual_candidate_for_sim_audit
         from rosclaw_soccer.rsi.live_neural_transition import blend_live_targets, quintic_weight
         from rosclaw_soccer.rsi.measured_receiving_intent import receiving_intent
@@ -989,6 +1010,7 @@ def main():
         )
         from rosclaw_soccer.rsi.passer_velocity_recovery import PasserVelocityRecovery
         from rosclaw_soccer.rsi.precontact_fullbody_gate import precontact_fullbody_gate
+        from rosclaw_soccer.rsi.precontact_receiving_motor import PrecontactReceivingMotor
         from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
         from rosclaw_soccer.rsi.receiver_target_limit_projection import (
             projected_action_memory,
@@ -1173,7 +1195,18 @@ def main():
                     expected_config_hash=pins[str(setup.velocity_config)],
                     horizon_controls=600,
                 )
-                passer_recovery = PasserVelocityRecovery(w, "a/", stream)
+                if course["arm"].get("passer_adaptive", False):
+                    zero_actor = zero_receiver_actor(setup)
+                    adapted_actor = (
+                        PrecontactReceivingMotor(zero_actor.plastic, zero_actor.action_scale)
+                        .eval()
+                        .requires_grad_(False)
+                    )
+                    passer_recovery = AdaptivePasserVelocityRecovery(
+                        w, "a/", "b/", stream, adapted_actor
+                    )
+                else:
+                    passer_recovery = PasserVelocityRecovery(w, "a/", stream)
             whole_receiver = None
             receiver_sampler = None
             if course["arm"].get("receiver_whole", False):
@@ -1732,6 +1765,21 @@ def main():
                     )
                     assert recovery_trace is not None
                     recovery_trace.update({k: np.asarray(v) for k, v in recovery_row.items()})
+                    if a.return_player_adaptive_identity:
+                        adapted = getattr(passer_recovery, "last_adaptive_trace", None)
+                        recovery_trace.update(
+                            adaptive_active=np.array(adapted is not None),
+                            adaptive_gate=np.array(
+                                adapted["precontact_gate"] if adapted is not None else 0.0
+                            ),
+                            adaptive_delta=np.asarray(
+                                adapted["realized_delta_radians"]
+                                if adapted is not None
+                                else np.zeros(29),
+                                dtype=np.float64,
+                            ),
+                        )
+                        counts["passer_adaptive_calls"] += int(adapted is not None)
                     nn_passer_velocity.append(recovery_trace)
                 if successor_shadow_trace is not None:
                     assert successor_shadow is not None
@@ -1945,6 +1993,8 @@ def main():
                     if a.passer_successor_pair
                     else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
                     if a.passer_return_align_pair
+                    else "NEURAL_RELAY_RETURN_PLAYER_ADAPTIVE_IDENTITY16_PENDING_OWN_REPLAY"
+                    if a.return_player_adaptive_identity
                     else "NEURAL_RELAY_CHILD_RETURN_ROLE16_PENDING_OWN_REPLAY"
                     if a.receiver_child_return_role_pair
                     else "NEURAL_RELAY_PASSER_RETURN_PAIR16_PENDING_OWN_REPLAY"

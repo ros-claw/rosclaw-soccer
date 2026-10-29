@@ -27,6 +27,7 @@ class AdaptivePasserVelocityRecovery(PasserVelocityRecovery):
         self.foot_contact_seen = self.other_body_contact_seen = False
         self.pending_adaptive = None
         self.last_adaptive_trace = None
+        self.adaptive_calls = 0
         self.faulted = False
 
     def activate(self, *, motion_complete, passer_foot_seen):
@@ -39,6 +40,7 @@ class AdaptivePasserVelocityRecovery(PasserVelocityRecovery):
         if self.faulted:
             raise ValueError("adaptive SIM player fault latched")
         try:
+            self.last_adaptive_trace = None
             original = super().observe(command_body)
             self.pending_adaptive = None
             if not self.active or self.world.control_steps - self.activation_control < 20:
@@ -57,6 +59,7 @@ class AdaptivePasserVelocityRecovery(PasserVelocityRecovery):
                 other_body_contact_seen=self.other_body_contact_seen,
             )
             self.pending_adaptive = proposal
+            self.adaptive_calls += 1
             self.pending = np.asarray(proposal["target"], dtype=np.float64).copy()
             return self.pending.copy()
         except Exception:
