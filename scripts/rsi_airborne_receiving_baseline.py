@@ -29,7 +29,7 @@ def posttouch_research_components(arm, *, agent_id, foundation_hash, foundation_
     """Fixed, explicitly SIM-only counterfactual; no outcome-based selection."""
     if arm == "disabled":
         return None, None
-    if arm not in ("zero", "lateral"):
+    if arm not in ("zero", "lateral", "substep_audit"):
         raise ValueError("explicit fixed post-touch research arm required")
     from rosclaw_soccer.rsi.team_receive_contact_evidence import (
         ReceiveContactEvidence,
@@ -43,10 +43,15 @@ def posttouch_research_components(arm, *, agent_id, foundation_hash, foundation_
         foundation_hash,
         foundation_config_hash,
         weights=(0.0,) * 5,
-        post_weights=(0.0,) * 5 if arm == "zero" else (0.0, 0.5, 0.0, 0.5, -0.25),
+        post_weights=(0.0,) * 5 if arm != "lateral" else (0.0, 0.5, 0.0, 0.5, -0.25),
         mailbox=mailbox,
     )
-    return actor, ReceiveContactEvidence(mailbox)
+    evidence = ReceiveContactEvidence(mailbox)
+    if arm == "substep_audit":
+        from rosclaw_soccer.rsi.receive_contact_substep_audit import ReceiveContactSubstepAudit
+
+        return actor, ReceiveContactSubstepAudit(evidence)
+    return actor, evidence
 
 
 def main():
@@ -63,7 +68,9 @@ def main():
     p.add_argument("--focal-exploration-seed-base", type=int)
     p.add_argument("--capture-residual-target-authority", action="store_true")
     p.add_argument(
-        "--posttouch-research-arm", choices=("disabled", "zero", "lateral"), default="disabled"
+        "--posttouch-research-arm",
+        choices=("disabled", "zero", "lateral", "substep_audit"),
+        default="disabled",
     )
     a = p.parse_args()
     if a.dissipation_validation and (
@@ -363,6 +370,14 @@ def main():
                                 peak_delta_mps=navigation.peak_delta_mps,
                                 first_foot_time_sec=navigation.mailbox.snapshot.first_own_foot_time_sec,
                             )
+                        ),
+                        contact_substep_audit=(
+                            {
+                                "contract_hash": contact_evidence.contract_hash,
+                                "samples": contact_evidence.samples,
+                            }
+                            if a.posttouch_research_arm == "substep_audit"
+                            else None
                         ),
                         artifact=artifact,
                     )
