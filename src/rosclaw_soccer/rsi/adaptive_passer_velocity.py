@@ -2,8 +2,10 @@
 
 import numpy as np
 
+from rosclaw_soccer.providers.g1.velocity_policy import target29
 from rosclaw_soccer.rsi.passer_velocity_recovery import PasserVelocityRecovery
 from rosclaw_soccer.rsi.precontact_receiving_motor import PrecontactReceivingMotor
+from rosclaw_soccer.rsi.receiver_exploration_stream import ReceiverExplorationStream
 from rosclaw_soccer.rsi.return_player_adaptive_proposal import return_player_adaptive_proposal
 
 
@@ -12,7 +14,7 @@ class AdaptivePasserVelocityRecovery(PasserVelocityRecovery):
 
     simulation_only = True
 
-    def __init__(self, world, prefix, teammate_prefix, stream, actor):
+    def __init__(self, world, prefix, teammate_prefix, stream, actor, *, sampling_seed=None):
         if (
             teammate_prefix == prefix
             or teammate_prefix not in world.layouts
@@ -23,6 +25,14 @@ class AdaptivePasserVelocityRecovery(PasserVelocityRecovery):
             raise ValueError("distinct simulated teammate and frozen explicit actor required")
         super().__init__(world, prefix, stream)
         self.teammate_prefix, self.actor = teammate_prefix, actor
+        self.sampler = (
+            None
+            if sampling_seed is None
+            else ReceiverExplorationStream(
+                np.asarray(stream.params.action_scale, dtype=np.float32), seed=sampling_seed
+            )
+        )
+        self.sampled_controls = 0
         self.activation_control = None
         self.foot_contact_seen = self.other_body_contact_seen = False
         self.pending_adaptive = None
@@ -58,6 +68,17 @@ class AdaptivePasserVelocityRecovery(PasserVelocityRecovery):
                 foot_contact_seen=self.foot_contact_seen,
                 other_body_contact_seen=self.other_body_contact_seen,
             )
+            if self.sampler is not None and self.sampled_controls < 300:
+                mean = proposal["action"].copy()
+                action, sampling_trace = self.sampler.propose(
+                    mean, proposal["reference_action"], control=self.sampled_controls
+                )
+                proposal.update(
+                    sampling_mean=mean,
+                    sampling_trace=sampling_trace,
+                    action=action,
+                    target=np.asarray(target29(action, self.stream.params)).copy(),
+                )
             self.pending_adaptive = proposal
             self.adaptive_calls += 1
             self.pending = np.asarray(proposal["target"], dtype=np.float64).copy()
@@ -74,6 +95,9 @@ class AdaptivePasserVelocityRecovery(PasserVelocityRecovery):
                 raise ValueError("adaptive action cannot be relabeled as a blend")
             result = super().commit(transition_target=transition_target)
             if self.pending_adaptive is not None:
+                if "sampling_trace" in self.pending_adaptive:
+                    self.sampler.commit(self.pending_adaptive["action"])
+                    self.sampled_controls += 1
                 self.stream.last_action = self.pending_adaptive["action"].copy()
                 result["action_memory_after"] = self.stream.last_action.copy()
                 self.last_adaptive_trace = self.pending_adaptive

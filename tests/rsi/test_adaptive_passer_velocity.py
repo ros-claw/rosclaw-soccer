@@ -53,3 +53,37 @@ def test_cannot_use_same_teammate_or_trainable_actor():
     w = world()
     with pytest.raises(ValueError):
         AdaptivePasserVelocityRecovery(w, "a/", "a/", object(), object())
+
+
+def test_sampled_player_commits_own_actual_actions_after_blend(monkeypatch):
+    policy = fake_policy()
+    policy.params = replace(policy.params, stiffness=(20.0,) * 29, damping=(1.0,) * 29)
+    monkeypatch.setattr(
+        "rosclaw_soccer.providers.g1.continuous_velocity_stream.G1VelocityPolicy",
+        lambda *a, **k: policy,
+    )
+    stream = ContinuousVelocityStream(
+        None, None, expected_model_hash="mock", expected_config_hash="mock", horizon_controls=400
+    )
+    actor = (
+        PrecontactReceivingMotor(
+            VelocityPriorActor(tensors(), reference_features=14),
+            torch.as_tensor(stream.params.action_scale, dtype=torch.float32),
+        )
+        .eval()
+        .requires_grad_(False)
+    )
+    w = world()
+    player = AdaptivePasserVelocityRecovery(w, "a/", "b/", stream, actor, sampling_seed=73)
+    player.activate(motion_complete=True, passer_foot_seen=True)
+    for frame in range(23):
+        mujoco.mj_forward(w.model, w.data)
+        target = player.observe(np.zeros(3, np.float32))
+        w.advance({"a/": target, "b/": np.zeros(29)})
+        player.commit(transition_target=target if frame < 20 else None)
+        assert player.sampled_controls == max(0, frame - 19)
+        if frame >= 20:
+            trace = player.last_adaptive_trace
+            assert np.isfinite(trace["sampling_trace"]["logp"])
+            np.testing.assert_array_equal(stream.last_action, trace["action"])
+            np.testing.assert_array_equal(w._last_targets["a/"], trace["target"])
