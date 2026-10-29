@@ -38,6 +38,9 @@ def main():
         "soccer.neural_relay_return_player_own_sampling_seeded.development.v47": (
             "NEURAL_RELAY_RETURN_PLAYER_SEEDED_SAMPLING16_PENDING_OWN_REPLAY"
         ),
+        "soccer.neural_relay_prepared_return_sampling.development.v49": (
+            "NEURAL_RELAY_PREPARED_RETURN_SAMPLING16_PENDING_OWN_REPLAY"
+        ),
     }
     if protocol not in statuses:
         raise ValueError("exact admitted own sampling protocol required")
@@ -65,7 +68,11 @@ def main():
         if row["course"]["arm"].get("passer_sampling_seed") is None:
             continue
         if row["course"]["arm"]["passer_sampling_seed"] not in (
-            (94111,) if protocol.endswith(".v46") else (94137, 94163)
+            (94111,)
+            if protocol.endswith(".v46")
+            else (94111, 94137, 94163)
+            if protocol.endswith(".v49")
+            else (94137, 94163)
         ):
             raise ValueError("declared pilot seed required")
         vp, pp = bind(a.source, row, "passer_velocity"), bind(a.source, row, "physics")

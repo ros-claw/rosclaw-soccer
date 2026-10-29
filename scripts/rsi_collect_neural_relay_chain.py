@@ -84,7 +84,8 @@ def main():
         p.add_argument("--" + key)
     a = p.parse_args()
     if a.return_player_prepared_pair and (
-        not a.receiver_child_return_role_pair or a.return_player_adaptive_identity
+        not a.receiver_child_return_role_pair
+        or (a.return_player_adaptive_identity and not a.return_player_own_sampling)
     ):
         p.error("prepared pair requires isolated child return-role study")
     if a.return_player_sampling_seed is not None and not a.return_player_own_sampling:
@@ -764,7 +765,17 @@ def main():
                 receiver_whole=True,
                 receiver_learned=True,
                 passer_velocity_recovery=True,
-                passer_prepare=enabled,
+                passer_prepare=True if a.return_player_own_sampling else enabled,
+                **(
+                    {
+                        "passer_adaptive": enabled,
+                        "passer_sampling_seed": (a.return_player_sampling_seed or 94111)
+                        if enabled
+                        else None,
+                    }
+                    if a.return_player_own_sampling
+                    else {}
+                ),
             )
             for enabled in (False, True)
         ]
@@ -813,6 +824,8 @@ def main():
                 if a.passer_successor_pair
                 else "soccer.neural_relay_passer_return_alignment.development.v36"
                 if a.passer_return_align_pair
+                else "soccer.neural_relay_prepared_return_sampling.development.v49"
+                if a.return_player_prepared_pair and a.return_player_own_sampling
                 else "soccer.neural_relay_return_player_prepare.development.v48"
                 if a.return_player_prepared_pair
                 else "soccer.neural_relay_return_player_own_sampling_seeded.development.v47"
@@ -2049,6 +2062,8 @@ def main():
                     if a.passer_successor_pair
                     else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
                     if a.passer_return_align_pair
+                    else "NEURAL_RELAY_PREPARED_RETURN_SAMPLING16_PENDING_OWN_REPLAY"
+                    if a.return_player_prepared_pair and a.return_player_own_sampling
                     else "NEURAL_RELAY_RETURN_PLAYER_PREPARE16_PENDING_OWN_REPLAY"
                     if a.return_player_prepared_pair
                     else "NEURAL_RELAY_RETURN_PLAYER_SEEDED_SAMPLING16_PENDING_OWN_REPLAY"

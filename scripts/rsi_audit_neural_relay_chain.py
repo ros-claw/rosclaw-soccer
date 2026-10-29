@@ -44,20 +44,27 @@ def main():
     return_player_seeded_sampling = (
         dec["protocol"] == "soccer.neural_relay_return_player_own_sampling_seeded.development.v47"
     )
-    return_player_sampling = return_player_seeded_sampling or (
-        dec["protocol"] == "soccer.neural_relay_return_player_own_sampling.development.v46"
+    prepared_sampling = (
+        dec["protocol"] == "soccer.neural_relay_prepared_return_sampling.development.v49"
     )
-    return_player_prepare = (
+    return_player_sampling = (
+        prepared_sampling
+        or return_player_seeded_sampling
+        or (dec["protocol"] == "soccer.neural_relay_return_player_own_sampling.development.v46")
+    )
+    return_player_prepare = prepared_sampling or (
         dec["protocol"] == "soccer.neural_relay_return_player_prepare.development.v48"
     )
     sampling_seed = 94111
-    if return_player_seeded_sampling:
+    if return_player_seeded_sampling or prepared_sampling:
         declared_seeds = {c["arm"].get("passer_sampling_seed") for c in dec["courses"]}
         if len(declared_seeds) != 2 or None not in declared_seeds:
             raise ValueError("exact single declared sampled seed and baseline required")
         declared_seeds.remove(None)
         sampling_seed = declared_seeds.pop()
-        if type(sampling_seed) is not int or sampling_seed not in (94137, 94163):
+        if type(sampling_seed) is not int or sampling_seed not in (
+            (94111, 94137, 94163) if prepared_sampling else (94137, 94163)
+        ):
             raise ValueError("preregistered sampled seed required")
     return_player_identity = return_player_sampling or (
         dec["protocol"] == "soccer.neural_relay_return_player_adaptive_identity.development.v45"
@@ -230,6 +237,8 @@ def main():
         if successor_pair
         else "NEURAL_RELAY_PASSER_RETURN_ALIGNMENT16_PENDING_OWN_REPLAY"
         if return_align_pair
+        else "NEURAL_RELAY_PREPARED_RETURN_SAMPLING16_PENDING_OWN_REPLAY"
+        if prepared_sampling
         else "NEURAL_RELAY_RETURN_PLAYER_PREPARE16_PENDING_OWN_REPLAY"
         if return_player_prepare
         else "NEURAL_RELAY_RETURN_PLAYER_SEEDED_SAMPLING16_PENDING_OWN_REPLAY"
@@ -343,6 +352,7 @@ def main():
             "soccer.neural_relay_return_player_own_sampling.development.v46",
             "soccer.neural_relay_return_player_own_sampling_seeded.development.v47",
             "soccer.neural_relay_return_player_prepare.development.v48",
+            "soccer.neural_relay_prepared_return_sampling.development.v49",
             "soccer.neural_relay_receiver_motion_pair.development.v18",
             "soccer.neural_relay_receiver_dense_exploration.development.v19",
             "soccer.neural_relay_receiver_motion_exploration.development.v20",
@@ -420,7 +430,15 @@ def main():
                     receiver_whole=True,
                     receiver_learned=True,
                     passer_velocity_recovery=True,
-                    passer_prepare=enabled,
+                    passer_prepare=True if prepared_sampling else enabled,
+                    **(
+                        {
+                            "passer_adaptive": enabled,
+                            "passer_sampling_seed": sampling_seed if enabled else None,
+                        }
+                        if prepared_sampling
+                        else {}
+                    ),
                 )
                 for enabled in (False, True)
             ]
