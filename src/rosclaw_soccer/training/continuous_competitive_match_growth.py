@@ -148,6 +148,13 @@ def default_continuous_match_config() -> IndependentTeamWorldConfig:
     )
 
 
+def _require_unassisted_match_trace(trajectory: dict[str, NDArray[Any]]) -> None:
+    # The training referee is allowed to relocate the ball. Even an unused
+    # configured referee must not be represented as an unassisted match exam.
+    if any(name.startswith("training_return_") for name in trajectory):
+        raise ValueError("training ball return is not an unassisted match exam")
+
+
 def default_continuous_match_scenario() -> IndependentTeamWorldScenario:
     return IndependentTeamWorldScenario(
         scenario_id="s199.s207.continuous-competitive-match",
@@ -205,6 +212,8 @@ def run_continuous_competitive_match_growth(
         )
     ):
         raise ValueError("invalid explicit continuous-match sampling contract")
+    if world_config is not None and world_config.training_ball_return is not None:
+        raise ValueError("training ball return is not an unassisted match exam")
     root = evidence_dir.expanduser().resolve()
     if root.exists() and any(root.iterdir()):
         raise ValueError("continuous-match evidence directory must be empty")
@@ -256,6 +265,8 @@ def run_continuous_competitive_match_growth(
         near_ball_seed=near_ball_seed,
         near_ball_exploration_agent_ids=near_ball_exploration_agent_ids,
     )
+    _require_unassisted_match_trace(primary_trace)
+    _require_unassisted_match_trace(replay_trace)
     primary_artifact = _write_trajectory(root / "primary.npz", primary_trace)
     replay_artifact = _write_trajectory(root / "replay.npz", replay_trace)
     exact_replay = bool(
@@ -374,6 +385,12 @@ def validate_continuous_competitive_match_growth(path: Path) -> dict[str, Any]:
         raise ValueError("continuous-match evidence must be an object")
     expected = value.pop("report_hash", None)
     try:
+        world_config = value.get("world_config", {})
+        if (
+            not isinstance(world_config, dict)
+            or world_config.get("training_ball_return") is not None
+        ):
+            raise ValueError("training ball return is not an unassisted match exam")
         policy_hash = value.get("near_ball_policy_hash")
         policy_artifact = value.get("near_ball_policy_artifact")
         if policy_hash is not None:
@@ -393,12 +410,13 @@ def validate_continuous_competitive_match_growth(path: Path) -> dict[str, Any]:
             if not isinstance(artifact, dict):
                 raise ValueError("continuous-match trajectory binding is absent")
             artifact_path = resolved.parent / str(artifact.get("file"))
-            if (
-                not artifact_path.is_file()
-                or hash_bytes(artifact_path.read_bytes()) != artifact.get("file_hash")
-                or trajectory_digest(_load_trajectory(artifact_path))
-                != artifact.get("trajectory_digest")
-            ):
+            if not artifact_path.is_file() or hash_bytes(
+                artifact_path.read_bytes()
+            ) != artifact.get("file_hash"):
+                raise ValueError("continuous-match trajectory binding changed")
+            trajectory = _load_trajectory(artifact_path)
+            _require_unassisted_match_trace(trajectory)
+            if trajectory_digest(trajectory) != artifact.get("trajectory_digest"):
                 raise ValueError("continuous-match trajectory binding changed")
         assessment = value.get("primary_assessment")
         boundary = value.get("evidence_boundary")

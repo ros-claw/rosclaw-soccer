@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -11,11 +12,13 @@ from rosclaw_soccer.media.continuous_competitive_match_video import (
     _timeline,
 )
 from rosclaw_soccer.training.continuous_competitive_match_growth import (
+    _require_unassisted_match_trace,
     default_continuous_match_config,
     default_continuous_match_scenario,
     run_continuous_competitive_match_growth,
     validate_continuous_competitive_match_growth,
 )
+from rosclaw_soccer.world.training_ball_return import TrainingBallReturnConfig
 
 
 def test_continuous_match_defaults_define_a_hard_sim_only_exam() -> None:
@@ -59,6 +62,38 @@ def test_continuous_growth_refuses_to_overwrite_evidence(tmp_path: Path) -> None
         )
 
     assert (evidence / "operator-data.txt").read_text(encoding="utf-8") == "preserve"
+
+
+def test_match_exam_rejects_training_return_before_creating_evidence(tmp_path: Path) -> None:
+    world = replace(
+        default_continuous_match_config(),
+        training_ball_return=TrainingBallReturnConfig(),
+        bilateral_goals=True,
+        stop_on_ball_exit=False,
+    )
+    output = tmp_path / "exam"
+    with pytest.raises(ValueError, match="not an unassisted match"):
+        run_continuous_competitive_match_growth(
+            evidence_dir=output, asset_root=tmp_path, world_config=world
+        )
+    assert not output.exists()
+
+
+def test_validator_rejects_training_return_even_when_report_says_no_state_writes(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "report.json"
+    report.write_text(
+        '{"world_config":{"training_ball_return":{}},"evidence_boundary":{"root_or_ball_state_writes":false}}'
+    )
+    with pytest.raises(ValueError, match="not an unassisted match"):
+        validate_continuous_competitive_match_growth(report)
+
+
+def test_return_trace_never_qualifies_even_when_event_codes_are_zero() -> None:
+    _require_unassisted_match_trace({"time": np.zeros(2)})
+    with pytest.raises(ValueError, match="not an unassisted match"):
+        _require_unassisted_match_trace({"training_return_event_code": np.zeros(2)})
 
 
 def test_continuous_validator_fails_closed_on_an_unbound_report(
