@@ -47,7 +47,9 @@ def test_tracking_binds_sequential_commands_to_own_physics(monkeypatch, tmp_path
     qpos[:, :, 3] = 1
     qvel = np.zeros((2, 10, 6))
     qvel[:, -1, 0] = 0.5
-    np.savez(physics, qpos=qpos, qvel=qvel)
+    forces = np.zeros((2, 10, 2, 3))
+    forces[0, 3, 0, 0] = 11
+    np.savez(physics, qpos=qpos, qvel=qvel, ball_forces=forces)
     np.savez(
         neural,
         control=np.arange(2),
@@ -58,7 +60,11 @@ def test_tracking_binds_sequential_commands_to_own_physics(monkeypatch, tmp_path
         review, "bind", lambda root, row, key: physics if key == "physics" else neural
     )
     result = review.receiver_tracking(tmp_path, {}, SimpleNamespace(rq=0, rv=0))
-    assert result["precontact_velocity_error_mean_mps"] == pytest.approx(0)
+    assert result["all_before_receiver_touch"][
+        "precontact_velocity_error_mean_mps"
+    ] == pytest.approx(0)
+    assert result["after_passer_foot_before_receiver_touch"]["precontact_observations"] == 1
+    assert result["first_passer_foot_control"] == 0
 
 
 def test_no_handoff_cannot_hide_a_different_physical_history():

@@ -23,3 +23,15 @@ def test_contact_latch_must_not_forget():
             np.zeros((2, 3)),
             np.array([[True, False], [False, False]]),
         )
+
+
+def test_no_eligible_controls_is_not_zero_error():
+    result = receiver_command_tracking(
+        np.zeros((1, 3)),
+        np.array([[1.0, 0, 0, 0]]),
+        np.zeros((1, 3)),
+        np.zeros((1, 2), dtype=bool),
+        eligible=np.array([False]),
+    )
+    assert result["precontact_observations"] == 0
+    assert result["precontact_velocity_error_mean_mps"] is None

@@ -102,12 +102,27 @@ def receiver_tracking(root, row, layout):
             raise ValueError("complete own command and physical control prefix required")
         q = physics["qpos"][:n, -1]
         v = physics["qvel"][:n, -1]
-        return receiver_command_tracking(
+        forces = physics["ball_forces"][:n]
+        if forces.shape != (n, 10, 2, 3) or not np.isfinite(forces).all() or (forces < 0).any():
+            raise ValueError("finite aligned ten-substep contact force history required")
+        first_pass = np.flatnonzero((forces[:, :, 0, :2] > 10).any(axis=(1, 2)))
+        # The command was chosen before the control's physics: a touch in
+        # control t becomes observable no earlier than command t+1.
+        eligible = np.arange(n) > first_pass[0] if len(first_pass) else np.zeros(n, dtype=bool)
+        args = (
             velocity["command"],
             q[:, layout.rq + 3 : layout.rq + 7],
             v[:, layout.rv : layout.rv + 3],
             velocity["contact_flags_before"],
         )
+        return {
+            "all_before_receiver_touch": receiver_command_tracking(*args),
+            "after_passer_foot_before_receiver_touch": receiver_command_tracking(
+                *args, eligible=eligible
+            ),
+            "first_passer_foot_control": int(first_pass[0]) if len(first_pass) else None,
+            "passer_force_threshold_n": 10,
+        }
 
 
 def main():

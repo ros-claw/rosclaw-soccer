@@ -12,6 +12,8 @@ def receiver_command_tracking(
     root_quaternion: np.ndarray,
     root_velocity_world: np.ndarray,
     past_contact: np.ndarray,
+    *,
+    eligible: np.ndarray | None = None,
 ) -> dict[str, object]:
     """Compare commands with observed post-control velocity in body yaw frame."""
     if not all(
@@ -30,6 +32,14 @@ def receiver_command_tracking(
         or any(not np.isfinite(a).all() for a in (command, root_quaternion, root_velocity_world))
         or not np.allclose(np.linalg.norm(root_quaternion, axis=1), 1, rtol=0, atol=1e-5)
         or np.any(np.diff(past_contact.astype(np.int8), axis=0) < 0)
+        or (
+            eligible is not None
+            and (
+                not isinstance(eligible, np.ndarray)
+                or eligible.shape != (n,)
+                or eligible.dtype != np.bool_
+            )
+        )
     ):
         raise ValueError(
             "finite sequential command, unit orientation and persistent contact required"
@@ -41,6 +51,8 @@ def receiver_command_tracking(
     body_velocity = np.stack((c * vx + s * vy, -s * vx + c * vy), axis=1)
     error = np.linalg.norm(command[:, :2] - body_velocity, axis=1)
     pre = ~past_contact.any(axis=1)
+    if eligible is not None:
+        pre &= eligible
     command_speed = np.linalg.norm(command[:, :2], axis=1)
     body_speed = np.linalg.norm(body_velocity, axis=1)
     return {
