@@ -292,6 +292,7 @@ class IndependentTeamWorldConfig:
     disjoint_motor_backends: bool = False
     motor_clearance_prediction_sec: float = 0.0
     precontact_pass_standoff_m: float | None = None
+    receive_prediction_agent_ids: tuple[str, ...] | None = None
     retire_completed_motors: bool = False
     motor_receive_commitment_context: bool = False
     cyclic_receive_motors: bool = False
@@ -307,6 +308,21 @@ class IndependentTeamWorldConfig:
     training_ball_return: TrainingBallReturnConfig | None = None
 
     def __post_init__(self) -> None:
+        if self.receive_prediction_agent_ids is not None:
+            agents = self.receive_prediction_agent_ids
+            if (
+                type(agents) not in (list, tuple)
+                or not agents
+                or len(agents) > 32
+                or any(
+                    type(agent) is not str
+                    or re.fullmatch(r"[a-z][a-z0-9_.:-]{0,127}", agent) is None
+                    for agent in agents
+                )
+                or list(agents) != sorted(set(agents))
+            ):
+                raise ValueError("receive prediction scope requires canonical agent identities")
+            object.__setattr__(self, "receive_prediction_agent_ids", tuple(agents))
         if type(self.revalidate_strike_task_lease) is not bool:
             raise ValueError("strike task lease revalidation must be explicit")
         if self.training_ball_return is not None and (
@@ -628,6 +644,8 @@ class IndependentTeamWorldConfig:
             value.pop("retired_motor_option_ankle_braking_damping")
         if self.precontact_pass_standoff_m is None:
             value.pop("precontact_pass_standoff_m")
+        if self.receive_prediction_agent_ids is None:
+            value.pop("receive_prediction_agent_ids")
         if not self.cyclic_receive_motors:
             value.pop("cyclic_receive_motors")
         if not self.motor_receive_commitment_context:
@@ -1553,6 +1571,12 @@ def simulate_independent_team_world(
         or (strike_coordination_actor is not None and contextual_strike_memory is not None)
     ):
         raise ValueError("independent team world roster/cell/body identities differ")
+    if active.receive_prediction_agent_ids is not None and (
+        not set(active.receive_prediction_agent_ids).issubset(roster_ids)
+        or contact_teacher_config is None
+        or contact_teacher_config.receive_velocity_prediction_sec == 0.0
+    ):
+        raise ValueError("receive prediction scope requires roster members and an active teacher")
     for cell in cells:
         if cell.self_model.self_model_hash != roster.agent(cell.agent_id).self_model_hash:
             raise ValueError("independent team world cell changed after roster commitment")
@@ -4064,6 +4088,11 @@ def simulate_independent_team_world(
                         use_left = controller.pass_stroke.use_left
                         effect_direction = np.asarray(controller.pass_stroke.direction_xy)
                         lateral_sign = controller.pass_stroke.lateral_sign
+                    effect_config = _scope_receive_prediction(
+                        effect_config,
+                        agent_id=controller.cell.agent_id,
+                        eligible_agent_ids=active.receive_prediction_agent_ids,
+                    )
                     effect = locomotion_contact_teacher_effect(
                         receive_capture_progress=capture_progress,
                         model=model,
@@ -5522,6 +5551,24 @@ def _agent_observation(
         ball_chaser_agent_id=ball_chaser_agent_id,
         active_receive_source_agent_id=active_receive_source_agent_id,
         preferred_pass_receiver_agent_id=preferred_pass_receiver_agent_id,
+    )
+
+
+def _scope_receive_prediction(
+    config: G1LocomotionContactTeacherConfig,
+    *,
+    agent_id: str,
+    eligible_agent_ids: tuple[str, ...] | None,
+) -> G1LocomotionContactTeacherConfig:
+    """Limit a SIM teacher prediction to named players, retaining all other gains."""
+    if eligible_agent_ids is None or agent_id in eligible_agent_ids:
+        return config
+    if config.receive_velocity_prediction_sec == 0.0:
+        return config
+    return replace(
+        config,
+        receive_velocity_prediction_sec=0.0,
+        receive_velocity_prediction_lateral_only=False,
     )
 
 
