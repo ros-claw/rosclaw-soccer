@@ -256,6 +256,7 @@ class IndependentTeamWorldConfig:
     stationary_ball_acquisition: bool = False
     predictive_separation: bool = False
     all_role_clearance: bool = False
+    ball_priority_clearance: bool = False
     strict_receive_handoff: bool = False
     controlled_possession_retention: bool = False
     directed_pass_launch: bool = False
@@ -551,6 +552,8 @@ class IndependentTeamWorldConfig:
             or not isinstance(self.stationary_ball_acquisition, bool)
             or not isinstance(self.predictive_separation, bool)
             or not isinstance(self.all_role_clearance, bool)
+            or type(self.ball_priority_clearance) is not bool
+            or (self.ball_priority_clearance and not self.all_role_clearance)
             or not isinstance(self.strict_receive_handoff, bool)
             or type(self.receiver_commitment_priority) is not bool
             or type(self.pass_target_commitment) is not bool
@@ -636,6 +639,8 @@ class IndependentTeamWorldConfig:
             value.pop("rotation_equivariant_duel_side")
         if not self.experimental_navigation_envelopes:
             value.pop("experimental_navigation_envelopes")
+        if not self.ball_priority_clearance:
+            value.pop("ball_priority_clearance")
         if self.outward_waist_braking_damping is None:
             value.pop("outward_waist_braking_damping")
         if self.outward_ankle_pitch_braking_damping is None:
@@ -2896,6 +2901,9 @@ def simulate_independent_team_world(
                 ball_qpos=ball_qpos,
                 ball_qvel=ball_qvel,
                 possession_agent_id=current_possession_agent_id,
+                clearance_priority_agent_id=(
+                    current_possession_agent_id or assigned_ball_chaser_agent_id
+                ),
                 committed_receiver=bool(receive_lease_agent_id == controller.cell.agent_id),
                 active_receiver=bool(
                     (receive_lease_active or flight_tracking_agent_id == controller.cell.agent_id)
@@ -5743,6 +5751,7 @@ def _movement_command(
     motor_peer_velocities: Mapping[str, NDArray[np.float64]] | None = None,
     experimental_navigation_speed_mps: float | None = None,
     motor_option_retired: bool = False,
+    clearance_priority_agent_id: str | None = None,
 ) -> NDArray[np.float64]:
     if experimental_navigation_speed_mps is not None and (
         type(experimental_navigation_speed_mps) not in (int, float)
@@ -6269,6 +6278,8 @@ def _movement_command(
     if speed > speed_limit:
         command[:2] *= speed_limit / speed
     if config.all_role_clearance:
+        from rosclaw_soccer.world.player_clearance import ball_priority_clearance_m
+
         task_halfplane = None
         if (
             reserved_stance_target_m is not None
@@ -6311,6 +6322,11 @@ def _movement_command(
                 ]
             ).reshape((-1, 2)),
             maximum_speed_mps=speed_limit,
+            clearance_m=ball_priority_clearance_m(
+                agent_id=controller.cell.agent_id,
+                priority_agent_id=clearance_priority_agent_id,
+                enabled=config.ball_priority_clearance,
+            ),
             additional_halfplanes=task_halfplane,
             experimental_fast_navigation=experimental_navigation_speed_mps is not None,
         )

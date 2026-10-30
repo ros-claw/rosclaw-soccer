@@ -21,6 +21,27 @@ class ClearanceProposal:
     constrained: bool
 
 
+def ball_priority_clearance_m(
+    *, agent_id: str, priority_agent_id: str | None, enabled: bool
+) -> float:
+    """Use a bounded smaller clearance only for the current ball participant.
+
+    This remains a simulation navigation proposal, not a collision guarantee.
+    Unknown or absent priority never grants the reduced separation.
+    """
+    if (
+        type(enabled) is not bool
+        or type(agent_id) is not str
+        or not agent_id
+        or (
+            priority_agent_id is not None
+            and (type(priority_agent_id) is not str or not priority_agent_id)
+        )
+    ):
+        raise ValueError("typed non-empty player identities required")
+    return 0.60 if enabled and priority_agent_id == agent_id else 0.80
+
+
 def propose_clearance_velocity(
     nominal: np.ndarray,
     neighbor_offsets: np.ndarray,
