@@ -112,6 +112,10 @@ def build_four_vs_four_fixture(
         roster=TeamRoleRoster("s212.symmetric.4v4", tuple(c.self_model for c in cells)),
         cells=tuple(cells),
         players=tuple(players),
-        goal=foundation.goal,
+        # Use one regulation-size/mass ball across both teams. The source
+        # 3v3 fixture's 0.115 m radius has 0.723 m circumference, outside
+        # IFAB's 0.68--0.70 m range. This intentionally changes the fixture
+        # hash and must not be presented as a replay of older experiments.
+        goal=replace(foundation.goal, ball_radius_m=0.11, ball_mass_kg=0.43),
         foundation_policy_hash=foundation.foundation_policy_hash,
     )

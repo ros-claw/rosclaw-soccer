@@ -59,6 +59,16 @@ def test_role_complete_mirrored_roster_and_private_memories(fixture):
         replace(fixture, players=(*fixture.players, fixture.players[0]))
 
 
+def test_four_vs_four_uses_regulation_size_and_mass_without_claiming_regulation_goal(fixture):
+    circumference = 2 * np.pi * fixture.goal.ball_radius_m
+    assert 0.68 <= circumference <= 0.70
+    assert 0.410 <= fixture.goal.ball_mass_kg <= 0.450
+    # This 4v4 curriculum keeps its small-sided goal; not an adult full-size goal.
+    assert (fixture.goal.width_m, fixture.goal.height_m) == (3.0, 2.0)
+    legacy = replace(fixture, goal=replace(fixture.goal, ball_radius_m=0.115, ball_mass_kg=0.41))
+    assert fixture.fixture_hash != legacy.fixture_hash
+
+
 @pytest.mark.parametrize("contact_ready", [False, True])
 def test_continuous_exam_cli_routes_real_four_vs_four_fixture(
     fixture, monkeypatch, tmp_path, contact_ready
@@ -702,6 +712,7 @@ def test_physical_eight_g1_model_has_two_goals_and_232_actuators():
 
     import mujoco
 
+    from rosclaw_soccer.physics.native_ball_dimensions import inspect_native_ball_dimensions
     from rosclaw_soccer.world.multi_player import build_g1_multi_player_stadium_model
 
     root = os.environ.get("ROSCLAW_G1_ASSET_ROOT")
@@ -715,6 +726,14 @@ def test_physical_eight_g1_model_has_two_goals_and_232_actuators():
         left_goal_plane_x_m=-1.5,
     )
     assert model.nu == 232
+    ball = inspect_native_ball_dimensions(model, geom_id=int(model.geom("ball_geom").id))
+    assert ball.radius_m == pytest.approx(0.11)
+    assert ball.body_mass_kg == pytest.approx(0.43)
+    assert ball.size_and_mass_in_ifab_range
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    mujoco.mj_step(model, data)
+    assert np.isfinite(data.qpos).all() and np.isfinite(data.qvel).all()
     for name in ("goal_left_post", "opposite_goal_left_post"):
         geom = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
         assert geom >= 0 and model.geom_contype[geom] != 0
