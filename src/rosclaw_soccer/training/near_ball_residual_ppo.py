@@ -658,6 +658,41 @@ def _collect(job: tuple[str, str, str, float, bool, int, float, bool, bool, bool
     return str(Path(destination) / "probe.json")
 
 
+def _bilateral_jobs(
+    assets: Path,
+    output: Path,
+    generation: int,
+    iteration: int,
+    duration: float,
+    offsets: tuple[float, ...],
+    rollouts_per_side: int,
+    prospective: bool,
+    clearance: bool,
+    strict: bool,
+) -> list[tuple[str, str, str, float, bool, int, float, bool, bool, bool]]:
+    """Bind diverse episodes to the same frozen generation, without overwriting artifacts."""
+    jobs = []
+    for round_index in range(rollouts_per_side):
+        for blue in (False, True):
+            side = "blue" if blue else "red"
+            suffix = "" if rollouts_per_side == 1 else f"-{round_index:02d}"
+            jobs.append(
+                (
+                    str(assets),
+                    str(output / f"train-{iteration:03d}-{side}{suffix}"),
+                    str(output / f"generation-{generation:03d}.npz"),
+                    duration,
+                    blue,
+                    21500 + iteration * 2 * rollouts_per_side + round_index * 2 + int(blue),
+                    offsets[(iteration * rollouts_per_side + round_index) % len(offsets)],
+                    prospective,
+                    clearance,
+                    strict,
+                )
+            )
+    return jobs
+
+
 def train(
     *,
     assets: Path,
@@ -673,6 +708,7 @@ def train(
     role_curriculum: bool = False,
     strict_receive_handoff: bool = False,
     role_batch_rounds: int = 1,
+    rollouts_per_side: int = 1,
     reward_shaping: str = "legacy",
     contact_control_profile: ContactControlProfile | None = None,
     optimizer_epochs: int = 4,
@@ -686,8 +722,10 @@ def train(
         or not 1 <= optimizer_epochs <= 16
         or not 1 <= iterations <= 100
         or not 5 <= duration <= 25
+        or type(rollouts_per_side) is not int
+        or not 1 <= rollouts_per_side <= 8
         or type(workers) is not int
-        or not 1 <= workers <= (8 if role_curriculum else 2)
+        or not 1 <= workers <= (8 if role_curriculum or rollouts_per_side > 1 else 2)
         or type(prospective_curriculum) is not bool
         or type(long_credit) is not bool
         or type(all_role_clearance) is not bool
@@ -697,6 +735,7 @@ def train(
         or type(role_batch_rounds) is not int
         or not 1 <= role_batch_rounds <= 5
         or (role_batch_rounds != 1 and not role_curriculum)
+        or (rollouts_per_side != 1 and role_curriculum)
         or reward_shaping not in REWARD_SHAPING_MODES
         or reward_shaping == "in_play_motor_task_v1"
         or (strict_receive_handoff and not (prospective_curriculum and all_role_clearance))
@@ -760,6 +799,7 @@ def train(
         "all_role_clearance": all_role_clearance,
         "role_curriculum": role_curriculum,
         "role_batch_rounds": role_batch_rounds,
+        "rollouts_per_side": rollouts_per_side,
         "contact_control_profile": None
         if contact_control_profile is None
         else asdict(contact_control_profile),
@@ -781,21 +821,18 @@ def train(
     }
     for iteration in range(iterations):
         traces, proofs = [], []
-        jobs = [
-            (
-                str(assets),
-                str(output / f"train-{iteration:03d}-{'blue' if blue else 'red'}"),
-                str(output / f"generation-{policy.generation:03d}.npz"),
-                duration,
-                blue,
-                21500 + iteration * 2 + int(blue),
-                offsets[iteration % len(offsets)],
-                prospective_curriculum,
-                all_role_clearance,
-                strict_receive_handoff,
-            )
-            for blue in (False, True)
-        ]
+        jobs = _bilateral_jobs(
+            assets,
+            output,
+            policy.generation,
+            iteration,
+            duration,
+            offsets,
+            rollouts_per_side,
+            prospective_curriculum,
+            all_role_clearance,
+            strict_receive_handoff,
+        )
         if role_curriculum:
             role_jobs = [
                 RoleRolloutJob(
@@ -940,6 +977,7 @@ def main() -> None:
     parser.add_argument("--role-curriculum", action="store_true")
     parser.add_argument("--strict-receive-handoff", action="store_true")
     parser.add_argument("--role-batch-rounds", type=int, default=1)
+    parser.add_argument("--rollouts-per-side", type=int, default=1)
     parser.add_argument("--contact-control-profile", action="store_true")
     parser.add_argument("--strike-residual", action="store_true")
     parser.add_argument("--strike-stance-lateral", type=float)
@@ -973,6 +1011,7 @@ def main() -> None:
         role_curriculum=args.role_curriculum,
         strict_receive_handoff=args.strict_receive_handoff,
         role_batch_rounds=args.role_batch_rounds,
+        rollouts_per_side=args.rollouts_per_side,
         reward_shaping=args.reward_shaping,
         contact_control_profile=ContactControlProfile(
             strike_residual_enabled=args.strike_residual,
