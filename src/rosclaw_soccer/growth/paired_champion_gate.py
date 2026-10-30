@@ -146,9 +146,10 @@ def evaluate_paired_champion(
         deltas.append((spec.name, signed_delta))
         if signed_delta < -spec.maximum_regression:
             reasons.append(f"{spec.name}_regression_exceeds_budget")
-        if signed_delta >= spec.minimum_improvement and (
-            signed_delta > 0.0 or spec.minimum_improvement == 0.0
-        ):
+        # A zero floor permits any *positive* gain; equality is not a gain.
+        # Otherwise unchanged metrics could satisfy the improvement count and
+        # replace a champion without evidence of progress.
+        if signed_delta > 0.0 and signed_delta >= spec.minimum_improvement:
             improved += 1
         if spec.hard_lower_bound is not None and candidate_value < spec.hard_lower_bound:
             reasons.append(f"{spec.name}_below_hard_floor")

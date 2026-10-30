@@ -54,6 +54,34 @@ def test_safe_improvement_branch_is_archived_when_an_objective_regresses() -> No
     assert "angular_speed_regression_exceeds_budget" in decision.reasons
 
 
+def test_unchanged_metrics_do_not_count_as_improvements_with_zero_floor() -> None:
+    parent = _snapshot(child=False, save=0.30, angular=3.0)
+    child = _snapshot(child=True, save=0.30, angular=3.0)
+    decision = evaluate_paired_champion(parent=parent, candidate=child, metrics=_specs())
+    assert not decision.replace_champion
+    assert "insufficient_improved_metrics" in decision.reasons
+
+
+def test_one_positive_gain_does_not_make_an_unchanged_metric_improved() -> None:
+    parent = _snapshot(child=False, save=0.30, angular=3.0)
+    child = _snapshot(child=True, save=0.35, angular=3.0)
+    decision = evaluate_paired_champion(
+        parent=parent, candidate=child, metrics=_specs(), minimum_improved_metrics=2
+    )
+    assert not decision.replace_champion
+    assert "insufficient_improved_metrics" in decision.reasons
+
+
+def test_explicit_improvement_floor_is_still_inclusive() -> None:
+    parent = _snapshot(child=False, save=0.0, angular=3.0)
+    child = _snapshot(child=True, save=0.125, angular=3.0)
+    specs = (
+        ChampionMetricSpec("save_rate", "MAXIMIZE", minimum_improvement=0.125),
+        ChampionMetricSpec("angular_speed", "MINIMIZE"),
+    )
+    assert evaluate_paired_champion(parent=parent, candidate=child, metrics=specs).replace_champion
+
+
 def test_paired_champion_fails_closed_on_wrong_lineage_or_hardware_claim() -> None:
     parent = _snapshot(child=False, save=0.30, angular=3.0)
     child = _snapshot(child=True, save=0.35, angular=2.8)
