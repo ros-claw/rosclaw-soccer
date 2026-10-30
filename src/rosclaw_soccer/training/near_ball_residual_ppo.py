@@ -137,7 +137,7 @@ def physical_rewards(
         toward = (np.asarray(trace["ball_velocity"])[:, :2] * direction).sum(axis=1)
         touching = (contact == i + 1) & foot & (contact_force > 1.0)
         rewards[:, i] += touching * 0.04 * np.clip(toward, -2, 2)
-        if reward_shaping == "pass_impulse_alignment_v1":
+        if reward_shaping in {"pass_impulse_alignment_v1", "directed_pass_credit_v1"}:
             from rosclaw_soccer.growth.role_self_model import TacticalIntent
             from rosclaw_soccer.training.pass_impulse_reward import sampled_pass_impulse_reward
 
@@ -263,6 +263,8 @@ def physical_rewards(
     credited = set()
     time = np.asarray(trace["time"])
     launch_relative = "pass_feedback_launch_relative" in trace
+    if reward_shaping == "directed_pass_credit_v1" and not launch_relative:
+        raise ValueError("directed pass credit requires strict physical handoff telemetry")
     if launch_relative:
         contract = np.asarray(trace["pass_feedback_launch_relative"])
         if contract.shape != time.shape or contract.dtype != np.bool_ or not np.all(contract):
@@ -274,6 +276,40 @@ def physical_rewards(
         first = int(np.searchsorted(time, outcome["foot_contact_time_sec"]))
         if first >= count or contact_force[first] <= 1.0:
             continue
+        if reward_shaping == "directed_pass_credit_v1":
+            from rosclaw_soccer.training.pass_launch_evidence import inspect_pass_launch
+
+            # Reward attribution uses the most recent completed observation;
+            # a successful receiver touch alone cannot invent a pass request.
+            # 50 Hz values are conservative proxies, not substep proof.
+            prior = int(np.searchsorted(time, float(time[first]), side="left")) - 1
+            if prior < 0:
+                continue
+            receiver_pose = np.asarray(
+                trace[ids[receiver].replace(".", "_") + "_pelvis_pose"], dtype=np.float64
+            )
+            if receiver_pose.shape != (count, 7) or not np.isfinite(receiver_pose).all():
+                raise ValueError("directed pass credit requires finite receiver poses")
+            measured_velocity = np.asarray(trace["ball_velocity"], dtype=np.float64)
+            evidence = inspect_pass_launch(
+                control_time_sec=time,
+                source_codes=np.asarray(trace["pass_source_agent_code"]),
+                receiver_codes=np.asarray(trace["pass_target_agent_code"]),
+                sender_code=sender + 1,
+                receiver_code=receiver + 1,
+                contact_time_sec=float(time[first]),
+                ball_xy_m=(float(ball[first, 0]), float(ball[first, 1])),
+                ball_velocity_xy_mps=(
+                    float(measured_velocity[first, 0]),
+                    float(measured_velocity[first, 1]),
+                ),
+                receiver_position_xy_m=(
+                    float(receiver_pose[prior, 0]),
+                    float(receiver_pose[prior, 1]),
+                ),
+            )
+            if not evidence.directed_launch_observed:
+                continue
         received = np.flatnonzero(
             (contact == receiver + 1)
             & foot
@@ -300,6 +336,7 @@ def physical_rewards(
         "team_capture_v1",
         "team_capture_dissipation_v1",
         "pass_impulse_alignment_v1",
+        "directed_pass_credit_v1",
     }:
         distance = np.minimum(
             np.linalg.norm(obs[:, :, 38:41], axis=2),
@@ -324,6 +361,7 @@ def physical_rewards(
         "team_capture_v1",
         "team_capture_dissipation_v1",
         "pass_impulse_alignment_v1",
+        "directed_pass_credit_v1",
     }:
         margins = np.stack(
             [np.asarray(trace[a.replace(".", "_") + "_joint_safety_margin_rad"]) for a in ids],
@@ -762,6 +800,7 @@ def train(
         or (rollouts_per_side != 1 and role_curriculum)
         or reward_shaping not in REWARD_SHAPING_MODES
         or reward_shaping == "in_play_motor_task_v1"
+        or (reward_shaping == "directed_pass_credit_v1" and not strict_receive_handoff)
         or (strict_receive_handoff and not (prospective_curriculum and all_role_clearance))
         or (role_curriculum and not (prospective_curriculum and all_role_clearance))
         or (
