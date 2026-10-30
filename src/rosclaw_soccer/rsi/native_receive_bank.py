@@ -51,6 +51,24 @@ def scale_launch_distance(position, root, distance_m):
     return (root[0] + (position[0] - root[0]) * distance_m / 0.9, position[1], position[2])
 
 
+def heading_front_launch(position, velocity, root, quaternion, *, team_sign):
+    """Canonicalize the team-side launch before applying body heading.
+
+    The existing heading mode deliberately stays unchanged for compatibility;
+    this explicit new course puts both team sides in front of their own body.
+    This is initialization-only research, never a live ball correction.
+    """
+    if team_sign not in (-1.0, 1.0):
+        raise ValueError("explicit team-side sign required")
+    canonical_position = (
+        root[0] + team_sign * (position[0] - root[0]),
+        root[1] + team_sign * (position[1] - root[1]),
+        position[2],
+    )
+    canonical_velocity = (team_sign * velocity[0], team_sign * velocity[1], velocity[2])
+    return heading_launch(canonical_position, canonical_velocity, root, quaternion)
+
+
 def build_incoming_bank(
     *,
     model: Any,
@@ -73,13 +91,15 @@ def build_incoming_bank(
     if (
         len(courses) != 256
         or len(plans) != 8
-        or launch_frame not in ("world", "heading")
+        or launch_frame not in ("world", "heading", "heading_front")
         or launch_distance_m not in (0.9, 1.8)
     ):
         raise ValueError("entire 256-state source and course bank required")
     binding = preflight_receiving_courses(courses)
     if launch_frame == "heading":
         binding = str(hash_json(dict(schema="soccer.heading_receiving.v1", base=binding)))
+    if launch_frame == "heading_front":
+        binding = str(hash_json(dict(schema="soccer.heading_front_receiving.v1", base=binding)))
     if launch_distance_m != 0.9:
         binding = str(
             hash_json(
@@ -120,6 +140,14 @@ def build_incoming_bank(
         if launch_frame == "heading":
             position, velocity = heading_launch(
                 position, velocity, root, data.qpos[layout.rq + 3 : layout.rq + 7]
+            )
+        elif launch_frame == "heading_front":
+            position, velocity = heading_front_launch(
+                position,
+                velocity,
+                root,
+                data.qpos[layout.rq + 3 : layout.rq + 7],
+                team_sign=1.0 if course.agent_id.startswith("red.") else -1.0,
             )
         data.qpos[layout.bq : layout.bq + 7] = (*position, 1, 0, 0, 0)
         data.qvel[layout.bv : layout.bv + 6] = (

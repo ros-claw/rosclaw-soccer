@@ -58,7 +58,7 @@ def main():
         p.add_argument("--" + key, type=Path, required=True)
     for key in ("qualification-hash", "reference-hash", "expected-head"):
         p.add_argument("--" + key, required=True)
-    p.add_argument("--launch-frame", choices=("world", "heading"), default="world")
+    p.add_argument("--launch-frame", choices=("world", "heading", "heading_front"), default="world")
     p.add_argument("--lateral-study", action="store_true")
     p.add_argument("--lateral-speed", type=float, choices=(1.25, 1.75, 2.25, 3.0), default=1.25)
     p.add_argument("--launch-distance", type=float, choices=(0.9, 1.8), default=0.9)
@@ -79,7 +79,7 @@ def main():
         "--experimental-actor-kind", choices=("imitation", "candidate"), default="imitation"
     )
     a = p.parse_args()
-    if a.lateral_study and a.launch_frame != "heading":
+    if a.lateral_study and a.launch_frame not in ("heading", "heading_front"):
         raise ValueError("lateral study requires an explicit body-heading launch")
     if a.strict_native_capture and (not a.lateral_study or a.receive_window != 60):
         raise ValueError("strict native capture requires the 60-control lateral study")
