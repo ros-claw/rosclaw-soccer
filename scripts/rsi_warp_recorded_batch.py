@@ -110,7 +110,12 @@ class RecordedWarpBatch:
             if value.shape != tuple(tensor.shape) or not np.isfinite(value).all():
                 raise ValueError("finite complete actual initial state required: " + key)
             tensor.copy_(torch.as_tensor(value, dtype=tensor.dtype, device=tensor.device))
-        with wp.ScopedDevice("cuda:0"):
+        # Torch's current stream is not generally Warp's default stream. The
+        # state copies above must precede forward on the same CUDA stream.
+        with (
+            wp.ScopedDevice("cuda:0"),
+            wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream())),
+        ):
             mjw.forward(self.model, self.data)
         wp.to_torch(self.data.qacc_warmstart).copy_(
             torch.as_tensor(warmstart, dtype=torch.float32, device="cuda:0")
@@ -128,7 +133,13 @@ class RecordedWarpBatch:
                 torch.as_tensor(ctrl, dtype=torch.float32, device="cuda:0")
             )
             self.attempted_steps += self.worlds
-            with wp.ScopedDevice("cuda:0"):
+            # Use the stream on which Torch wrote ctrl, including when callers
+            # intentionally use a non-default stream. A later device-wide sync
+            # alone cannot order an earlier cross-stream read after the write.
+            with (
+                wp.ScopedDevice("cuda:0"),
+                wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream())),
+            ):
                 mjw.step(self.model, self.data)
                 wp.synchronize_device("cuda:0")
                 self.completed_steps += self.worlds
