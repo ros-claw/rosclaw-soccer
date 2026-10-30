@@ -1,13 +1,16 @@
 """SIM-only regression: Torch writes and Warp reads share the caller stream."""
 
-import mujoco
-import mujoco_warp as mjw
+import importlib
+
 import numpy as np
 import pytest
-import torch
-import warp as wp
 
-from scripts.rsi_warp_recorded_batch import RecordedWarpBatch
+mujoco = pytest.importorskip("mujoco")
+mjw = pytest.importorskip("mujoco_warp")
+torch = pytest.importorskip("torch")
+wp = pytest.importorskip("warp")
+
+RecordedWarpBatch = importlib.import_module("scripts.rsi_warp_recorded_batch").RecordedWarpBatch
 
 
 @pytest.mark.skipif(torch.cuda.device_count() != 1, reason="requires one isolated GPU")
