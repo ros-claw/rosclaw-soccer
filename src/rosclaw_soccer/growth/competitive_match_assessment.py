@@ -280,6 +280,19 @@ def assess_competitive_match_trajectory(
         or np.any(contact_code < 0)
         or np.any(contact_code > len(agent_ids))
         or np.any(contact_force < 0)
+        or np.any(robot_contacts < 0)
+        or any(
+            np.any(value != np.floor(value))
+            for value in (
+                contact_code,
+                effector_code,
+                nonfoot_code,
+                robot_contacts,
+                pass_source_code,
+                pass_target_code,
+                strike_lease_code,
+            )
+        )
         or np.any(nonfoot_code < 0)
         or np.any(nonfoot_code > len(agent_ids))
         or np.any(effector_code < 0)

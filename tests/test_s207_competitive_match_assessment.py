@@ -89,6 +89,34 @@ def test_competitive_match_requires_physical_full_chain() -> None:
     assert assessment.first_failed_skill is None
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("ball_contact_agent_code", 0.5),
+        ("ball_contact_effector_code", 1.5),
+        ("ball_nonfoot_contact_agent_code", 0.5),
+        ("pass_source_agent_code", 1.5),
+        ("pass_target_agent_code", 1.5),
+        ("strike_lease_agent_code", 1.5),
+        ("robot_robot_contact_count", -1.0),
+        ("robot_robot_contact_count", 0.5),
+    ],
+)
+def test_competitive_match_rejects_invalid_discrete_telemetry(field: str, value: float) -> None:
+    trajectory = _trajectory()
+    trajectory[field] = trajectory[field].astype(np.float64)
+    trajectory[field][5] = value
+    with pytest.raises(ValueError, match="trajectory shape or clock"):
+        assess_competitive_match_trajectory(
+            trajectory=trajectory,
+            trajectory_hash=hash_json({"trajectory": "invalid-discrete-telemetry"}),
+            agent_ids=_AGENTS,
+            roles=_ROLES,
+            strict_replay=True,
+            world_safe=True,
+        )
+
+
 def test_sprint_records_ball_and_agent_speeds_separately() -> None:
     trajectory = _trajectory()
     trajectory["ball_velocity"][:, :3] = (0.2, 0.1, 0.0)
