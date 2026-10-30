@@ -88,6 +88,23 @@ def test_competitive_match_requires_physical_full_chain() -> None:
     assert assessment.first_failed_skill is None
 
 
+def test_sprint_records_ball_and_agent_speeds_separately() -> None:
+    trajectory = _trajectory()
+    trajectory["ball_velocity"][:, :3] = (0.2, 0.1, 0.0)
+    result = assess_competitive_match_trajectory(
+        trajectory=trajectory,
+        trajectory_hash=hash_json({"trajectory": "distinct-sprint-speeds"}),
+        agent_ids=_AGENTS,
+        roles=_ROLES,
+        strict_replay=True,
+        world_safe=True,
+    )
+    sprint = next(event for event in result.events if event.skill is CompetitiveSkill.SPRINT)
+    assert sprint.ball_speed_mps == pytest.approx(np.sqrt(0.05))
+    assert sprint.agent_speed_mps == pytest.approx(0.6)
+    assert sprint.schema_version == "rosclaw_soccer.competitive_skill_event.v2"
+
+
 def test_competitive_match_fails_closed_on_body_contact() -> None:
     trajectory = _trajectory()
     trajectory["ball_nonfoot_contact_agent_code"][70] = 3

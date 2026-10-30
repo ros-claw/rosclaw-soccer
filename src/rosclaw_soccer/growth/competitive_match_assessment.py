@@ -96,9 +96,10 @@ class CompetitiveSkillEvent:
     ball_speed_mps: float
     source_contact_force_n: float
     target_agent_id: str | None = None
+    agent_speed_mps: float | None = None
     physics_derived: bool = True
     pixels_used_for_scoring: bool = False
-    schema_version: str = "rosclaw_soccer.competitive_skill_event.v1"
+    schema_version: str = "rosclaw_soccer.competitive_skill_event.v2"
 
     def __post_init__(self) -> None:
         if (
@@ -116,6 +117,11 @@ class CompetitiveSkillEvent:
             or any(not math.isfinite(value) for value in self.ball_position_m)
             or not math.isfinite(self.ball_speed_mps)
             or self.ball_speed_mps < 0.0
+            or (
+                self.agent_speed_mps is not None
+                and (not math.isfinite(self.agent_speed_mps) or self.agent_speed_mps < 0.0)
+            )
+            or (self.skill is CompetitiveSkill.SPRINT and self.agent_speed_mps is None)
             or not math.isfinite(self.source_contact_force_n)
             or self.source_contact_force_n < 0.0
             or not self.physics_derived
@@ -318,7 +324,8 @@ def assess_competitive_match_trajectory(
                     float(ball_pose[frame, 1]),
                     float(ball_pose[frame, 2]),
                 ),
-                ball_speed_mps=speed,
+                ball_speed_mps=float(np.linalg.norm(ball_velocity[frame, :3])),
+                agent_speed_mps=speed,
                 source_contact_force_n=0.0,
             )
         )
