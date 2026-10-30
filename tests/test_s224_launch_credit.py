@@ -19,7 +19,7 @@ def delayed_pass_trace():
         "pass_target_agent_code": np.zeros(n),
         "ball_contact_agent_code": np.zeros(n),
         "ball_contact_effector_code": np.ones(n),
-        "ball_contact_force_n": np.ones(n),
+        "ball_contact_force_n": np.full(n, 2.0),
         "ball_nonfoot_contact_agent_code": np.zeros(n),
         "ball_nonfoot_contact_force_n": np.zeros(n),
         "robot_robot_contact_first_code": np.zeros(n),

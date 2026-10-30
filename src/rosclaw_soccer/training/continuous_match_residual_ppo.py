@@ -37,7 +37,10 @@ from rosclaw_soccer.training.continuous_retention import (
 from rosclaw_soccer.training.four_vs_four_match import build_four_vs_four_fixture
 from rosclaw_soccer.training.independent_team_growth import IndependentTeamFixture
 from rosclaw_soccer.training.near_ball_plasticity import recorded_training_scope
-from rosclaw_soccer.training.near_ball_residual_ppo import update_private_actors
+from rosclaw_soccer.training.near_ball_residual_ppo import (
+    PHYSICAL_REWARD_CONTRACT,
+    update_private_actors,
+)
 
 
 @dataclass(frozen=True)
@@ -359,6 +362,7 @@ def train(
         "gamma": 0.997,
         "trace_decay": 0.997,
         "reward_shaping": reward_shaping,
+        "physical_reward_contract": PHYSICAL_REWARD_CONTRACT,
         "iterations": [],
         "evaluation": [],
     }

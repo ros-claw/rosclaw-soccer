@@ -50,6 +50,8 @@ from rosclaw_soccer.training.near_ball_plasticity import (
 from rosclaw_soccer.training.returned_ball_learning import require_returned_live_segment
 from rosclaw_soccer.training.role_behavior_anchor import RoleBehaviorAnchor
 
+PHYSICAL_REWARD_CONTRACT = "rosclaw_soccer.physical_reward.force_gate.v2"
+
 
 def physical_rewards(
     trace: dict[str, Any],
@@ -76,6 +78,13 @@ def physical_rewards(
     ball = np.asarray(trace["ball_pose"])[:, :3]
     contact = np.asarray(trace["ball_contact_agent_code"])
     foot = np.isin(trace["ball_contact_effector_code"], [1, 2])
+    contact_force = np.asarray(trace["ball_contact_force_n"], dtype=float)
+    if (
+        contact_force.shape != (count,)
+        or not np.isfinite(contact_force).all()
+        or np.any(contact_force < 0)
+    ):
+        raise ValueError("physical reward requires valid nonnegative contact force")
     nonfoot = np.asarray(trace["ball_nonfoot_contact_agent_code"])
     for i, agent in enumerate(ids):
         key = agent.replace(".", "_")
@@ -106,7 +115,7 @@ def physical_rewards(
         direction = target - ball[:, :2]
         direction /= np.maximum(np.linalg.norm(direction, axis=1, keepdims=True), 1e-6)
         toward = (np.asarray(trace["ball_velocity"])[:, :2] * direction).sum(axis=1)
-        touching = (contact == i + 1) & foot
+        touching = (contact == i + 1) & foot & (contact_force > 1.0)
         rewards[:, i] += touching * 0.04 * np.clip(toward, -2, 2)
         if reward_shaping in {"team_capture_v1", "team_capture_dissipation_v1"}:
             from rosclaw_soccer.growth.role_self_model import TacticalIntent
@@ -154,7 +163,7 @@ def physical_rewards(
                         )
                     ],
                 ),
-                foot_contact=touching & (np.asarray(trace["ball_contact_force_n"]) > 1),
+                foot_contact=touching,
                 owns_ball=np.asarray(trace["possession_agent_code"]) == i + 1,
                 speed_before=np.linalg.norm(before_velocity[:, :2], axis=1),
                 speed_after=np.linalg.norm(np.asarray(trace["ball_velocity"])[:, :2], axis=1),
@@ -191,10 +200,12 @@ def physical_rewards(
             continue
         sender, receiver = ids.index(outcome["sender"]), ids.index(outcome["receiver"])
         first = int(np.searchsorted(time, outcome["foot_contact_time_sec"]))
+        if first >= count or contact_force[first] <= 1.0:
+            continue
         received = np.flatnonzero(
             (contact == receiver + 1)
             & foot
-            & (np.asarray(trace["ball_contact_force_n"]) > 0)
+            & (contact_force > 1.0)
             & (time > time[first])
             & (time <= (time[first] if launch_relative else outcome["commitment_time_sec"]) + 3.0)
         )
@@ -364,6 +375,7 @@ def update_private_actors(
                 "parent": parent.policy_hash,
                 "roster": parent.agent_ids,
                 "dataset": dataset_hash,
+                "physical_reward_contract": PHYSICAL_REWARD_CONTRACT,
                 **({"frozen_policy_hashes": frozen} if frozen else {}),
                 **({"behavior_anchor": behavior_anchor.anchor_hash} if behavior_anchor else {}),
                 **(
@@ -686,6 +698,7 @@ def train(
         if contact_control_profile is None
         else asdict(contact_control_profile),
         "reward_shaping": reward_shaping,
+        "physical_reward_contract": PHYSICAL_REWARD_CONTRACT,
         "strict_receive_handoff": strict_receive_handoff,
         "evaluation_courses": [
             asdict(c) for c in examination_courses(strict_handoff=strict_receive_handoff)
