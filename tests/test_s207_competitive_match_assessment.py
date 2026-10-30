@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.growth.competitive_match_assessment import (
+    CompetitiveMatchThresholds,
     CompetitiveSkill,
     assess_competitive_match_trajectory,
 )
@@ -345,3 +346,10 @@ def test_negative_force_and_invalid_nonfoot_identity_are_rejected() -> None:
                 strict_replay=True,
                 world_safe=True,
             )
+
+
+def test_hardened_threshold_semantics_cannot_masquerade_as_v1() -> None:
+    thresholds = CompetitiveMatchThresholds()
+    assert thresholds.schema_version == "rosclaw_soccer.competitive_match_thresholds.v2"
+    with pytest.raises(ValueError, match="SIM-only envelope"):
+        CompetitiveMatchThresholds(schema_version="rosclaw_soccer.competitive_match_thresholds.v1")

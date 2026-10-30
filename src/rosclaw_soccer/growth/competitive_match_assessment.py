@@ -86,6 +86,7 @@ class CompetitiveMatchThresholds:
             or not 0.20 <= self.minimum_save_velocity_change_mps <= 5.0
             or self.activation_ceiling != "SIM_ONLY"
             or self.hardware_authorized
+            or self.schema_version != "rosclaw_soccer.competitive_match_thresholds.v2"
         ):
             raise ValueError("competitive match thresholds violate the SIM-only envelope")
 
