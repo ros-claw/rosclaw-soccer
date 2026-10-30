@@ -53,3 +53,34 @@ def test_capacity_fail_closed():
     with pytest.raises(ValueError):
         recorder.observe_physics(row(0.004))
     assert len(recorder.observations()) == 1
+
+
+def test_early_terminal_frame_is_complete_without_padding():
+    recorder = DenseTeamContactRecorder("red.finisher", maximum_substeps=50)
+    for index in range(20):
+        recorder.observe_physics(row((index + 1) * 0.002))
+    result = recorder.verified_observations(control_frame_count=2, terminal_time_sec=0.04)
+    assert len(result) == 20
+    assert result[-1].time_sec == pytest.approx(0.04)
+    # A caller cannot claim the requested five frames were recorded.
+    with pytest.raises(ValueError, match="authenticated control-frame"):
+        recorder.verified_observations(control_frame_count=5, terminal_time_sec=0.10)
+
+
+@pytest.mark.parametrize(
+    "frames,terminal", [(1, 0.03), (2, 0.02), (0, 0.0), (True, 0.02), (1, float("nan"))]
+)
+def test_bad_terminal_identity_is_rejected(frames, terminal):
+    recorder = DenseTeamContactRecorder("red.finisher", maximum_substeps=20)
+    for index in range(10):
+        recorder.observe_physics(row((index + 1) * 0.002))
+    with pytest.raises(ValueError, match="authenticated control-frame"):
+        recorder.verified_observations(control_frame_count=frames, terminal_time_sec=terminal)
+
+
+def test_incomplete_terminal_frame_is_rejected():
+    recorder = DenseTeamContactRecorder("red.finisher", maximum_substeps=20)
+    for index in range(19):
+        recorder.observe_physics(row((index + 1) * 0.002))
+    with pytest.raises(ValueError, match="authenticated control-frame"):
+        recorder.verified_observations(control_frame_count=2, terminal_time_sec=0.04)

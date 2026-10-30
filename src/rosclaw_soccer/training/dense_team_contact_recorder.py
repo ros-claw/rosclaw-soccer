@@ -1,5 +1,6 @@
 """Bounded SIM-only consumer for physical football contact supervision."""
 
+import math
 from dataclasses import asdict
 from typing import Any
 
@@ -48,6 +49,28 @@ class DenseTeamContactRecorder:
         self._rows.append(observation)
 
     def observations(self) -> tuple[TeamMotorPhysicsObservation, ...]:
+        return tuple(self._rows)
+
+    def verified_observations(
+        self, *, control_frame_count: int, terminal_time_sec: float
+    ) -> tuple[TeamMotorPhysicsObservation, ...]:
+        """Verify full 500 Hz coverage to an independently authenticated 50 Hz end.
+
+        An early whole-ball exit can legitimately end an episode before its
+        requested duration. The caller must authenticate its terminal reason
+        and frame count separately; this checks coverage, not why it ended or
+        whether the observed physical outcome is safe or successful.
+        """
+        if (
+            type(control_frame_count) is not int
+            or not 1 <= control_frame_count <= self.maximum_substeps // 10
+            or type(terminal_time_sec) not in (int, float)
+            or not math.isfinite(terminal_time_sec)
+            or abs(terminal_time_sec - control_frame_count * 0.02) > 1e-6
+            or len(self._rows) != control_frame_count * 10
+            or abs(self._rows[-1].time_sec - terminal_time_sec) > 1e-6
+        ):
+            raise ValueError("dense stream does not cover the authenticated control-frame boundary")
         return tuple(self._rows)
 
     def to_dict(self) -> dict[str, Any]:
