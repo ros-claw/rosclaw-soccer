@@ -70,8 +70,10 @@ class ChampionSnapshot:
                 raise ValueError("champion snapshot hash is invalid")
         if self.parent_artifact_hash is not None and not _HASH.fullmatch(self.parent_artifact_hash):
             raise ValueError("champion parent hash is invalid")
-        if not 8 <= self.episode_count <= 1_000_000:
+        if type(self.episode_count) is not int or not 8 <= self.episode_count <= 1_000_000:
             raise ValueError("champion snapshot episode count is invalid")
+        if type(self.qualified) is not bool:
+            raise ValueError("champion snapshot qualification must be an explicit boolean")
         names = tuple(name for name, _ in self.metrics)
         if not self.metrics or len(set(names)) != len(names):
             raise ValueError("champion snapshot metrics must be non-empty and unique")
@@ -79,7 +81,11 @@ class ChampionSnapshot:
             raise ValueError("champion snapshot metric name is invalid")
         if any(not math.isfinite(value) for _, value in self.metrics):
             raise ValueError("champion snapshot metrics must be finite")
-        if self.activation_ceiling != "SIM_ONLY" or self.hardware_command_sent:
+        if (
+            self.activation_ceiling != "SIM_ONLY"
+            or type(self.hardware_command_sent) is not bool
+            or self.hardware_command_sent
+        ):
             raise ValueError("champion snapshot must remain SIM_ONLY")
 
     @property
@@ -122,7 +128,9 @@ def evaluate_paired_champion(
         raise ValueError("champion comparison must use an identical episode count")
     if not metrics or len({item.name for item in metrics}) != len(metrics):
         raise ValueError("champion gate metric specs must be non-empty and unique")
-    if not 1 <= minimum_improved_metrics <= len(metrics):
+    if type(minimum_improved_metrics) is not int or not 1 <= minimum_improved_metrics <= len(
+        metrics
+    ):
         raise ValueError("champion gate improved-metric floor is invalid")
     expected = {item.name for item in metrics}
     if set(parent.metric_map) != expected or set(candidate.metric_map) != expected:

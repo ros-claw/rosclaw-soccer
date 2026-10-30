@@ -93,3 +93,26 @@ def test_paired_champion_fails_closed_on_wrong_lineage_or_hardware_claim() -> No
         )
     with pytest.raises(ValueError, match="SIM_ONLY"):
         replace(child, hardware_command_sent=True)
+
+
+@pytest.mark.parametrize("value", ["false", 1, None])
+def test_qualification_must_be_boolean_not_truthy(value: object) -> None:
+    child = _snapshot(child=True, save=0.35, angular=2.8)
+    with pytest.raises(ValueError, match="explicit boolean"):
+        replace(child, qualified=value)
+
+
+@pytest.mark.parametrize("value", [96.0, True, "96"])
+def test_episode_count_must_be_an_integer(value: object) -> None:
+    child = _snapshot(child=True, save=0.35, angular=2.8)
+    with pytest.raises(ValueError, match="episode count"):
+        replace(child, episode_count=value)
+
+
+def test_bool_is_not_a_valid_improvement_count() -> None:
+    parent = _snapshot(child=False, save=0.30, angular=3.0)
+    child = _snapshot(child=True, save=0.35, angular=2.8)
+    with pytest.raises(ValueError, match="improved-metric floor"):
+        evaluate_paired_champion(
+            parent=parent, candidate=child, metrics=_specs(), minimum_improved_metrics=True
+        )
