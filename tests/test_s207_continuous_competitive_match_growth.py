@@ -79,6 +79,21 @@ def test_match_exam_rejects_training_return_before_creating_evidence(tmp_path: P
     assert not output.exists()
 
 
+def test_match_exam_rejects_out_of_play_launch_before_creating_evidence(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    scenario = replace(
+        default_continuous_match_scenario(), ball_initial_position_m=(-2.8, 1.3, 0.115)
+    )
+    fixture = SimpleNamespace(goal=SimpleNamespace(plane_x_m=7.5, ball_radius_m=0.115))
+    output = tmp_path / "exam"
+    with pytest.raises(ValueError, match="whole ball must start inside"):
+        run_continuous_competitive_match_growth(
+            evidence_dir=output, asset_root=tmp_path, fixture=fixture, scenario=scenario
+        )
+    assert not output.exists()
+
+
 def test_validator_rejects_training_return_even_when_report_says_no_state_writes(
     tmp_path: Path,
 ) -> None:

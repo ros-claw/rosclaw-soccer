@@ -44,7 +44,7 @@ from rosclaw_soccer.training.independent_team_growth import (
     IndependentTeamFixture,
     build_independent_three_vs_three_fixture,
 )
-from rosclaw_soccer.world.match_boundary import uninterrupted_in_play
+from rosclaw_soccer.world.match_boundary import require_in_play_ball_launch, uninterrupted_in_play
 from rosclaw_soccer.world.multi_player import G1PitchPlayerSpec
 
 _LAYOUT = (
@@ -218,10 +218,16 @@ def run_continuous_competitive_match_growth(
     root = evidence_dir.expanduser().resolve()
     if root.exists() and any(root.iterdir()):
         raise ValueError("continuous-match evidence directory must be empty")
-    root.mkdir(parents=True, exist_ok=True)
     fixture = fixture or build_continuous_competitive_fixture(asset_root)
     scenario = scenario or default_continuous_match_scenario()
     world = world_config or default_continuous_match_config()
+    require_in_play_ball_launch(
+        scenario.ball_initial_position_m,
+        left_x=world.left_goal_plane_x_m,
+        right_x=fixture.goal.plane_x_m,
+        radius=fixture.goal.ball_radius_m,
+    )
+    root.mkdir(parents=True, exist_ok=True)
     teacher = teacher_config or G1LocomotionContactTeacherConfig()
     option = option_config or default_continuous_match_options(world)
     motor_capability_parity = len(fixture.players) != 8 or (

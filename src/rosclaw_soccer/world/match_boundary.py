@@ -10,6 +10,40 @@ import numpy as np
 from numpy.typing import NDArray
 
 
+def require_in_play_ball_launch(
+    position: Sequence[float],
+    *,
+    left_x: float,
+    right_x: float,
+    radius: float,
+    half_width: float = 3.0,
+) -> None:
+    """Require a whole ball initially inside the declared small-sided pitch.
+
+    This is a conservative match-exam input check, not physics or safety
+    qualification. It intentionally does not alter general-purpose simulator
+    scenarios such as out-of-play recovery and does not move the ball.
+    """
+    try:
+        if len(position) != 3:
+            raise ValueError("three-dimensional ball launch required")
+        x, y, z = (float(v) for v in position)
+        geometry = (float(left_x), float(right_x), float(radius), float(half_width))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("finite match launch and geometry required") from exc
+    left, right, ball_radius, width = geometry
+    if (
+        not all(math.isfinite(v) for v in (x, y, z, *geometry))
+        or ball_radius <= 0
+        or width <= ball_radius
+        or right - left <= 2 * ball_radius
+        or not left + ball_radius <= x <= right - ball_radius
+        or abs(y) > width - ball_radius
+        or z < ball_radius - 0.005
+    ):
+        raise ValueError("whole ball must start inside the declared match pitch")
+
+
 def ball_exit_reason(
     position: Sequence[float],
     *,
@@ -64,7 +98,7 @@ def uninterrupted_in_play(trajectory: dict[str, NDArray[Any]]) -> dict[str, Any]
         raise ValueError("unsupported match boundary geometry")
     for frame in range(count):
         reason = ball_exit_reason(
-            ball[frame, :3],
+            ball[frame, :3].tolist(),
             left_x=left,
             right_x=right,
             radius=radius,
