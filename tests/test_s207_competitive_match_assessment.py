@@ -185,3 +185,163 @@ def test_competitive_match_rejects_nonfinite_telemetry() -> None:
             strict_replay=True,
             world_safe=True,
         )
+
+
+def test_zero_force_contact_cannot_create_physical_events() -> None:
+    trajectory = _trajectory()
+    trajectory["ball_contact_force_n"][:] = 0.0
+    result = assess_competitive_match_trajectory(
+        trajectory=trajectory,
+        trajectory_hash=hash_json({"trajectory": "zero-force"}),
+        agent_ids=_AGENTS,
+        roles=_ROLES,
+        strict_replay=True,
+        world_safe=True,
+    )
+    assert {event.skill for event in result.events} <= {CompetitiveSkill.SPRINT}
+
+
+@pytest.mark.parametrize("interruption_frame", [30, 40, 50])
+def test_body_collision_interrupts_individual_pass_evidence(interruption_frame: int) -> None:
+    trajectory = _trajectory()
+    trajectory["ball_nonfoot_contact_agent_code"][interruption_frame] = 1
+    result = assess_competitive_match_trajectory(
+        trajectory=trajectory,
+        trajectory_hash=hash_json({"trajectory": "interrupted-pass"}),
+        agent_ids=_AGENTS,
+        roles=_ROLES,
+        strict_replay=True,
+        world_safe=True,
+    )
+    assert not result.gates["pass_observed"]
+    assert all(event.skill is not CompetitiveSkill.PASS for event in result.events)
+
+
+def test_body_collision_interrupts_dribble_and_win_evidence() -> None:
+    trajectory = _trajectory()
+    trajectory["ball_nonfoot_contact_agent_code"][[10, 20]] = 1
+    result = assess_competitive_match_trajectory(
+        trajectory=trajectory,
+        trajectory_hash=hash_json({"trajectory": "interrupted-dribble-win"}),
+        agent_ids=_AGENTS,
+        roles=_ROLES,
+        strict_replay=True,
+        world_safe=True,
+    )
+    assert all(
+        event.agent_id != "red.playmaker"
+        for event in result.events
+        if event.skill is CompetitiveSkill.DRIBBLE
+    )
+    assert not result.gates["ball_win_observed"]
+
+
+def test_simultaneous_body_collision_cannot_create_clean_shot() -> None:
+    trajectory = _trajectory()
+    trajectory["ball_nonfoot_contact_agent_code"][60] = 3
+    result = assess_competitive_match_trajectory(
+        trajectory=trajectory,
+        trajectory_hash=hash_json({"trajectory": "mixed-shot-contact"}),
+        agent_ids=_AGENTS,
+        roles=_ROLES,
+        strict_replay=True,
+        world_safe=True,
+    )
+    assert not result.gates["shot_observed"]
+    assert not result.gates["save_observed"]
+
+
+def test_intermediate_player_contact_cannot_be_claimed_as_direct_save() -> None:
+    trajectory = _trajectory()
+    trajectory["ball_contact_agent_code"][70] = 1
+    trajectory["ball_contact_effector_code"][70] = 2
+    trajectory["ball_contact_force_n"][70] = 40.0
+    result = assess_competitive_match_trajectory(
+        trajectory=trajectory,
+        trajectory_hash=hash_json({"trajectory": "deflected-before-save"}),
+        agent_ids=_AGENTS,
+        roles=_ROLES,
+        strict_replay=True,
+        world_safe=True,
+    )
+    assert result.gates["shot_observed"]
+    assert not result.gates["save_observed"]
+
+
+def test_existing_fast_ball_is_not_automatically_a_shot() -> None:
+    trajectory = _trajectory()
+    trajectory["ball_velocity"][:75, 0] = 4.2
+    result = assess_competitive_match_trajectory(
+        trajectory=trajectory,
+        trajectory_hash=hash_json({"trajectory": "already-fast-ball"}),
+        agent_ids=_AGENTS,
+        roles=_ROLES,
+        strict_replay=True,
+        world_safe=True,
+    )
+    assert not result.gates["shot_observed"]
+
+
+def test_nonpositive_contact_force_is_not_physical_evidence() -> None:
+    trajectory = _trajectory()
+    trajectory["ball_contact_force_n"][:] = 1.0
+    result = assess_competitive_match_trajectory(
+        trajectory=trajectory,
+        trajectory_hash=hash_json({"trajectory": "exact-threshold"}),
+        agent_ids=_AGENTS,
+        roles=_ROLES,
+        strict_replay=True,
+        world_safe=True,
+    )
+    assert {event.skill for event in result.events} <= {CompetitiveSkill.SPRINT}
+
+
+def test_later_other_player_impact_cannot_create_a_shot() -> None:
+    trajectory = _trajectory()
+    trajectory["ball_velocity"][:, :] = 0.0
+    trajectory["ball_velocity"][65:75, 0] = 4.2
+    trajectory["ball_contact_agent_code"][65] = 1
+    trajectory["ball_contact_effector_code"][65] = 2
+    trajectory["ball_contact_force_n"][65] = 40.0
+    result = assess_competitive_match_trajectory(
+        trajectory=trajectory,
+        trajectory_hash=hash_json({"trajectory": "later-unrelated-impact"}),
+        agent_ids=_AGENTS,
+        roles=_ROLES,
+        strict_replay=True,
+        world_safe=True,
+    )
+    assert not result.gates["shot_observed"]
+
+
+def test_later_impact_cannot_be_attributed_to_goalkeeper_save() -> None:
+    trajectory = _trajectory()
+    trajectory["ball_velocity"][75, 0] = 4.2
+    trajectory["ball_contact_agent_code"][76] = 1
+    trajectory["ball_contact_effector_code"][76] = 2
+    trajectory["ball_contact_force_n"][76] = 40.0
+    result = assess_competitive_match_trajectory(
+        trajectory=trajectory,
+        trajectory_hash=hash_json({"trajectory": "late-save-impact"}),
+        agent_ids=_AGENTS,
+        roles=_ROLES,
+        strict_replay=True,
+        world_safe=True,
+    )
+    assert result.gates["shot_observed"]
+    assert not result.gates["save_observed"]
+
+
+def test_negative_force_and_invalid_nonfoot_identity_are_rejected() -> None:
+    for key, value in (("ball_contact_force_n", -0.1), ("ball_nonfoot_contact_agent_code", 5)):
+        trajectory = _trajectory()
+        trajectory[key][40] = value
+        with pytest.raises(ValueError, match="trajectory shape or clock is invalid"):
+            assess_competitive_match_trajectory(
+                trajectory=trajectory,
+                trajectory_hash=hash_json({"invalid": key}),
+                agent_ids=_AGENTS,
+                roles=_ROLES,
+                strict_replay=True,
+                world_safe=True,
+            )

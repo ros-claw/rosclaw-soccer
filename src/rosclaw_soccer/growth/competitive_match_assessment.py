@@ -1,10 +1,13 @@
 """Physics-first assessment for continuous competitive soccer rollouts.
 
 The assessor converts one immutable multi-G1 trajectory into conservative
-skill evidence.  Intent labels are insufficient: a pass, interception, shot,
-or save is credited only when the corresponding foot contact and ball-state
-transition occur in the same monotonic MuJoCo trace.  The module is simulator
-agnostic and grants no robot, ROS, actuator, or hardware authority.
+skill evidence. Intent labels are insufficient: a pass, interception, shot,
+or save is credited only when the corresponding force-bearing contact and
+ball-state transition occur in the same monotonic MuJoCo trace. Version 2
+thresholds reject sampled non-foot interruptions and unrelated later impacts;
+old reports retain their original threshold hash. This sampled evidence is
+not a substitute for substep contact auditing or a full physical task proof.
+The module is simulator agnostic and grants no robot or hardware authority.
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ class CompetitiveSkill(StrEnum):
 
 @dataclass(frozen=True)
 class CompetitiveMatchThresholds:
+    minimum_contact_force_n: float = 1.0
     contact_onset_gap_sec: float = 0.12
     maximum_commitment_lag_sec: float = 0.30
     maximum_link_gap_sec: float = 6.0
@@ -45,13 +49,15 @@ class CompetitiveMatchThresholds:
     minimum_sprint_duration_sec: float = 0.35
     minimum_shot_speed_mps: float = 3.0
     minimum_shot_goalward_speed_mps: float = 1.5
+    minimum_shot_velocity_change_mps: float = 0.10
     minimum_save_velocity_change_mps: float = 0.50
     activation_ceiling: str = "SIM_ONLY"
     hardware_authorized: bool = False
-    schema_version: str = "rosclaw_soccer.competitive_match_thresholds.v1"
+    schema_version: str = "rosclaw_soccer.competitive_match_thresholds.v2"
 
     def __post_init__(self) -> None:
         values = (
+            self.minimum_contact_force_n,
             self.contact_onset_gap_sec,
             self.maximum_commitment_lag_sec,
             self.maximum_link_gap_sec,
@@ -61,10 +67,12 @@ class CompetitiveMatchThresholds:
             self.minimum_sprint_duration_sec,
             self.minimum_shot_speed_mps,
             self.minimum_shot_goalward_speed_mps,
+            self.minimum_shot_velocity_change_mps,
             self.minimum_save_velocity_change_mps,
         )
         if (
             any(not math.isfinite(value) for value in values)
+            or not 1.0 <= self.minimum_contact_force_n <= 20.0
             or not 0.04 <= self.contact_onset_gap_sec <= 0.30
             or not 0.05 <= self.maximum_commitment_lag_sec <= 0.50
             or not 0.5 <= self.maximum_link_gap_sec <= 6.0
@@ -74,6 +82,7 @@ class CompetitiveMatchThresholds:
             or not 0.10 <= self.minimum_sprint_duration_sec <= 2.0
             or not 1.0 <= self.minimum_shot_speed_mps <= 12.0
             or not 0.5 <= self.minimum_shot_goalward_speed_mps <= self.minimum_shot_speed_mps
+            or not 0.10 <= self.minimum_shot_velocity_change_mps <= 2.0
             or not 0.20 <= self.minimum_save_velocity_change_mps <= 5.0
             or self.activation_ceiling != "SIM_ONLY"
             or self.hardware_authorized
@@ -269,6 +278,9 @@ def assess_competitive_match_trajectory(
         or np.any(np.diff(time) <= 0.0)
         or np.any(contact_code < 0)
         or np.any(contact_code > len(agent_ids))
+        or np.any(contact_force < 0)
+        or np.any(nonfoot_code < 0)
+        or np.any(nonfoot_code > len(agent_ids))
         or np.any(effector_code < 0)
         or np.any(effector_code > 4)
         or np.any((contact_code == 0) != (effector_code == 0))
@@ -290,10 +302,11 @@ def assess_competitive_match_trajectory(
         contact_force=contact_force,
         agent_ids=agent_ids,
         onset_gap_sec=active.contact_onset_gap_sec,
+        minimum_force_n=active.minimum_contact_force_n,
     )
     events: list[CompetitiveSkillEvent] = []
 
-    dribble = _find_dribble(contacts, active)
+    dribble = _find_dribble(contacts, active, nonfoot_code)
     if dribble is not None:
         events.append(_event(CompetitiveSkill.DRIBBLE, dribble[1], target=dribble[0].agent_id))
     pass_link = _find_pass(
@@ -301,12 +314,13 @@ def assess_competitive_match_trajectory(
         time=time,
         source_code=pass_source_code,
         target_code=pass_target_code,
+        nonfoot_code=nonfoot_code,
         agent_ids=agent_ids,
         active=active,
     )
     if pass_link is not None:
         events.append(_event(CompetitiveSkill.PASS, pass_link[0], target=pass_link[1].agent_id))
-    ball_win = _find_ball_win(contacts, active)
+    ball_win = _find_ball_win(contacts, active, nonfoot_code)
     if ball_win is not None:
         events.append(_event(CompetitiveSkill.BALL_WIN, ball_win[1], target=ball_win[0].agent_id))
     sprint = _find_sprint(trajectory, time, agent_ids, active)
@@ -333,6 +347,7 @@ def assess_competitive_match_trajectory(
         contacts,
         time=time,
         ball_velocity=ball_velocity,
+        nonfoot_code=nonfoot_code,
         strike_lease_code=strike_lease_code,
         agent_ids=agent_ids,
         roles=roles,
@@ -340,7 +355,7 @@ def assess_competitive_match_trajectory(
     )
     if shot is not None:
         events.append(_event(CompetitiveSkill.SHOT, shot))
-    save = _find_save(contacts, ball_velocity, roles, shot, active)
+    save = _find_save(contacts, ball_velocity, roles, shot, active, nonfoot_code)
     if save is not None:
         events.append(
             _event(CompetitiveSkill.SAVE, save, target=None if shot is None else shot.agent_id)
@@ -406,10 +421,11 @@ def _contact_onsets(
     contact_force: NDArray[np.float64],
     agent_ids: tuple[str, ...],
     onset_gap_sec: float,
+    minimum_force_n: float,
 ) -> tuple[_AthleteContact, ...]:
     contacts: list[_AthleteContact] = []
     last_frame_by_agent: dict[str, int] = {}
-    for frame in np.flatnonzero(contact_code > 0):
+    for frame in np.flatnonzero((contact_code > 0) & (contact_force > minimum_force_n)):
         code = int(contact_code[frame])
         agent_id = agent_ids[code - 1]
         previous = last_frame_by_agent.get(agent_id)
@@ -432,7 +448,9 @@ def _contact_onsets(
 
 
 def _find_dribble(
-    contacts: tuple[_AthleteContact, ...], active: CompetitiveMatchThresholds
+    contacts: tuple[_AthleteContact, ...],
+    active: CompetitiveMatchThresholds,
+    nonfoot_code: NDArray[np.float64],
 ) -> tuple[_AthleteContact, _AthleteContact] | None:
     for first, second in zip(contacts, contacts[1:], strict=False):
         if (
@@ -440,6 +458,7 @@ def _find_dribble(
             and first.is_foot
             and second.is_foot
             and second.time_sec - first.time_sec <= active.maximum_link_gap_sec
+            and not np.any(nonfoot_code[first.frame : second.frame + 1] > 0)
             and float(np.linalg.norm(second.ball_position[:2] - first.ball_position[:2]))
             >= active.minimum_dribble_progress_m
         ):
@@ -453,6 +472,7 @@ def _find_pass(
     time: NDArray[np.float64],
     source_code: NDArray[np.float64],
     target_code: NDArray[np.float64],
+    nonfoot_code: NDArray[np.float64],
     agent_ids: tuple[str, ...],
     active: CompetitiveMatchThresholds,
 ) -> tuple[_AthleteContact, _AthleteContact] | None:
@@ -463,6 +483,7 @@ def _find_pass(
             and second.is_foot
             and first.agent_id != second.agent_id
             and second.time_sec - first.time_sec <= active.maximum_link_gap_sec
+            and not np.any(nonfoot_code[first.frame : second.frame + 1] > 0)
             and float(np.linalg.norm(second.ball_position[:2] - first.ball_position[:2]))
             >= active.minimum_pass_progress_m
             and _commitment_observed(
@@ -480,7 +501,9 @@ def _find_pass(
 
 
 def _find_ball_win(
-    contacts: tuple[_AthleteContact, ...], active: CompetitiveMatchThresholds
+    contacts: tuple[_AthleteContact, ...],
+    active: CompetitiveMatchThresholds,
+    nonfoot_code: NDArray[np.float64],
 ) -> tuple[_AthleteContact, _AthleteContact] | None:
     for first, second in zip(contacts, contacts[1:], strict=False):
         if (
@@ -488,6 +511,7 @@ def _find_ball_win(
             and first.is_foot
             and second.is_foot
             and second.time_sec - first.time_sec <= active.maximum_link_gap_sec
+            and not np.any(nonfoot_code[first.frame : second.frame + 1] > 0)
         ):
             return first, second
     return None
@@ -523,13 +547,18 @@ def _find_shot(
     *,
     time: NDArray[np.float64],
     ball_velocity: NDArray[np.float64],
+    nonfoot_code: NDArray[np.float64],
     strike_lease_code: NDArray[np.float64],
     agent_ids: tuple[str, ...],
     roles: Mapping[str, MatchRole],
     active: CompetitiveMatchThresholds,
 ) -> _AthleteContact | None:
     for contact in contacts:
-        if roles[contact.agent_id] is not MatchRole.FINISHER or not contact.is_foot:
+        if (
+            roles[contact.agent_id] is not MatchRole.FINISHER
+            or not contact.is_foot
+            or nonfoot_code[contact.frame] > 0
+        ):
             continue
         agent_code = agent_ids.index(contact.agent_id) + 1
         commitment_end = int(
@@ -542,10 +571,23 @@ def _find_shot(
         if not np.any(strike_lease_code[contact.frame : commitment_end] == agent_code):
             continue
         end = min(len(ball_velocity), contact.frame + 21)
+        subsequent = [other.frame for other in contacts if other.frame > contact.frame]
+        if subsequent:
+            end = min(end, subsequent[0])
+        body_hits = np.flatnonzero(nonfoot_code[contact.frame + 1 : end] > 0)
+        if len(body_hits):
+            end = min(end, contact.frame + 1 + int(body_hits[0]))
         window = ball_velocity[contact.frame : end, :3]
+        before = ball_velocity[max(0, contact.frame - 1), :3]
+        immediate = window[:2]
         attacking_sign = 1.0 if contact.team_id == "red" else -1.0
         if (
-            float(np.max(np.linalg.norm(window, axis=1))) >= active.minimum_shot_speed_mps
+            contact.frame > 0
+            and len(immediate) > 0
+            and float(np.max(np.linalg.norm(immediate - before, axis=1)))
+            >= active.minimum_shot_velocity_change_mps
+            and len(window) > 0
+            and float(np.max(np.linalg.norm(window, axis=1))) >= active.minimum_shot_speed_mps
             and float(np.max(attacking_sign * window[:, 0]))
             >= active.minimum_shot_goalward_speed_mps
         ):
@@ -590,20 +632,26 @@ def _find_save(
     roles: Mapping[str, MatchRole],
     shot: _AthleteContact | None,
     active: CompetitiveMatchThresholds,
+    nonfoot_code: NDArray[np.float64],
 ) -> _AthleteContact | None:
     if shot is None:
         return None
     for contact in contacts:
+        if contact.time_sec <= shot.time_sec:
+            continue
         if (
-            contact.time_sec <= shot.time_sec
-            or contact.time_sec - shot.time_sec > active.maximum_link_gap_sec
+            contact.time_sec - shot.time_sec > active.maximum_link_gap_sec
             or roles[contact.agent_id] is not MatchRole.GOALKEEPER
             or contact.team_id == shot.team_id
             or not contact.is_glove
+            or np.any(nonfoot_code[shot.frame : contact.frame + 1] > 0)
         ):
-            continue
+            return None
         before = ball_velocity[max(0, contact.frame - 1), :3]
-        after = ball_velocity[min(len(ball_velocity) - 1, contact.frame + 1), :3]
+        # The contact force is the maximum within this sampled frame.  Using
+        # the following frame could attribute another player's later impulse
+        # to the goalkeeper's glove.
+        after = ball_velocity[contact.frame, :3]
         if float(np.linalg.norm(after - before)) >= active.minimum_save_velocity_change_mps:
             return contact
     return None
