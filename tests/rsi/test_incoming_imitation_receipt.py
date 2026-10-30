@@ -2,8 +2,23 @@ import pytest
 
 from scripts.rsi_probe_motiondecode_incoming import (
     imitation_reference_bound,
+    require_candidate_filter_binding,
     require_unpromoted_imitation,
 )
+
+
+def test_filtered_candidate_replay_is_bound_to_training_interface():
+    require_candidate_filter_binding(requested=True, kind="candidate", trained_filter=True)
+    require_candidate_filter_binding(requested=False, kind="candidate", trained_filter=False)
+    require_candidate_filter_binding(requested=False, kind="imitation", trained_filter=False)
+    with pytest.raises(ValueError):
+        require_candidate_filter_binding(requested=False, kind="candidate", trained_filter=True)
+    with pytest.raises(ValueError):
+        require_candidate_filter_binding(requested=True, kind="candidate", trained_filter=False)
+    with pytest.raises(ValueError):
+        require_candidate_filter_binding(requested=True, kind="imitation", trained_filter=True)
+    with pytest.raises(ValueError):
+        require_candidate_filter_binding(requested=1, kind="candidate", trained_filter=True)
 
 
 def test_candidate_receipt_does_not_require_imitation_artifact():

@@ -25,6 +25,24 @@ def require_unpromoted_imitation(receipt, *, kind="imitation"):
         raise ValueError("unpromoted actual imitation training receipt required")
 
 
+def require_candidate_filter_binding(*, requested: bool, kind: str, trained_filter: bool) -> None:
+    """Do not silently change a candidate's executed-action training interface."""
+    if (
+        type(requested) is not bool
+        or type(trained_filter) is not bool
+        or kind
+        not in (
+            "candidate",
+            "imitation",
+        )
+    ):
+        raise ValueError("explicit candidate filter binding required")
+    if requested and (kind != "candidate" or not trained_filter):
+        raise ValueError("filtered replay requires a candidate trained with the filter")
+    if kind == "candidate" and trained_filter and not requested:
+        raise ValueError("candidate trained with a filter must be replayed with it")
+
+
 def imitation_reference_bound(declaration, reference_path, reference_hash):
     """Allow the training reference or an exact path pinned at training time."""
     inputs = declaration.get("input_file_hashes")
@@ -70,6 +88,7 @@ def main():
     p.add_argument("--freeze-teacher-ankles", action="store_true")
     p.add_argument("--isolate-teacher-rejections", action="store_true")
     p.add_argument("--target-rate-filter", action="store_true")
+    p.add_argument("--candidate-filter-replay", action="store_true")
     p.add_argument("--ankle-rate-filter", action="store_true")
     p.add_argument("--strict-native-capture", action="store_true")
     p.add_argument("--experimental-imitation-receipt", type=Path)
@@ -112,8 +131,18 @@ def main():
         != 1
     ):
         raise ValueError("experimental imitation requires exact completed receipt and hash")
+    if a.candidate_filter_replay and not (
+        a.experimental_imitation_receipt
+        and a.experimental_actor_kind == "candidate"
+        and a.target_rate_filter
+    ):
+        raise ValueError(
+            "explicit candidate receipt and target filter required for filtered replay"
+        )
     if a.experimental_imitation_receipt and (
-        a.intercept_teacher or a.target_rate_filter or a.ankle_rate_filter
+        a.intercept_teacher
+        or a.ankle_rate_filter
+        or (a.target_rate_filter and not a.candidate_filter_replay)
     ):
         raise ValueError("standalone own-feedback imitation evaluation required")
     if a.experimental_actor_kind != "imitation" and not a.experimental_imitation_receipt:
@@ -168,6 +197,11 @@ def main():
         ):
             raise ValueError("exact imitation training declaration required")
         imitation_declaration = json.loads(imitation_declaration_path.read_text())
+        require_candidate_filter_binding(
+            requested=a.candidate_filter_replay,
+            kind=a.experimental_actor_kind,
+            trained_filter=imitation_declaration.get("train_target_rate_filter") is True,
+        )
         if (
             imitation_declaration.get("source_head") != imitation.get("source_head")
             or not imitation_reference_bound(imitation_declaration, ref_path, a.reference_hash)
@@ -349,6 +383,7 @@ def main():
             teacher_unlearned=a.intercept_teacher,
             isolate_teacher_rejections=a.isolate_teacher_rejections,
             target_rate_filter=a.target_rate_filter,
+            candidate_filter_replay=a.candidate_filter_replay,
             max_total_target_step_rad=0.08 if a.target_rate_filter else None,
             ankle_rate_filter=a.ankle_rate_filter,
             strict_native_capture=a.strict_native_capture,
@@ -544,6 +579,7 @@ def main():
                 parent_relative_teacher=a.parent_relative_teacher,
                 freeze_teacher_ankles=a.freeze_teacher_ankles,
                 target_rate_filter=a.target_rate_filter,
+                candidate_filter_replay=a.candidate_filter_replay,
                 ankle_rate_filter=a.ankle_rate_filter,
                 strict_native_capture=a.strict_native_capture,
                 ankle_joint_indices=list(ANKLE_JOINT_INDICES) if a.ankle_rate_filter else None,
