@@ -6,6 +6,24 @@ from scripts.rsi_probe_motiondecode_incoming import (
 )
 
 
+def test_candidate_receipt_does_not_require_imitation_artifact():
+    receipt = {
+        "status": "INCOMING_PPO_PILOT_REQUIRES_INDEPENDENT_EXAM",
+        "checkpoint_hash": "sha256:candidate",
+        "imitation_hash": None,
+        "hardware_authorized": False,
+        "promotion_authorized": False,
+        "independent_fresh_exam": False,
+    }
+    require_unpromoted_imitation(receipt, kind="candidate")
+    with pytest.raises(ValueError):
+        require_unpromoted_imitation(receipt, kind="imitation")
+    with pytest.raises(ValueError):
+        require_unpromoted_imitation({**receipt, "checkpoint_hash": None}, kind="candidate")
+    with pytest.raises(ValueError):
+        require_unpromoted_imitation(receipt, kind="unknown")
+
+
 def test_imitation_receipt_requires_exact_training_fresh_exam_field():
     receipt = dict(
         status="INCOMING_PPO_PILOT_REQUIRES_INDEPENDENT_EXAM",

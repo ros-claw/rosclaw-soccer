@@ -10,10 +10,13 @@ import subprocess
 from pathlib import Path
 
 
-def require_unpromoted_imitation(receipt):
+def require_unpromoted_imitation(receipt, *, kind="imitation"):
+    if kind not in ("imitation", "candidate"):
+        raise ValueError("explicit supported experimental actor required")
+    required_hash = "imitation_hash" if kind == "imitation" else "checkpoint_hash"
     if (
         receipt.get("status") != "INCOMING_PPO_PILOT_REQUIRES_INDEPENDENT_EXAM"
-        or not receipt.get("imitation_hash")
+        or not receipt.get(required_hash)
         or any(
             receipt.get(key) is not False
             for key in ("hardware_authorized", "promotion_authorized", "independent_fresh_exam")
@@ -152,7 +155,7 @@ def main():
         ):
             raise ValueError("exact completed imitation receipt required")
         imitation = json.loads(a.experimental_imitation_receipt.read_text())
-        require_unpromoted_imitation(imitation)
+        require_unpromoted_imitation(imitation, kind=a.experimental_actor_kind)
         actor_file = "candidate.pt" if a.experimental_actor_kind == "candidate" else "imitation.pt"
         actor_hash_key = (
             "checkpoint_hash" if a.experimental_actor_kind == "candidate" else "imitation_hash"
