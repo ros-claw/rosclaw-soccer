@@ -625,8 +625,19 @@ def _validate_on_policy(policy: NearBallResidualPolicy, trace: dict[str, Any]) -
         raise ValueError("rollout was not sampled from this frozen parent policy")
 
 
-def _collect(job: tuple[str, str, str, float, bool, int, float, bool, bool]) -> str:
-    assets, destination, checkpoint, duration, blue, seed, offset, prospective, clearance = job
+def _collect(job: tuple[str, str, str, float, bool, int, float, bool, bool, bool]) -> str:
+    (
+        assets,
+        destination,
+        checkpoint,
+        duration,
+        blue,
+        seed,
+        offset,
+        prospective,
+        clearance,
+        strict,
+    ) = job
     run_probe(
         asset_root=Path(assets),
         output=Path(destination),
@@ -642,6 +653,7 @@ def _collect(job: tuple[str, str, str, float, bool, int, float, bool, bool]) -> 
         forward_receiver_lane=prospective,
         contact_policy=OwnedBallContactPolicy() if prospective else None,
         all_role_clearance=clearance,
+        strict_receive_handoff=strict,
     )
     return str(Path(destination) / "probe.json")
 
@@ -687,7 +699,7 @@ def train(
         or (role_batch_rounds != 1 and not role_curriculum)
         or reward_shaping not in REWARD_SHAPING_MODES
         or reward_shaping == "in_play_motor_task_v1"
-        or (strict_receive_handoff and not role_curriculum)
+        or (strict_receive_handoff and not (prospective_curriculum and all_role_clearance))
         or (role_curriculum and not (prospective_curriculum and all_role_clearance))
         or (
             contact_control_profile is not None
@@ -780,6 +792,7 @@ def train(
                 offsets[iteration % len(offsets)],
                 prospective_curriculum,
                 all_role_clearance,
+                strict_receive_handoff,
             )
             for blue in (False, True)
         ]
@@ -893,6 +906,7 @@ def train(
                     forward_receiver_lane=prospective_curriculum,
                     contact_policy=OwnedBallContactPolicy() if prospective_curriculum else None,
                     all_role_clearance=all_role_clearance,
+                    strict_receive_handoff=strict_receive_handoff,
                 )
                 validate_probe(destination / "probe.json")
                 manifest["evaluation"].append(
