@@ -1176,6 +1176,7 @@ def simulate_independent_team_world(
     receiving_feedback: ReceivingFeedbackProvider | None = None,
     capture_oracle_authority: bool = False,
     capture_locomotion_memory: bool = False,
+    capture_team_native_states: bool = False,
     capture_initial_physics: bool = False,
     capture_initial_support: bool = False,
     physics_checkpoint_frame: int = 0,
@@ -1193,6 +1194,8 @@ def simulate_independent_team_world(
     """
 
     active = config or IndependentTeamWorldConfig()
+    if type(capture_team_native_states) is not bool:
+        raise ValueError("explicit read-only team-state capture flag required")
     if type(capture_residual_target_authority) is not bool or (
         capture_residual_target_authority and near_ball_policy is None
     ):
@@ -1826,6 +1829,8 @@ def simulate_independent_team_world(
     agent_codes = {
         controller.cell.agent_id: index + 1 for index, controller in enumerate(controllers)
     }
+    if capture_team_native_states:
+        trace["team_native_agent_ids"] = [controller.cell.agent_id for controller in controllers]
     last_ball_contact_agent_id: str | None = None
     last_ball_contact_time_sec = -math.inf
     student_first_foot_contact_time: dict[str, float | None] = {agent: None for agent in students}
@@ -2043,6 +2048,20 @@ def simulate_independent_team_world(
         # later contact rewards must not infer a pre-contact state from the
         # post-step ball velocity or from a planner's intended pass.
         trace["ball_control_entry_velocity"].append(data.qvel[ball_qvel : ball_qvel + 6].copy())
+        if capture_team_native_states:
+            from rosclaw_soccer.rsi.team_native_state_capture import (
+                capture_team_native_states as capture_states,
+            )
+
+            team_qpos, team_qvel = capture_states(
+                qpos=data.qpos,
+                qvel=data.qvel,
+                controllers=controllers,
+                ball_qpos=ball_qpos,
+                ball_qvel=ball_qvel,
+            )
+            trace.setdefault("team_native_pre_control_qpos", []).append(team_qpos)
+            trace.setdefault("team_native_pre_control_qvel", []).append(team_qvel)
         fresh_preparation_handshake: PassReceiveHandshake | None = None
         for controller in controllers:
             _fill_locomotion_state(controller, data, ball_body, ball_qvel)
