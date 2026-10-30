@@ -11,7 +11,9 @@ import argparse
 import json
 import math
 import multiprocessing
+import os
 import re
+import tempfile
 from collections.abc import Mapping
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict
@@ -53,13 +55,31 @@ from rosclaw_soccer.training.role_behavior_anchor import RoleBehaviorAnchor
 PHYSICAL_REWARD_CONTRACT = "rosclaw_soccer.physical_reward.force_gate.v2"
 
 
+def _persist_training_manifest(output: Path, manifest: Mapping[str, Any]) -> None:
+    """Publish a complete progress snapshot without truncating the previous one."""
+    payload = json.dumps(manifest, indent=2, allow_nan=False) + "\n"
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=output, prefix=".training-", suffix=".tmp", delete=False
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, output / "training.json")
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def physical_rewards(
     trace: dict[str, Any],
     ids: tuple[str, ...],
     *,
     reward_shaping: str = "legacy",
     gamma: float = 0.99,
-) -> np.ndarray:
+) -> np.ndarray[Any, Any]:
     """Foot approach + directed contact, minus tilt, impacts and residual effort.
 
     No reward for a planner merely declaring PASS. Ball motion is rewarded only
@@ -325,8 +345,12 @@ def physical_rewards(
 
 
 def episodic_gae(
-    rewards: np.ndarray, values: np.ndarray, *, gamma: float = 0.99, trace_decay: float = 0.95
-) -> tuple[np.ndarray, np.ndarray]:
+    rewards: np.ndarray[Any, Any],
+    values: np.ndarray[Any, Any],
+    *,
+    gamma: float = 0.99,
+    trace_decay: float = 0.95,
+) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
     if not 0.9 <= gamma < 1 or not 0.9 <= trace_decay < 1:
         raise ValueError("bounded control-rate credit parameters required")
     if rewards.shape != values.shape or not np.all(np.isfinite(rewards + values)):
@@ -819,6 +843,7 @@ def train(
         },
         "note": "Residual PPO, frozen locomotion; not an end-to-end torque policy.",
     }
+    _persist_training_manifest(output, manifest)
     for iteration in range(iterations):
         traces, proofs = [], []
         jobs = _bilateral_jobs(
@@ -888,7 +913,7 @@ def train(
                 "players": rows,
             }
         )
-        (output / "training.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        _persist_training_manifest(output, manifest)
         print(json.dumps(manifest["iterations"][-1]), flush=True)
     for label, candidate in ((manifest["baseline_label"], initial_policy), ("candidate", policy)):
         if role_curriculum:
@@ -925,7 +950,7 @@ def train(
                         "passes": report["causal_pass_feedback"],
                     }
                 )
-            (output / "training.json").write_text(json.dumps(manifest, indent=2) + "\n")
+                _persist_training_manifest(output, manifest)
             continue
         for blue in (False, True):
             for offset in (-0.08, 0.08):
@@ -957,8 +982,9 @@ def train(
                         "passes": report["causal_pass_feedback"],
                     }
                 )
+                _persist_training_manifest(output, manifest)
     manifest["manifest_hash"] = hash_json(manifest)
-    (output / "training.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    _persist_training_manifest(output, manifest)
     return manifest
 
 
