@@ -230,7 +230,11 @@ def test_stochastic_collection_cannot_qualify_even_with_all_physical_gates(
         calls.append(kwargs)
         return SimpleNamespace(
             passed=True, safe=True, trajectory_hash="same", to_dict=lambda: {"passed": True}
-        ), {"time": np.array([0.02, 0.04])}
+        ), {
+            "time": np.array([0.02, 0.04]),
+            "ball_pose": np.tile((0.0, 0.0, 0.11, 1.0, 0.0, 0.0, 0.0), (2, 1)),
+            "pitch_boundary_geometry": np.tile((-1.5, 7.5, 3.0, 0.11, 3.0, 2.0), (2, 1)),
+        }
 
     monkeypatch.setattr(module, "simulate_independent_team_world", simulate)
     monkeypatch.setattr(
@@ -255,6 +259,52 @@ def test_stochastic_collection_cannot_qualify_even_with_all_physical_gates(
     assert report["sampling"]["exploration_agent_ids"] == ["red.defender"]
     assert len(calls) == 2
     assert all(c["near_ball_seed"] == 123 and c["near_ball_explore"] for c in calls)
+
+
+def test_continuous_exam_cannot_qualify_after_ball_exit_or_forged_exposure(
+    monkeypatch, tmp_path, fixture
+):
+    import json
+
+    import numpy as np
+
+    from rosclaw_soccer.sim.contracts import hash_json
+    from rosclaw_soccer.training import continuous_competitive_match_growth as module
+
+    def simulate(**kwargs):
+        ball = np.tile((0.0, 0.0, 0.11, 1.0, 0.0, 0.0, 0.0), (3, 1))
+        ball[1, 1] = 3.2
+        return SimpleNamespace(
+            passed=True, safe=True, trajectory_hash="same", to_dict=lambda: {"passed": True}
+        ), {
+            "time": np.array([0.02, 0.04, 0.06]),
+            "ball_pose": ball,
+            "pitch_boundary_geometry": np.tile((-1.5, 7.5, 3.0, 0.11, 3.0, 2.0), (3, 1)),
+        }
+
+    monkeypatch.setattr(module, "simulate_independent_team_world", simulate)
+    monkeypatch.setattr(
+        module,
+        "assess_competitive_match_trajectory",
+        lambda **kwargs: SimpleNamespace(passed=True, to_dict=lambda: {"passed": True}),
+    )
+    root = tmp_path / "exit"
+    report = module.run_continuous_competitive_match_growth(
+        evidence_dir=root,
+        asset_root=Path("unused"),
+        fixture=fixture,
+        world_config=replace(module.default_continuous_match_config(), bilateral_goals=True),
+    )
+    assert report["primary_assessment"]["passed"]
+    assert not report["passed"]
+    assert report["primary_in_play"]["first_exit_reason"] == "TOUCHLINE_OUT"
+    report["primary_in_play"]["uninterrupted"] = True
+    report.pop("report_hash")
+    report["report_hash"] = hash_json(report)
+    destination = root / "continuous-match-exam.json"
+    destination.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="in-play evidence differs"):
+        module.validate_continuous_competitive_match_growth(destination)
 
 
 def test_continuous_exam_reuses_training_contact_profile(monkeypatch, tmp_path, fixture):

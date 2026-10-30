@@ -44,6 +44,7 @@ from rosclaw_soccer.training.independent_team_growth import (
     IndependentTeamFixture,
     build_independent_three_vs_three_fixture,
 )
+from rosclaw_soccer.world.match_boundary import uninterrupted_in_play
 from rosclaw_soccer.world.multi_player import G1PitchPlayerSpec
 
 _LAYOUT = (
@@ -294,6 +295,8 @@ def run_continuous_competitive_match_growth(
         world_safe=replay.safe,
         thresholds=active_thresholds,
     )
+    primary_in_play = uninterrupted_in_play(primary_trace)
+    replay_in_play = uninterrupted_in_play(replay_trace)
     passed = bool(
         not near_ball_explore
         and motor_capability_parity
@@ -302,9 +305,11 @@ def run_continuous_competitive_match_growth(
         and replay.passed
         and primary_assessment.passed
         and primary_assessment.to_dict() == replay_assessment.to_dict()
+        and primary_in_play["uninterrupted"] is True
+        and primary_in_play == replay_in_play
     )
     report: dict[str, Any] = {
-        "schema_version": "rosclaw_soccer.continuous_competitive_match_growth.v1",
+        "schema_version": "rosclaw_soccer.continuous_competitive_match_growth.v2",
         "status": "PASS_CONTINUOUS_MATCH_CHAIN" if passed else "REJECTED_CONTINUOUS_MATCH_CHAIN",
         "passed": passed,
         "fixture_hash": fixture.fixture_hash,
@@ -334,6 +339,8 @@ def run_continuous_competitive_match_growth(
         "replay_result": replay.to_dict(),
         "primary_assessment": primary_assessment.to_dict(),
         "replay_assessment": replay_assessment.to_dict(),
+        "primary_in_play": primary_in_play,
+        "replay_in_play": replay_in_play,
         "primary_artifact": primary_artifact,
         "replay_artifact": replay_artifact,
         "exact_replay": exact_replay,
@@ -366,6 +373,9 @@ def run_continuous_competitive_match_growth(
                     (
                         Path(__file__).parents[1] / "skills/team/independent_team_world.py"
                     ).read_bytes()
+                ),
+                "match_boundary": hash_bytes(
+                    (Path(__file__).parents[1] / "world/match_boundary.py").read_bytes()
                 ),
             }
         ),
@@ -405,6 +415,7 @@ def validate_continuous_competitive_match_growth(path: Path) -> dict[str, Any]:
                 raise ValueError("continuous-match policy artifact binding changed")
         elif policy_artifact is not None:
             raise ValueError("continuous-match policy artifact lacks its policy identity")
+        in_play = {}
         for label in ("primary_artifact", "replay_artifact"):
             artifact = value.get(label)
             if not isinstance(artifact, dict):
@@ -418,6 +429,11 @@ def validate_continuous_competitive_match_growth(path: Path) -> dict[str, Any]:
             _require_unassisted_match_trace(trajectory)
             if trajectory_digest(trajectory) != artifact.get("trajectory_digest"):
                 raise ValueError("continuous-match trajectory binding changed")
+            exposure = uninterrupted_in_play(trajectory)
+            exposure_key = label.replace("_artifact", "_in_play")
+            if value.get(exposure_key) != exposure:
+                raise ValueError("continuous-match in-play evidence differs from trajectory")
+            in_play[exposure_key] = exposure
         assessment = value.get("primary_assessment")
         boundary = value.get("evidence_boundary")
         sampling = value.get(
@@ -453,11 +469,13 @@ def validate_continuous_competitive_match_growth(path: Path) -> dict[str, Any]:
             and isinstance(assessment, dict)
             and assessment.get("passed") is True
             and assessment == value.get("replay_assessment")
+            and in_play["primary_in_play"]["uninterrupted"] is True
+            and in_play["primary_in_play"] == in_play["replay_in_play"]
         )
         if (
             expected != hash_json(value)
             or value.get("schema_version")
-            != "rosclaw_soccer.continuous_competitive_match_growth.v1"
+            != "rosclaw_soccer.continuous_competitive_match_growth.v2"
             or value.get("passed") is not passed
             or value.get("status")
             != ("PASS_CONTINUOUS_MATCH_CHAIN" if passed else "REJECTED_CONTINUOUS_MATCH_CHAIN")
