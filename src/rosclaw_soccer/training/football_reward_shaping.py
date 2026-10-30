@@ -20,6 +20,7 @@ REWARD_SHAPING_MODES = (
     "role_receiving_v1",
     "team_capture_v1",
     "team_capture_dissipation_v1",
+    "pass_impulse_alignment_v1",
 )
 
 

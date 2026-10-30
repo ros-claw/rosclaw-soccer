@@ -117,6 +117,58 @@ def physical_rewards(
         toward = (np.asarray(trace["ball_velocity"])[:, :2] * direction).sum(axis=1)
         touching = (contact == i + 1) & foot & (contact_force > 1.0)
         rewards[:, i] += touching * 0.04 * np.clip(toward, -2, 2)
+        if reward_shaping == "pass_impulse_alignment_v1":
+            from rosclaw_soccer.growth.role_self_model import TacticalIntent
+            from rosclaw_soccer.training.pass_impulse_reward import sampled_pass_impulse_reward
+
+            before_velocity = np.asarray(trace["ball_control_entry_velocity"], dtype=np.float64)
+            after_velocity = np.asarray(trace["ball_velocity"], dtype=np.float64)
+            sources = np.asarray(trace["pass_source_agent_code"])
+            receivers = np.asarray(trace["pass_target_agent_code"])
+            nonfoot_force = np.asarray(trace["ball_nonfoot_contact_force_n"], dtype=np.float64)
+            intents = np.asarray(trace[key + "_intent_code"])
+            if (
+                before_velocity.shape != (count, 6)
+                or after_velocity.shape != (count, 6)
+                or sources.shape != (count,)
+                or receivers.shape != (count,)
+                or intents.shape != (count,)
+                or nonfoot_force.shape != (count,)
+                or not np.isfinite(before_velocity).all()
+                or not np.isfinite(after_velocity).all()
+                or not np.isfinite(nonfoot_force).all()
+                or np.any(nonfoot_force < 0)
+                or sources.dtype.kind not in "iu"
+                or receivers.dtype.kind not in "iu"
+                or intents.dtype.kind not in "iu"
+                or not np.isin(sources, range(9)).all()
+                or not np.isin(receivers, range(9)).all()
+                or not np.isin(intents, range(len(TacticalIntent))).all()
+            ):
+                raise ValueError("pass impulse shaping requires complete typed physical telemetry")
+            passing = intents == list(TacticalIntent).index(TacticalIntent.PASS)
+            teammates = tuple(
+                j + 1
+                for j, other in enumerate(ids)
+                if j != i and other.partition(".")[0] == agent.partition(".")[0]
+            )
+            valid = (
+                passing
+                & touching
+                & (sources == i + 1)
+                & np.isin(receivers, teammates)
+                & (nonfoot_force == 0.0)
+            )
+            # Avoid rewarding a pre-existing ball velocity or a PASS proposal
+            # lacking a matching physical contact and receiver commitment.
+            rewards[:, i] -= passing * touching * 0.04 * np.clip(toward, -2, 2)
+            rewards[:, i] += sampled_pass_impulse_reward(
+                ball_xy=np.asarray(ball[:, :2], dtype=np.float64),
+                target_xy=np.asarray(target, dtype=np.float64),
+                velocity_before_xy=before_velocity[:, :2],
+                velocity_after_xy=after_velocity[:, :2],
+                valid_contact=np.asarray(valid, dtype=np.bool_),
+            )
         if reward_shaping in {"team_capture_v1", "team_capture_dissipation_v1"}:
             from rosclaw_soccer.growth.role_self_model import TacticalIntent
 
@@ -227,6 +279,7 @@ def physical_rewards(
         "role_receiving_v1",
         "team_capture_v1",
         "team_capture_dissipation_v1",
+        "pass_impulse_alignment_v1",
     }:
         distance = np.minimum(
             np.linalg.norm(obs[:, :, 38:41], axis=2),
@@ -250,6 +303,7 @@ def physical_rewards(
         "role_receiving_v1",
         "team_capture_v1",
         "team_capture_dissipation_v1",
+        "pass_impulse_alignment_v1",
     }:
         margins = np.stack(
             [np.asarray(trace[a.replace(".", "_") + "_joint_safety_margin_rad"]) for a in ids],

@@ -42,6 +42,32 @@ def delayed_pass_trace():
     return ids, trace
 
 
+def test_pass_impulse_shaping_requires_matching_foot_and_penalizes_crossfield_delta():
+    from rosclaw_soccer.growth.role_self_model import TacticalIntent
+
+    ids, trace = delayed_pass_trace()
+    n = len(trace["time"])
+    trace["pass_source_agent_code"] = trace["pass_source_agent_code"].astype(np.int64)
+    trace["pass_target_agent_code"] = trace["pass_target_agent_code"].astype(np.int64)
+    trace["ball_control_entry_velocity"] = np.zeros((n, 6))
+    trace["ball_velocity"][20, :2] = [1.0, 2.0]
+    for agent in ids:
+        key = agent.replace(".", "_")
+        trace[key + "_joint_safety_margin_rad"] = np.ones((n, 29))
+        trace[key + "_intent_code"] = np.full(n, list(TacticalIntent).index(TacticalIntent.HOLD))
+    trace["red_playmaker_intent_code"][20] = list(TacticalIntent).index(TacticalIntent.PASS)
+    old = physical_rewards(trace, ids, reward_shaping="contact_safety_v1")
+    changed = physical_rewards(trace, ids, reward_shaping="pass_impulse_alignment_v1")
+    expected = np.zeros((n, 8))
+    expected[20, 7] = -0.08
+    np.testing.assert_allclose(changed - old, expected, atol=1e-12)
+    trace["ball_nonfoot_contact_force_n"][20] = 2.0
+    old = physical_rewards(trace, ids, reward_shaping="contact_safety_v1")
+    changed = physical_rewards(trace, ids, reward_shaping="pass_impulse_alignment_v1")
+    expected[20, 7] = -0.04
+    np.testing.assert_allclose(changed - old, expected, atol=1e-12)
+
+
 @pytest.mark.parametrize("shaping", ["legacy", "terminal_potential_v1"])
 def test_launch_credit_reaches_exactly_both_participants_after_setup_delay(shaping):
     ids, trace = delayed_pass_trace()
