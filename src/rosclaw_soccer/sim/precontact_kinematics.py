@@ -20,6 +20,65 @@ class PrecontactKinematics:
     hardware_authorized: bool = False
 
 
+@dataclass(frozen=True)
+class PrecontactPair:
+    """Two separated witnesses at one instant; never a collision prediction."""
+
+    status: str
+    gap_difference_m: float | None
+    radial_difference_mps: float | None
+    linear_arrival_difference_s: float | None
+    hardware_authorized: bool = False
+
+
+def compare_separated_witnesses(
+    preferred: PrecontactKinematics, other: PrecontactKinematics
+) -> PrecontactPair:
+    """Compare other-minus-preferred gap/radial speed with explicit unknowns.
+
+    The optional arrival difference extrapolates each instantaneous radial
+    velocity as constant. Changing geometry, rotation, acceleration, contact,
+    and other objects invalidate that extrapolation; it is not a prediction,
+    evidence of force, safety decision, task success, or execution authority.
+    """
+    if not isinstance(preferred, PrecontactKinematics) or not isinstance(
+        other, PrecontactKinematics
+    ):
+        raise ValueError("two explicit geometric observations required")
+    for witness in (preferred, other):
+        if witness.status not in ("SEPARATED", "CONTACT_OR_OVERLAP", "DISTANCE_CENSORED"):
+            raise ValueError("unknown geometric observation status")
+        if not np.isfinite(witness.distance_m):
+            raise ValueError("finite geometric distance required")
+        if witness.status == "SEPARATED" and (
+            witness.distance_m <= 0
+            or witness.radial_separation_rate_mps is None
+            or not np.isfinite(witness.radial_separation_rate_mps)
+            or type(witness.nearest_geom) is not int
+        ):
+            raise ValueError("separated geometry requires a finite witness")
+    if preferred.status != "SEPARATED" or other.status != "SEPARATED":
+        return PrecontactPair("UNOBSERVED_OR_CONTACT", None, None, None)
+    p_rate = preferred.radial_separation_rate_mps
+    o_rate = other.radial_separation_rate_mps
+    assert p_rate is not None and o_rate is not None
+    # A near-zero or separating radial velocity has no finite arrival estimate.
+    arrival = (
+        float(other.distance_m / -o_rate - preferred.distance_m / -p_rate)
+        if p_rate < -1e-6 and o_rate < -1e-6
+        else None
+    )
+    gap = float(other.distance_m - preferred.distance_m)
+    radial = float(o_rate - p_rate)
+    if (
+        not np.isfinite(gap)
+        or not np.isfinite(radial)
+        or (arrival is not None and not np.isfinite(arrival))
+    ):
+        raise ValueError("finite comparison required")
+    return PrecontactPair("SEPARATED", gap, radial, arrival)
+
+
 def observe_separated_geometry(
     model: mujoco.MjModel,
     qpos: NDArray[np.float64],

@@ -4,6 +4,7 @@ import pytest
 
 from rosclaw_soccer.sim.precontact_kinematics import (
     PrecontactKinematics,
+    compare_separated_witnesses,
     cushion_shaping,
     observe_separated_geometry,
 )
@@ -60,3 +61,32 @@ def test_censored_states_and_shaping_remain_distinct():
         observe_separated_geometry(
             model, data.qpos.copy(), data.qvel.copy(), object_geom=a, target_geoms=(b, b)
         )
+
+
+def test_pair_preserves_direction_and_no_arrival_for_receding_geometry():
+    foot = PrecontactKinematics("SEPARATED", 0.1, -1.0, 1)
+    body = PrecontactKinematics("SEPARATED", 0.14, -2.0, 2)
+    result = compare_separated_witnesses(foot, body)
+    assert result.status == "SEPARATED"
+    assert result.gap_difference_m == pytest.approx(0.04)
+    assert result.radial_difference_mps == pytest.approx(-1.0)
+    assert result.linear_arrival_difference_s == pytest.approx(-0.03)
+    assert result.hardware_authorized is False
+    receding = PrecontactKinematics("SEPARATED", 0.14, 0.0, 2)
+    assert compare_separated_witnesses(foot, receding).linear_arrival_difference_s is None
+
+
+def test_pair_rejects_malformed_and_does_not_fabricate_censored_differences():
+    foot = PrecontactKinematics("SEPARATED", 0.1, -1.0, 1)
+    for other in (
+        PrecontactKinematics("DISTANCE_CENSORED", 2.0, None, None),
+        PrecontactKinematics("CONTACT_OR_OVERLAP", -0.01, None, 2),
+    ):
+        pair = compare_separated_witnesses(foot, other)
+        assert pair.status == "UNOBSERVED_OR_CONTACT"
+        assert pair.gap_difference_m is None and pair.radial_difference_mps is None
+        assert pair.linear_arrival_difference_s is None
+    with pytest.raises(ValueError):
+        compare_separated_witnesses(foot, PrecontactKinematics("SEPARATED", 0.1, np.nan, 2))
+    with pytest.raises(ValueError):
+        compare_separated_witnesses(foot, PrecontactKinematics("MADE_UP", 0.1, 0, 2))
