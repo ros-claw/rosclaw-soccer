@@ -1,6 +1,6 @@
 # 仿真足球与地面接触审查
 
-`inspect_ball_ground_contact` 读取当前 MuJoCo 实际球—地面接触项的维度和有效滚动摩擦系数。调用方须提供匹配的模型与已完成当前 `mj_forward` 或 `mj_step` 的数据；它不修改状态、不产生控制命令。
+`inspect_ball_ground_contact` 读取 MuJoCo 球—地面接触项的维度和有效滚动摩擦系数。调用方须提供匹配的模型及在当前状态完成 `mj_forward` 的数据；`mj_step` 后保留的接触项可能对应积分前阶段，本函数无法判断缓存何时刷新。它不修改状态、不产生控制命令。
 
 没有观测到球地接触时返回 `NO_OBSERVED_CONTACT`，不能当作没有摩擦；仅有因 gap 而未进入约束求解的近接触时返回 `INACTIVE_CONTACT_ONLY`。实际三维接触返回 `NO_ROLLING_CONSTRAINT`；六维且存在非零滚动参数返回 `ROLLING_CONSTRAINT_PRESENT`。应读取实际接触项，而不是只检查两个几何体的默认参数，因为显式 contact pair 可以覆盖几何体配置。具体语义参见 [MuJoCo 接触维度文档](https://mujoco.readthedocs.io/en/latest/computation/)。
 

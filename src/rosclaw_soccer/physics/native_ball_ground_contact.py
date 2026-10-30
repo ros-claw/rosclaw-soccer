@@ -24,7 +24,9 @@ def inspect_ball_ground_contact(
 ) -> NativeBallGroundContact:
     """Read actual contact entries, including overrides from explicit pairs.
 
-    Caller must supply matching model/data after a current forward or step.
+    Caller must supply matching model/data after forward at its current state.
+    Contact entries remaining after a step can describe the pre-integration
+    stage; this read does not infer or verify when they were last refreshed.
     No contact is unknown, not evidence of zero friction. Dimension six and
     nonzero coefficients indicate available rolling constraints, not that a
     particular pitch is calibrated or that energy is actually dissipated.
