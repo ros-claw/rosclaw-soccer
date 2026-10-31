@@ -6,11 +6,15 @@ ball impulse, successful pass, motion command or hardware authorization.
 
 from __future__ import annotations
 
+import hashlib
 import math
 from dataclasses import dataclass
+from pathlib import Path
 
 from rosclaw_soccer.sim.contracts import hash_json
 from rosclaw_soccer.skills.team.motor_option import TeamMotorPhysicsObservation
+
+LOADED_SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
 @dataclass(frozen=True)

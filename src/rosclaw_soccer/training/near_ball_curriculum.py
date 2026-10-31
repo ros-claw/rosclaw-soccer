@@ -88,6 +88,7 @@ class RoleRolloutJob:
     explore: bool
     strict_handoff: bool = False
     contact_control_profile: ContactControlProfile | None = None
+    capture_contact_normal_impulse: bool = False
 
 
 def collect_role_course(job: RoleRolloutJob) -> str:
@@ -110,5 +111,6 @@ def collect_role_course(job: RoleRolloutJob) -> str:
         near_ball_explore=job.explore,
         strict_receive_handoff=job.strict_handoff,
         contact_control_profile=job.contact_control_profile,
+        capture_contact_normal_impulse=job.capture_contact_normal_impulse,
     )
     return str(job.destination / "probe.json")

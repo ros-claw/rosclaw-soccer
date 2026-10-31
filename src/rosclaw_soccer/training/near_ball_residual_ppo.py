@@ -55,6 +55,11 @@ from rosclaw_soccer.training.returned_ball_learning import require_returned_live
 from rosclaw_soccer.training.role_behavior_anchor import RoleBehaviorAnchor
 
 PHYSICAL_REWARD_CONTRACT = "rosclaw_soccer.physical_reward.force_gate.v2"
+_IMPACT_MODES = {
+    "team_capture_in_play_impact_v1",
+    "team_capture_in_play_pass_impulse_v1",
+    "team_capture_in_play_normal_impulse_v1",
+}
 
 
 def _impact_reward_source_hash() -> str:
@@ -75,6 +80,23 @@ def _pass_impulse_source_hash() -> str:
     if digest != "sha256:" + pass_impulse_reward.LOADED_SOURCE_SHA256:
         raise ValueError("loaded pass impulse source differs from disk")
     return digest
+
+
+def _normal_impulse_source_hashes() -> dict[str, str]:
+    from rosclaw_soccer.training import contact_normal_impulse, normal_pass_impulse_reward
+
+    result = {}
+    for name, module in (
+        ("normal_contact_recorder", contact_normal_impulse),
+        ("normal_pass_reward", normal_pass_impulse_reward),
+    ):
+        if module.__file__ is None:
+            raise ValueError("normal impulse source path unavailable")
+        digest = str(hash_bytes(Path(module.__file__).read_bytes()))
+        if digest != "sha256:" + module.LOADED_SOURCE_SHA256:
+            raise ValueError("loaded normal impulse source differs from disk")
+        result[name + "_source_hash"] = digest
+    return result
 
 
 def _persist_training_manifest(output: Path, manifest: Mapping[str, Any]) -> None:
@@ -108,6 +130,14 @@ def physical_rewards(
     on this player's measured foot-contact frames. Dense contact is capped by
     the control period, so resting on the ball cannot earn an event bonus.
     """
+    if reward_shaping == "team_capture_in_play_normal_impulse_v1":
+        from rosclaw_soccer.training.normal_pass_impulse_reward import pass_normal_adjustment
+
+        combined = physical_rewards(
+            trace, ids, reward_shaping="team_capture_in_play_impact_v1", gamma=gamma
+        )
+        normal_result: np.ndarray[Any, Any] = combined + pass_normal_adjustment(trace, ids)
+        return normal_result
     if reward_shaping == "team_capture_in_play_pass_impulse_v1":
         # Both comparison branches have identical terminal potential, safety,
         # and physical handoff terms. Their difference replaces ONLY the
@@ -577,13 +607,17 @@ def update_private_actors(
                 ),
                 **(
                     {"nonfoot_impact_reward_source_hash": _impact_reward_source_hash()}
-                    if reward_shaping
-                    in {"team_capture_in_play_impact_v1", "team_capture_in_play_pass_impulse_v1"}
+                    if reward_shaping in _IMPACT_MODES
                     else {}
                 ),
                 **(
                     {"pass_impulse_reward_source_hash": _pass_impulse_source_hash()}
                     if reward_shaping == "team_capture_in_play_pass_impulse_v1"
+                    else {}
+                ),
+                **(
+                    _normal_impulse_source_hashes()
+                    if reward_shaping == "team_capture_in_play_normal_impulse_v1"
                     else {}
                 ),
             }
@@ -927,6 +961,10 @@ def train(
         or (rollouts_per_side != 1 and role_curriculum)
         or reward_shaping not in REWARD_SHAPING_MODES
         or reward_shaping == "in_play_motor_task_v1"
+        or (
+            reward_shaping == "team_capture_in_play_normal_impulse_v1"
+            and (not role_curriculum or not strict_receive_handoff or duration > 20)
+        )
         or (reward_shaping == "directed_pass_credit_v1" and not strict_receive_handoff)
         or (strict_receive_handoff and not (prospective_curriculum and all_role_clearance))
         or type(minimum_actor_samples) is not int
@@ -1019,10 +1057,12 @@ def train(
         },
         "note": "Residual PPO, frozen locomotion; not an end-to-end torque policy.",
     }
-    if reward_shaping in {"team_capture_in_play_impact_v1", "team_capture_in_play_pass_impulse_v1"}:
+    if reward_shaping in _IMPACT_MODES:
         manifest["nonfoot_impact_reward_source_hash"] = _impact_reward_source_hash()
     if reward_shaping == "team_capture_in_play_pass_impulse_v1":
         manifest["pass_impulse_reward_source_hash"] = _pass_impulse_source_hash()
+    if reward_shaping == "team_capture_in_play_normal_impulse_v1":
+        manifest.update(_normal_impulse_source_hashes())
     if minimum_actor_samples:
         from rosclaw_soccer.training import role_sample_coverage as coverage_module
 
@@ -1073,6 +1113,7 @@ def train(
                     True,
                     strict_receive_handoff,
                     contact_control_profile,
+                    reward_shaping == "team_capture_in_play_normal_impulse_v1",
                 )
                 for index, course in enumerate(training_batch(iteration, rounds=role_batch_rounds))
             ]
@@ -1174,8 +1215,7 @@ def train(
             if not coverage["complete"]:
                 raise ValueError("actor coverage exhausted: no update for this generation")
         if (
-            reward_shaping
-            in {"team_capture_in_play_impact_v1", "team_capture_in_play_pass_impulse_v1"}
+            reward_shaping in _IMPACT_MODES
             and _impact_reward_source_hash() != manifest["nonfoot_impact_reward_source_hash"]
         ):
             raise ValueError("nonfoot impact reward source changed during collection")
@@ -1184,6 +1224,10 @@ def train(
             and _pass_impulse_source_hash() != manifest["pass_impulse_reward_source_hash"]
         ):
             raise ValueError("pass impulse source changed during collection")
+        if reward_shaping == "team_capture_in_play_normal_impulse_v1" and any(
+            manifest[k] != v for k, v in _normal_impulse_source_hashes().items()
+        ):
+            raise ValueError("normal impulse source changed during collection")
         policy, rows = update_private_actors(
             policy,
             traces,
@@ -1194,8 +1238,7 @@ def train(
             trainable_agent_ids=trainable_agent_ids,
         )
         if (
-            reward_shaping
-            in {"team_capture_in_play_impact_v1", "team_capture_in_play_pass_impulse_v1"}
+            reward_shaping in _IMPACT_MODES
             and _impact_reward_source_hash() != manifest["nonfoot_impact_reward_source_hash"]
         ):
             raise ValueError("nonfoot impact reward source changed during update")
@@ -1204,6 +1247,10 @@ def train(
             and _pass_impulse_source_hash() != manifest["pass_impulse_reward_source_hash"]
         ):
             raise ValueError("pass impulse source changed during update")
+        if reward_shaping == "team_capture_in_play_normal_impulse_v1" and any(
+            manifest[k] != v for k, v in _normal_impulse_source_hashes().items()
+        ):
+            raise ValueError("normal impulse source changed during update")
         policy.save(output / f"generation-{policy.generation:03d}.npz")
         manifest["iterations"].append(
             {
@@ -1228,6 +1275,7 @@ def train(
                     False,
                     strict_receive_handoff,
                     contact_control_profile,
+                    reward_shaping == "team_capture_in_play_normal_impulse_v1",
                 )
                 for course in examination_courses(strict_handoff=strict_receive_handoff)
             ]
@@ -1287,7 +1335,7 @@ def train(
                 )
                 _persist_training_manifest(output, manifest)
     if (
-        reward_shaping in {"team_capture_in_play_impact_v1", "team_capture_in_play_pass_impulse_v1"}
+        reward_shaping in _IMPACT_MODES
         and _impact_reward_source_hash() != manifest["nonfoot_impact_reward_source_hash"]
     ):
         raise ValueError("nonfoot impact reward source changed during evaluation")
@@ -1296,6 +1344,10 @@ def train(
         and _pass_impulse_source_hash() != manifest["pass_impulse_reward_source_hash"]
     ):
         raise ValueError("pass impulse source changed during evaluation")
+    if reward_shaping == "team_capture_in_play_normal_impulse_v1" and any(
+        manifest[k] != v for k, v in _normal_impulse_source_hashes().items()
+    ):
+        raise ValueError("normal impulse source changed during evaluation")
     manifest["manifest_hash"] = hash_json(manifest)
     _persist_training_manifest(output, manifest)
     return manifest

@@ -89,7 +89,11 @@ def _training_context_hash(
         payload["trainable_agent_ids"] = trainable
     if shaping != "legacy":
         payload.update(reward_shaping=shaping, gamma=manifest["credit"]["gamma"])
-    if shaping in {"team_capture_in_play_impact_v1", "team_capture_in_play_pass_impulse_v1"}:
+    if shaping in {
+        "team_capture_in_play_impact_v1",
+        "team_capture_in_play_pass_impulse_v1",
+        "team_capture_in_play_normal_impulse_v1",
+    }:
         from rosclaw_soccer.training import nonfoot_impact_reward
 
         expected = manifest.get("nonfoot_impact_reward_source_hash")
@@ -105,6 +109,20 @@ def _training_context_hash(
         if expected != actual or actual != "sha256:" + pass_impulse_reward.LOADED_SOURCE_SHA256:
             raise ValueError("pass impulse implementation is missing, stale or unbound")
         payload["pass_impulse_reward_source_hash"] = expected
+    if shaping == "team_capture_in_play_normal_impulse_v1":
+        from rosclaw_soccer.training import contact_normal_impulse, normal_pass_impulse_reward
+
+        for name, module in (
+            ("normal_contact_recorder", contact_normal_impulse),
+            ("normal_pass_reward", normal_pass_impulse_reward),
+        ):
+            key = name + "_source_hash"
+            if module.__file__ is None:
+                raise ValueError("normal impulse source path unavailable")
+            actual = str(hash_bytes(Path(module.__file__).read_bytes()))
+            if manifest.get(key) != actual or actual != "sha256:" + module.LOADED_SOURCE_SHA256:
+                raise ValueError("normal impulse source missing, stale or unbound")
+            payload[key] = actual
     return str(hash_json(payload))
 
 

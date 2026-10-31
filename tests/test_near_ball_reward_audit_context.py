@@ -4,7 +4,12 @@ import pytest
 from test_s215_near_ball_residual import policy
 
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
-from rosclaw_soccer.training import nonfoot_impact_reward, pass_impulse_reward
+from rosclaw_soccer.training import (
+    contact_normal_impulse,
+    nonfoot_impact_reward,
+    normal_pass_impulse_reward,
+    pass_impulse_reward,
+)
 from rosclaw_soccer.training.near_ball_learning_audit import _training_context_hash
 
 
@@ -69,6 +74,34 @@ def test_combined_context_requires_both_current_sources():
     context = _training_context_hash(manifest, parent, "sha256:" + "b" * 64, None)
     assert context.startswith("sha256:")
     for key in ("nonfoot_impact_reward_source_hash", "pass_impulse_reward_source_hash"):
+        modified = dict(manifest)
+        modified[key] = "sha256:" + "0" * 64
+        with pytest.raises(ValueError, match="unbound"):
+            _training_context_hash(modified, parent, "sha256:" + "b" * 64, None)
+
+
+def test_normal_contact_context_binds_all_three_sources():
+    parent = policy()
+    manifest = {
+        "reward_shaping": "team_capture_in_play_normal_impulse_v1",
+        "nonfoot_impact_reward_source_hash": str(
+            hash_bytes(Path(nonfoot_impact_reward.__file__).read_bytes())
+        ),
+        "normal_contact_recorder_source_hash": str(
+            hash_bytes(Path(contact_normal_impulse.__file__).read_bytes())
+        ),
+        "normal_pass_reward_source_hash": str(
+            hash_bytes(Path(normal_pass_impulse_reward.__file__).read_bytes())
+        ),
+        "credit": {"gamma": 0.997},
+    }
+    context = _training_context_hash(manifest, parent, "sha256:" + "b" * 64, None)
+    assert context.startswith("sha256:")
+    for key in (
+        "nonfoot_impact_reward_source_hash",
+        "normal_contact_recorder_source_hash",
+        "normal_pass_reward_source_hash",
+    ):
         modified = dict(manifest)
         modified[key] = "sha256:" + "0" * 64
         with pytest.raises(ValueError, match="unbound"):

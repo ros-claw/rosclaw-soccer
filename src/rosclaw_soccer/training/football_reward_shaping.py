@@ -23,6 +23,7 @@ REWARD_SHAPING_MODES = (
     "team_capture_dissipation_in_play_v1",
     "team_capture_in_play_impact_v1",
     "team_capture_in_play_pass_impulse_v1",
+    "team_capture_in_play_normal_impulse_v1",
     "pass_impulse_alignment_v1",
     "directed_pass_credit_v1",
 )
