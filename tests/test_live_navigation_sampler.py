@@ -9,7 +9,10 @@ from rosclaw_soccer.training.live_navigation_sampler import (
     DeterministicNavigationCandidate,
     LiveNavigationSampler,
 )
-from rosclaw_soccer.training.local_navigation import build_local_navigation_actor_critic
+from rosclaw_soccer.training.local_navigation import (
+    build_local_navigation_actor_critic,
+    lift_local_navigation_state,
+)
 
 torch = pytest.importorskip("torch")
 HASH = "sha256:" + "a" * 64
@@ -120,3 +123,60 @@ def test_intent_gate_does_not_override_other_tasks(tmp_path, intent):
 def test_unknown_gate_is_rejected(tmp_path):
     with pytest.raises(ValueError):
         sampler(tmp_path, gate="everything")
+
+
+def test_team_context_sampler_reuses_policy_without_granting_authority(tmp_path):
+    parent = sampler(tmp_path, seed=41)
+    source = {k: v.detach().numpy().copy() for k, v in parent._actor.state_dict().items()}
+    path = tmp_path / "team.npz"
+    np.savez_compressed(path, **lift_local_navigation_state(source))
+    digest = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    candidate = LiveNavigationSampler(
+        path,
+        agent_id="red.finisher",
+        actor_hash=digest,
+        foundation_hash=HASH,
+        foundation_config_hash=HASH,
+        seed=41,
+        team_context=True,
+    )
+    state = replace(
+        observation(True), neighbors=(("blue.defender", 1.0, 0.0), ("red.playmaker", 2.0, 0.0))
+    )
+    old, new = parent.propose(state), candidate.propose(state)
+    np.testing.assert_allclose(old.velocity_delta, new.velocity_delta, atol=1e-7)
+    assert parent.contract_hash != candidate.contract_hash
+    assert candidate.samples[0]["obs"].shape == (45,)
+    np.testing.assert_array_equal(candidate.samples[0]["obs"][39:], [1, 0, 1, 1, 0, 0])
+    assert candidate.activation_ceiling == "SIM_ONLY"
+    with torch.no_grad():
+        mean, _ = candidate._actor(torch.from_numpy(candidate.samples[0]["obs"][None]))
+        normal = torch.distributions.Normal(mean, candidate._actor.logstd.clamp(-2.5, -0.3).exp())
+        expected = normal.log_prob(torch.from_numpy(candidate.samples[0]["raw"][None])).sum()
+    assert candidate.samples[0]["logp"] == pytest.approx(float(expected), abs=1e-6)
+
+
+def test_team_sampler_rejects_unknown_team_and_wrong_parameter_shape(tmp_path):
+    parent = sampler(tmp_path)
+    digest = "sha256:" + hashlib.sha256((tmp_path / "actor.npz").read_bytes()).hexdigest()
+    with pytest.raises(ValueError):
+        LiveNavigationSampler(
+            tmp_path / "actor.npz",
+            agent_id="unknown.finisher",
+            actor_hash=digest,
+            foundation_hash=HASH,
+            foundation_config_hash=HASH,
+            seed=1,
+            team_context=True,
+        )
+    with pytest.raises(ValueError):
+        LiveNavigationSampler(
+            tmp_path / "actor.npz",
+            agent_id="red.finisher",
+            actor_hash=digest,
+            foundation_hash=HASH,
+            foundation_config_hash=HASH,
+            seed=1,
+            team_context=True,
+        )
+    assert parent.activation_ceiling == "SIM_ONLY"

@@ -49,6 +49,8 @@ class FullBodyPPOUpdateConfig:
             not in (
                 (39, 3),  # Read-only world-heading local navigation, frozen joint foundation.
                 (40, 3),  # Same navigation features plus training-only influence bit.
+                (45, 3),  # Neighbor presence and teammate/opponent context.
+                (46, 3),  # Same team context plus training-only influence bit.
                 (133, 29),
                 (135, 29),  # Existing receiving fields plus explicit world heading sin/cos.
                 (138, 29),  # Heading fields plus an explicit next-skill target offset.

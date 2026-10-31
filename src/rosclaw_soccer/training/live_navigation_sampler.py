@@ -15,6 +15,7 @@ from rosclaw_soccer.training.local_navigation import (
     build_local_navigation_actor_critic,
     local_navigation_delta,
     local_navigation_features,
+    team_navigation_features,
 )
 
 
@@ -38,6 +39,7 @@ class LiveNavigationSampler:
         foundation_config_hash: str,
         seed: int,
         gate: str = "committed_receiver",
+        team_context: bool = False,
     ) -> None:
         import torch
 
@@ -52,9 +54,14 @@ class LiveNavigationSampler:
             or not 0 <= seed < 2**32
             or type(gate) is not str
             or gate not in ("committed_receiver", "ball_intent")
+            or type(team_context) is not bool
+            or team_context
+            and (
+                agent_id.partition(".")[0] not in ("red", "blue") or not agent_id.partition(".")[2]
+            )
         ):
             raise ValueError("explicit player, model identities and unsigned seed required")
-        actor = build_local_navigation_actor_critic()
+        actor = build_local_navigation_actor_critic(team_context=team_context)
         params, digest = load_bounded_reference_parameters(
             weights,
             actor_hash,
@@ -71,6 +78,7 @@ class LiveNavigationSampler:
         self.foundation_hash = foundation_hash
         self.foundation_config_hash = foundation_config_hash
         self.gate = gate
+        self.team_context = team_context
         self.contract_hash = str(
             hash_json(
                 {
@@ -81,7 +89,11 @@ class LiveNavigationSampler:
                     "foundation_config_hash": foundation_config_hash,
                     "seed": seed,
                     "gate": gate,
-                    "observation": "soccer.local_navigation_world_heading_39.v1",
+                    "observation": (
+                        "soccer.local_navigation_world_heading_team_45.v1"
+                        if team_context
+                        else "soccer.local_navigation_world_heading_39.v1"
+                    ),
                     "raw_action": "gaussian_3_logstd_-2.5_-0.3",
                     "activation_ceiling": self.activation_ceiling,
                     "training_only": True,
@@ -100,7 +112,7 @@ class LiveNavigationSampler:
             raise ValueError("same-player navigation observation required")
         if not self._eligible(observation):
             return None
-        features = local_navigation_features(observation)
+        features = self._features(observation)
         with torch.no_grad():
             mean, value = self._actor(torch.from_numpy(features[None]))
             normal: Any = torch.distributions.Normal(
@@ -123,6 +135,13 @@ class LiveNavigationSampler:
         )
         return NavigationDelta(observation.agent_id, observation.frame, observation.time_sec, delta)
 
+    def _features(self, observation: NavigationObservation) -> np.ndarray:
+        return (
+            team_navigation_features(observation)
+            if self.team_context
+            else local_navigation_features(observation)
+        )
+
     def _eligible(self, observation: NavigationObservation) -> bool:
         """Opt-in intent exploration never upgrades permission or success."""
         return bool(
@@ -144,6 +163,7 @@ class DeterministicNavigationCandidate(LiveNavigationSampler):
         foundation_hash: str,
         foundation_config_hash: str,
         gate: str = "committed_receiver",
+        team_context: bool = False,
     ) -> None:
         super().__init__(
             weights,
@@ -153,6 +173,7 @@ class DeterministicNavigationCandidate(LiveNavigationSampler):
             foundation_config_hash=foundation_config_hash,
             seed=0,
             gate=gate,
+            team_context=team_context,
         )
         self.contract_hash = str(
             hash_json(
@@ -163,7 +184,11 @@ class DeterministicNavigationCandidate(LiveNavigationSampler):
                     "foundation_hash": foundation_hash,
                     "foundation_config_hash": foundation_config_hash,
                     "gate": gate,
-                    "observation": "soccer.local_navigation_world_heading_39.v1",
+                    "observation": (
+                        "soccer.local_navigation_world_heading_team_45.v1"
+                        if team_context
+                        else "soccer.local_navigation_world_heading_39.v1"
+                    ),
                     "action": "bounded_gaussian_mean",
                     "activation_ceiling": self.activation_ceiling,
                     "promotion_eligible": False,
@@ -181,7 +206,7 @@ class DeterministicNavigationCandidate(LiveNavigationSampler):
             raise ValueError("same-player navigation observation required")
         if not self._eligible(observation):
             return None
-        features = local_navigation_features(observation)
+        features = self._features(observation)
         with torch.no_grad():
             mean, _ = self._actor(torch.from_numpy(features[None]))
         return NavigationDelta(
