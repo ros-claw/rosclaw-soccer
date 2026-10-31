@@ -77,6 +77,18 @@ def test_other_contact_in_next_frame_does_not_contaminate_preceding_frame():
     first, second = rec.verified_frames(control_frames=2)
     assert first.ambiguous_agents == ()
     assert second.ambiguous_agents == ()
+    assert first.nonfoot_contact_substeps == 0
+    assert second.nonfoot_contact_substeps == 1
+
+
+def test_body_without_any_foot_contact_is_preserved_once_per_substep():
+    rec = ContactNormalImpulseRecorder(IDS[0], IDS)
+    for step in range(1, 11):
+        contacts = (contact(IDS[1], "body", 3), contact(IDS[0], "body", 5)) if step == 3 else ()
+        rec.observe_physics(observation(step, contacts))
+    frame = rec.verified_frames(control_frames=1)[0]
+    assert frame.nonfoot_contact_substeps == 1
+    assert frame.foot_contact_substeps == ((IDS[0], 0), (IDS[1], 0))
 
 
 def test_missing_normals_and_invalid_stream_fail_closed():

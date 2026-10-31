@@ -5091,6 +5091,9 @@ def simulate_independent_team_world(
             [agent in frame.ambiguous_agents for agent in normal_ids] for frame in normal_frames
         ]
         trace["contact_normal_world_safe"] = [frame.world_bodies_safe for frame in normal_frames]
+        trace["contact_nonfoot_substeps"] = [
+            frame.nonfoot_contact_substeps for frame in normal_frames
+        ]
     trajectory = {name: np.asarray(values) for name, values in trace.items()}
     qualities = tuple(
         AgentWorldQuality(

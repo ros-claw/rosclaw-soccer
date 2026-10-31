@@ -26,6 +26,7 @@ class ContactImpulseFrame:
     # True when any non-foot/another agent contacts the ball in this frame.
     ambiguous_agents: tuple[str, ...]
     world_bodies_safe: bool
+    nonfoot_contact_substeps: int
 
 
 class ContactNormalImpulseRecorder:
@@ -47,7 +48,7 @@ class ContactNormalImpulseRecorder:
         self.maximum_frames = maximum_frames
         self.contract_hash = hash_json(
             {
-                "schema": "soccer.contact-normal-impulse.v2",
+                "schema": "soccer.contact-normal-impulse.v3",
                 "agent": agent_id,
                 "roster": roster,
                 "maximum_frames": maximum_frames,
@@ -61,6 +62,7 @@ class ContactNormalImpulseRecorder:
         self._impulses = {a: [0.0, 0.0, 0.0] for a in roster}
         self._contacts = {a: 0 for a in roster}
         self._counterparts: set[tuple[str | None, bool]] = set()
+        self._nonfoot_steps = 0
         self._safe = True
 
     def observe_physics(self, observation: TeamMotorPhysicsObservation) -> None:
@@ -79,6 +81,8 @@ class ContactNormalImpulseRecorder:
         if any(c.normal_ball_to_counterpart_world is None for c in contacts):
             raise ValueError("contact normal required")
         owners = {c.agent_id for c in contacts if c.is_foot}
+        if any(not c.is_foot for c in contacts):
+            self._nonfoot_steps += 1
         for owner in owners:
             assert owner is not None
             self._contacts[owner] += 1
@@ -114,11 +118,13 @@ class ContactNormalImpulseRecorder:
                         and any(owner != agent or not foot for owner, foot in self._counterparts)
                     ),
                     self._safe,
+                    self._nonfoot_steps,
                 )
             )
             self._impulses = {a: [0.0, 0.0, 0.0] for a in self.roster}
             self._contacts = {a: 0 for a in self.roster}
             self._counterparts.clear()
+            self._nonfoot_steps = 0
             self._safe = True
 
     def verified_frames(self, *, control_frames: int) -> tuple[ContactImpulseFrame, ...]:
