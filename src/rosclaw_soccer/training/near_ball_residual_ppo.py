@@ -847,6 +847,7 @@ def train(
     trainable_agent_ids: tuple[str, ...] | None = None,
     minimum_actor_samples: int = 0,
     maximum_coverage_pairs: int = 0,
+    receiving_learning_only: bool = False,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
@@ -866,6 +867,8 @@ def train(
         or type(diverse_ball_positions) is not bool
         or type(role_curriculum) is not bool
         or type(strict_receive_handoff) is not bool
+        or type(receiving_learning_only) is not bool
+        or (receiving_learning_only and trainable_agent_ids is None)
         or type(role_batch_rounds) is not int
         or not 1 <= role_batch_rounds <= 5
         or (role_batch_rounds != 1 and not role_curriculum)
@@ -974,6 +977,14 @@ def train(
             "semantics": "on-policy physical/exploration/learning mask counts; not task success",
             "iterations": [],
         }
+    if receiving_learning_only:
+        from rosclaw_soccer.training import receiving_learning_scope as receiving_scope_module
+
+        manifest["receiving_learning_scope"] = {
+            "source_hash": hash_bytes(Path(receiving_scope_module.__file__).read_bytes()),
+            "intent": ["receive", "press", "intercept"],
+            "semantics": "recorded current intent gates PPO gradients; full-episode returns",
+        }
     _persist_training_manifest(output, manifest)
     bilateral_collect = (
         _collect
@@ -1030,7 +1041,14 @@ def train(
             if not report["exact_replay"]:
                 raise ValueError("nonreproducible rollout rejected")
             with np.load(destination / "primary.npz", allow_pickle=False) as archive:
-                traces.append({k: archive[k] for k in archive.files})
+                trace = {k: archive[k] for k in archive.files}
+            if receiving_learning_only:
+                from rosclaw_soccer.training.receiving_learning_scope import (
+                    receiving_learning_scope,
+                )
+
+                trace = receiving_learning_scope(trace, agent_ids=ids)
+            traces.append(trace)
             proofs.append(report["report_hash"])
         if minimum_actor_samples:
             from rosclaw_soccer.training.role_sample_coverage import role_sample_coverage
@@ -1079,6 +1097,12 @@ def train(
                         Path(source).parent / "primary.npz", allow_pickle=False
                     ) as archive:
                         trace = {k: archive[k] for k in archive.files}
+                    if receiving_learning_only:
+                        from rosclaw_soccer.training.receiving_learning_scope import (
+                            receiving_learning_scope,
+                        )
+
+                        trace = receiving_learning_scope(trace, agent_ids=ids)
                     _validate_on_policy(policy, trace)
                     traces.append(trace)
                     proofs.append(report["report_hash"])
@@ -1211,6 +1235,7 @@ def main() -> None:
     parser.add_argument("--optimizer-epochs", type=int, default=4)
     parser.add_argument("--minimum-actor-samples", type=int, default=0)
     parser.add_argument("--maximum-coverage-pairs", type=int, default=0)
+    parser.add_argument("--receiving-learning-only", action="store_true")
     parser.add_argument(
         "--trainable-agent",
         action="append",
@@ -1241,6 +1266,7 @@ def main() -> None:
         strict_receive_handoff=args.strict_receive_handoff,
         role_batch_rounds=args.role_batch_rounds,
         rollouts_per_side=args.rollouts_per_side,
+        receiving_learning_only=args.receiving_learning_only,
         reward_shaping=args.reward_shaping,
         contact_control_profile=ContactControlProfile(
             strike_residual_enabled=args.strike_residual,
