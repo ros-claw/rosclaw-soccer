@@ -1195,6 +1195,7 @@ def simulate_independent_team_world(
     capture_initial_support: bool = False,
     physics_checkpoint_frame: int = 0,
     capture_team_motor_targets: bool = False,
+    capture_pass_control_entry: bool = False,
     research_control_frame_limit: int | None = None,
     contact_teacher_suppression: ContactTeacherSuppression | None = None,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
@@ -1214,6 +1215,10 @@ def simulate_independent_team_world(
     """
 
     active = config or IndependentTeamWorldConfig()
+    if type(capture_pass_control_entry) is not bool or (
+        capture_pass_control_entry and not active.strict_receive_handoff
+    ):
+        raise ValueError("pass control-entry capture requires strict handoff")
     if (
         type(capture_contact_normal_impulse) is not bool
         or capture_contact_normal_impulse
@@ -1924,6 +1929,19 @@ def simulate_independent_team_world(
         trace["pass_handoff_active"] = []
         trace["pass_handoff_cancellations"] = []
         trace["pass_feedback_launch_relative"] = []
+
+    if capture_pass_control_entry:
+        for key in (
+            "pass_entry_time_sec",
+            "pass_entry_source_code",
+            "pass_entry_receiver_code",
+            "pass_entry_created_sec",
+            "pass_entry_target_valid",
+            "pass_entry_target_xy_m",
+            "pass_entry_ball_xy_m",
+            "pass_entry_ball_velocity_xy_mps",
+        ):
+            trace[key] = []
 
     if near_ball_policy is not None:
         for name in (
@@ -3807,6 +3825,26 @@ def simulate_independent_team_world(
         research_teacher_peak_torque_nm = 0.0
         residual_target_substeps = np.zeros(len(residual_ids), dtype=np.int64)
         residual_target_override_substeps = np.zeros(len(residual_ids), dtype=np.int64)
+        if capture_pass_control_entry:
+            # Snapshot the committed handoff before any 500Hz integration.
+            # This is passive telemetry: it never modifies the handoff or physics.
+            target_xy = None if receive_handoff is None else receive_handoff.launch_target_xy
+            trace["pass_entry_time_sec"].append(float(data.time))
+            trace["pass_entry_source_code"].append(
+                0 if receive_handoff is None else agent_codes[receive_handoff.source]
+            )
+            trace["pass_entry_receiver_code"].append(
+                0 if receive_handoff is None else agent_codes[receive_handoff.receiver]
+            )
+            trace["pass_entry_created_sec"].append(
+                -1.0 if receive_handoff is None else receive_handoff.created_sec
+            )
+            trace["pass_entry_target_valid"].append(target_xy is not None)
+            trace["pass_entry_target_xy_m"].append((0.0, 0.0) if target_xy is None else target_xy)
+            trace["pass_entry_ball_xy_m"].append(data.qpos[ball_qpos : ball_qpos + 2].copy())
+            trace["pass_entry_ball_velocity_xy_mps"].append(
+                data.qvel[ball_qvel : ball_qvel + 2].copy()
+            )
         for substep in range(_SUBSTEPS):
             frame_teacher_last_substep_valid = False
             frame_teacher_baseline = np.zeros(29, dtype=np.float64)
