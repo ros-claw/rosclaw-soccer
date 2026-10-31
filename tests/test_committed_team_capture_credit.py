@@ -176,6 +176,26 @@ def test_same_handoff_cannot_change_committed_target():
         module.committed_team_capture_credit(trace, IDS)
 
 
+def test_two_commitments_cannot_double_credit_one_receiver_touch():
+    trace = sample()
+    for key in (
+        "pass_entry_source_code",
+        "pass_entry_receiver_code",
+        "pass_entry_target_valid",
+        "pass_entry_target_xy_m",
+        "pass_source_agent_code",
+        "pass_target_agent_code",
+        "ball_contact_agent_code",
+        "ball_contact_effector_code",
+        "ball_contact_force_n",
+    ):
+        trace[key][12] = trace[key][10]
+    trace["pass_entry_created_sec"][12] = 0.2
+    credit, events = module.committed_team_capture_credit(trace, IDS)
+    assert [e["outcome"] for e in events] == ["CONTROLLED_SAMPLED", "DUPLICATE_RECEIVER_TOUCH"]
+    assert credit.sum() == pytest.approx(0.2)
+
+
 def test_control_score_must_describe_the_receiver_touch(monkeypatch):
     monkeypatch.setattr(
         module,

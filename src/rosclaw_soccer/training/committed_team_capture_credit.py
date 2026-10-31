@@ -68,7 +68,7 @@ def committed_team_capture_credit(
     n = len(time) if time.ndim == 1 else 0
     scalar = required[:6] + required[12:]
     if (
-        n < 2
+        not 2 <= n <= 1250
         or any(v[k].shape != (n,) for k in scalar)
         or any(v[k].shape != (n, 2) for k in required[6:9])
         or v["team_native_pre_control_qpos"].shape != (n, 8, 43)
@@ -143,6 +143,7 @@ def committed_team_capture_credit(
     credit = np.zeros((n, 8), dtype=np.float64)
     events: list[dict[str, Any]] = []
     seen: set[tuple[int, int, float]] = set()
+    credited_receipts: set[tuple[int, int]] = set()
     for frame in range(end):
         source = int(v["pass_entry_source_code"][frame])
         receiver = int(v["pass_entry_receiver_code"][frame])
@@ -202,9 +203,14 @@ def committed_team_capture_credit(
                     or abs((time[start + 99] - observed) - time[step]) > 1e-7
                 ):
                     raise ValueError("capture score is not bound to the observed receiver contact")
-                credit_frame = start + 99
-                credit[credit_frame, source - 1] += 0.1
-                credit[credit_frame, receiver - 1] += 0.1
+                receipt_key = (receiver, step)
+                if receipt_key in credited_receipts:
+                    outcome = "DUPLICATE_RECEIVER_TOUCH"
+                else:
+                    credited_receipts.add(receipt_key)
+                    credit_frame = start + 99
+                    credit[credit_frame, source - 1] += 0.1
+                    credit[credit_frame, receiver - 1] += 0.1
             break
         if outcome == "NO_RECEIVER" and limit < frame + 101:
             outcome = "CENSORED_FLIGHT"
