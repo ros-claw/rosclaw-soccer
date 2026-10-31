@@ -88,6 +88,13 @@ def physical_rewards(
     on this player's measured foot-contact frames. Dense contact is capped by
     the control period, so resting on the ball cannot earn an event bonus.
     """
+    if reward_shaping == "team_capture_in_play_impact_v1":
+        from rosclaw_soccer.training.nonfoot_impact_reward import nonfoot_impact_adjustment
+
+        base = physical_rewards(
+            trace, ids, reward_shaping="team_capture_dissipation_in_play_v1", gamma=gamma
+        )
+        return base + nonfoot_impact_adjustment(trace, ids)
     if reward_shaping == "team_capture_dissipation_in_play_v1":
         from rosclaw_soccer.training.in_play_rewards import in_play_rewards
         from rosclaw_soccer.world.match_boundary import ball_exit_reason
