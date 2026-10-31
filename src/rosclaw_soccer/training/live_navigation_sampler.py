@@ -118,3 +118,61 @@ class LiveNavigationSampler:
             }
         )
         return NavigationDelta(observation.agent_id, observation.frame, observation.time_sec, delta)
+
+
+class DeterministicNavigationCandidate(LiveNavigationSampler):
+    """Frozen mean-action research candidate, not a promoted player skill."""
+
+    def __init__(
+        self,
+        weights: Path,
+        *,
+        agent_id: str,
+        actor_hash: str,
+        foundation_hash: str,
+        foundation_config_hash: str,
+    ) -> None:
+        super().__init__(
+            weights,
+            agent_id=agent_id,
+            actor_hash=actor_hash,
+            foundation_hash=foundation_hash,
+            foundation_config_hash=foundation_config_hash,
+            seed=0,
+        )
+        self.contract_hash = str(
+            hash_json(
+                {
+                    "schema": "soccer.deterministic_navigation_candidate.v1",
+                    "agent_id": agent_id,
+                    "actor_hash": actor_hash,
+                    "foundation_hash": foundation_hash,
+                    "foundation_config_hash": foundation_config_hash,
+                    "gate": "committed_receiver",
+                    "observation": "soccer.local_navigation_world_heading_39.v1",
+                    "action": "bounded_gaussian_mean",
+                    "activation_ceiling": self.activation_ceiling,
+                    "promotion_eligible": False,
+                }
+            )
+        )
+
+    def propose(self, observation: NavigationObservation) -> NavigationDelta | None:
+        import torch
+
+        if (
+            not isinstance(observation, NavigationObservation)
+            or observation.agent_id != self.agent_id
+        ):
+            raise ValueError("same-player navigation observation required")
+        if not observation.committed_receiver:
+            return None
+        features = local_navigation_features(observation)
+        with torch.no_grad():
+            mean, _ = self._actor(torch.from_numpy(features[None]))
+        return NavigationDelta(
+            observation.agent_id,
+            observation.frame,
+            observation.time_sec,
+            local_navigation_delta(mean[0].cpu().numpy()),
+        )

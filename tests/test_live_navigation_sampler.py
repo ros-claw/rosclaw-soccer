@@ -5,7 +5,10 @@ import numpy as np
 import pytest
 
 from rosclaw_soccer.skills.team.navigation_option import NavigationObservation, NavigationSlot
-from rosclaw_soccer.training.live_navigation_sampler import LiveNavigationSampler
+from rosclaw_soccer.training.live_navigation_sampler import (
+    DeterministicNavigationCandidate,
+    LiveNavigationSampler,
+)
 from rosclaw_soccer.training.local_navigation import build_local_navigation_actor_critic
 
 torch = pytest.importorskip("torch")
@@ -77,3 +80,20 @@ def test_invalid_identity_is_rejected(tmp_path):
     model = sampler(tmp_path)
     with pytest.raises(ValueError):
         model.propose(replace(observation(True), agent_id="blue.finisher"))
+
+
+def test_frozen_candidate_uses_mean_and_distinct_contract(tmp_path):
+    exploratory = sampler(tmp_path)
+    path = tmp_path / "actor.npz"
+    digest = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    model = DeterministicNavigationCandidate(
+        path,
+        agent_id="red.finisher",
+        actor_hash=digest,
+        foundation_hash=HASH,
+        foundation_config_hash=HASH,
+    )
+    assert model.contract_hash != exploratory.contract_hash
+    assert model.propose(observation(False)) is None
+    assert model.propose(observation(True)).velocity_delta == (0.0, 0.0, 0.0)
+    assert not model.samples
