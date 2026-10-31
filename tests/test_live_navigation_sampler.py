@@ -1,0 +1,79 @@
+import hashlib
+from dataclasses import replace
+
+import numpy as np
+import pytest
+
+from rosclaw_soccer.skills.team.navigation_option import NavigationObservation, NavigationSlot
+from rosclaw_soccer.training.live_navigation_sampler import LiveNavigationSampler
+from rosclaw_soccer.training.local_navigation import build_local_navigation_actor_critic
+
+torch = pytest.importorskip("torch")
+HASH = "sha256:" + "a" * 64
+
+
+def observation(committed):
+    return NavigationObservation(
+        agent_id="red.finisher",
+        frame=0,
+        time_sec=0.0,
+        role="finisher",
+        intent="receive",
+        body_pose=(0.0, 0.0, 0.75, 1.0, 0.0, 0.0, 0.0),
+        body_velocity=(0.0, 0.0, 0.0),
+        ball_position=(0.5, 0.0, 0.11),
+        ball_velocity=(-0.4, 0.0, 0.0),
+        task_target=(0.5, 0.0, 0.11),
+        steering_target=(0.5, 0.0),
+        baseline_command=(0.0, 0.0, 0.0),
+        previous_command=(0.0, 0.0, 0.0),
+        neighbors=(),
+        committed_receiver=committed,
+    )
+
+
+def sampler(tmp_path, seed=1):
+    torch.manual_seed(3)
+    model = build_local_navigation_actor_critic()
+    path = tmp_path / "actor.npz"
+    if not path.exists():
+        np.savez_compressed(path, **{k: v.detach().numpy() for k, v in model.state_dict().items()})
+    digest = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    return LiveNavigationSampler(
+        path,
+        agent_id="red.finisher",
+        actor_hash=digest,
+        foundation_hash=HASH,
+        foundation_config_hash=HASH,
+        seed=seed,
+    )
+
+
+def test_seeded_proposal_is_bounded_replayable_and_on_policy(tmp_path):
+    first, second = sampler(tmp_path), sampler(tmp_path)
+    a, b = first.propose(observation(True)), second.propose(observation(True))
+    assert a == b
+    assert np.linalg.norm(a.velocity_delta[:2]) <= 0.25
+    assert np.array_equal(first.samples[0]["raw"], second.samples[0]["raw"])
+    record = first.samples[0]
+    with torch.no_grad():
+        mean, value = first._actor(torch.from_numpy(record["obs"][None]))
+        normal = torch.distributions.Normal(mean, first._actor.logstd.clamp(-2.5, -0.3).exp())
+        logp = normal.log_prob(torch.from_numpy(record["raw"][None])).sum(1)
+    assert np.isclose(record["logp"], float(logp[0]))
+    assert np.isclose(record["value"], float(value[0]))
+
+
+def test_gate_and_slot_do_not_claim_uncommitted_ball(tmp_path):
+    model = sampler(tmp_path)
+    slot = NavigationSlot(model)
+    assert slot.propose(observation(False)) == (0.0, 0.0, 0.0)
+    assert not model.samples and not slot.active and not slot.faulted
+    slot.propose(replace(observation(True), frame=1, time_sec=0.02))
+    assert len(model.samples) == 1 and slot.active and not slot.faulted
+
+
+def test_invalid_identity_is_rejected(tmp_path):
+    model = sampler(tmp_path)
+    with pytest.raises(ValueError):
+        model.propose(replace(observation(True), agent_id="blue.finisher"))
