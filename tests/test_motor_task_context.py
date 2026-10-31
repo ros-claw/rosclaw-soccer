@@ -132,6 +132,50 @@ def test_proprioception_task_direction_matches_the_admitted_option():
     assert extended[57] == pytest.approx((1.5 - 0.115) / 2.0)
 
 
+def test_player_context_uses_full_precontrol_roster_and_preserves_legacy_features():
+    controllers = [
+        SimpleNamespace(
+            cell=SimpleNamespace(agent_id=f"agent.{i}"), qpos_base=i * 7, qvel_base=i * 6
+        )
+        for i in range(8)
+    ]
+    focal = controllers[0]
+    focal.state = SimpleNamespace(
+        pelvis_quat_w=np.array([1.0, 0, 0, 0]),
+        pelvis_pos_w=np.zeros(3),
+        gravity_ori=np.array([0.0, 0.0, -1.0]),
+        ang_vel=np.zeros(3),
+        q=np.zeros(29),
+        dq=np.zeros(29),
+    )
+    focal.decision = None
+    focal.policy = SimpleNamespace(default_angles_reorder=np.zeros(29))
+    focal.left_ankle_body, focal.right_ankle_body = 0, 1
+    qpos, qvel = np.zeros(59), np.zeros(51)
+    for i in range(8):
+        qpos[7 * i] = i
+    qvel[0] = 1
+    qpos[56:59] = [0.5, 0, 0.11]
+    data = SimpleNamespace(qpos=qpos, qvel=qvel, xpos=np.zeros((2, 3)))
+    kwargs = dict(data=data, ball_qpos=56, ball_qvel=48, previous=np.zeros(12))
+    old = _near_ball_observation(focal, **kwargs)
+    upgraded = _near_ball_observation(
+        focal,
+        **kwargs,
+        observation_contract="player_context_v3",
+        other_controllers=tuple(controllers),
+    )
+    np.testing.assert_array_equal(upgraded[:56], old)
+    np.testing.assert_allclose(upgraded[56:], [1, 1, 0, -1, 0])
+    with pytest.raises(ValueError, match="complete eight-agent"):
+        _near_ball_observation(
+            focal,
+            **kwargs,
+            observation_contract="player_context_v3",
+            other_controllers=tuple(controllers[:-1]),
+        )
+
+
 def test_bound_context_is_explicit_hash_bound_and_keeps_legacy_hash():
     old = G1RollingOptionBridgeConfig()
     assert (

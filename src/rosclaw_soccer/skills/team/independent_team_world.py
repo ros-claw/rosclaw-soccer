@@ -3465,12 +3465,15 @@ def simulate_independent_team_world(
                         previous=residual_previous[i],
                         task_target_position_m=option_task_targets.get(c.cell.agent_id),
                         observation_contract=near_ball_policy.observation_contract,
+                        other_controllers=ordered,
                     )
                     for i, c in enumerate(ordered)
                 ]
             )
             if near_ball_policy.observation_contract == "task_geometry_v2":
                 trace.setdefault("residual_observation_contract_code", []).append(2)
+            elif near_ball_policy.observation_contract == "player_context_v3":
+                trace.setdefault("residual_observation_contract_code", []).append(3)
             residual_active = np.asarray(
                 [
                     residual_skill_selected(
@@ -5742,6 +5745,7 @@ def _near_ball_observation(
     previous: NDArray[np.float64],
     task_target_position_m: tuple[float, float, float] | None = None,
     observation_contract: str = "direction_v1",
+    other_controllers: tuple[_PlayerController, ...] = (),
 ) -> NDArray[np.float64]:
     """Measured proprioception and local task context; no future trajectory input."""
     state = controller.state
@@ -5780,6 +5784,23 @@ def _near_ball_observation(
         )
         observation = np.r_[
             observation, np.linalg.norm(task[:2] - ball[:2]) / 5.0, (task[2] - ball[2]) / 2.0
+        ]
+    elif observation_contract == "player_context_v3":
+        from rosclaw_soccer.training.local_player_context import nearest_player_context
+
+        others = [c for c in other_controllers if c.cell.agent_id != controller.cell.agent_id]
+        if len(other_controllers) != 8 or len(others) != 7:
+            raise ValueError("player context requires the complete eight-agent simulator roster")
+        observation = np.r_[
+            observation,
+            nearest_player_context(
+                data.qpos[controller.qpos_base : controller.qpos_base + 2],
+                data.qvel[controller.qvel_base : controller.qvel_base + 2],
+                yaw,
+                [c.cell.agent_id for c in others],
+                [data.qpos[c.qpos_base : c.qpos_base + 2] for c in others],
+                [data.qvel[c.qvel_base : c.qvel_base + 2] for c in others],
+            ),
         ]
     elif observation_contract != "direction_v1":
         raise ValueError("unknown residual observation contract")

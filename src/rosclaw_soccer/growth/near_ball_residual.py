@@ -51,7 +51,8 @@ class NearBallResidualPolicy:
             or type(self.generation) is not int
             or not 0 <= self.generation <= 1000000
             or set(self.weights) != set(_SHAPES)
-            or self.observation_contract not in {"direction_v1", "task_geometry_v2"}
+            or self.observation_contract
+            not in {"direction_v1", "task_geometry_v2", "player_context_v3"}
         ):
             raise ValueError("invalid private residual policy identity")
         for name, shape in _SHAPES.items():
@@ -89,7 +90,24 @@ class NearBallResidualPolicy:
 
     @property
     def observation_dim(self) -> int:
-        return 58 if self.observation_contract == "task_geometry_v2" else 56
+        return {"direction_v1": 56, "task_geometry_v2": 58, "player_context_v3": 61}[
+            self.observation_contract
+        ]
+
+    def with_player_context(self) -> NearBallResidualPolicy:
+        """Append five zero-weight SIM-only player features, without training."""
+        if self.observation_contract != "direction_v1":
+            raise ValueError("only legacy direction policies can receive player context")
+        weights = {k: v.copy() for k, v in self.weights.items()}
+        weights["w1"] = np.concatenate((weights["w1"], np.zeros((8, 5, HIDDEN_DIM))), axis=1)
+        return NearBallResidualPolicy(
+            self.agent_ids,
+            self.body_hash,
+            self.generation + 1,
+            self.policy_hash,
+            weights,
+            "player_context_v3",
+        )
 
     def with_task_geometry(self) -> NearBallResidualPolicy:
         """Zero-pad new inputs; structural migration, not a learning update."""

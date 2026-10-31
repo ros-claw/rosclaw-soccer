@@ -753,9 +753,14 @@ def _trace_observation_dimension(trace: dict[str, Any], frames: int) -> int:
     if "residual_observation_contract_code" not in trace:
         return 56
     code = np.asarray(trace["residual_observation_contract_code"])
-    if code.shape != (frames,) or code.dtype.kind not in "iu" or not np.all(code == 2):
+    if (
+        frames < 1
+        or code.shape != (frames,)
+        or code.dtype.kind not in "iu"
+        or not (np.all(code == 2) or np.all(code == 3))
+    ):
         raise ValueError("invalid explicit residual observation contract")
-    return 58
+    return 58 if code[0] == 2 else 61
 
 
 def _validate_on_policy(policy: NearBallResidualPolicy, trace: dict[str, Any]) -> None:
