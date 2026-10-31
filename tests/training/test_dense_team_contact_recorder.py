@@ -2,7 +2,10 @@ from dataclasses import replace
 
 import pytest
 
-from rosclaw_soccer.skills.team.motor_option import TeamMotorPhysicsObservation
+from rosclaw_soccer.skills.team.motor_option import (
+    TeamActuatorEvidence,
+    TeamMotorPhysicsObservation,
+)
 from rosclaw_soccer.skills.team.physics_evidence import PhysicsEvidenceSlot
 from rosclaw_soccer.training.dense_team_contact_recorder import DenseTeamContactRecorder
 
@@ -30,6 +33,39 @@ def test_complete_stream_is_observation_only_and_exported():
     assert recorder.observations() == (row(), row(0.004))
     assert recorder.to_dict()["steps"] == 2
     assert recorder.to_dict()["promotion_authorized"] is False
+    assert "actuator_evidence" not in recorder.to_dict()["rows"][0]
+
+
+def test_opt_in_actuator_evidence_is_player_bound_and_complete():
+    recorder = DenseTeamContactRecorder("red.finisher", actuator_evidence=True)
+    slot = PhysicsEvidenceSlot(recorder)
+    actuator = TeamActuatorEvidence((1.0,) * 29, (2.0,) * 29, (3.0,) * 29)
+    slot.observe_physics(replace(row(), actuator_evidence=actuator))
+    assert not slot.faulted
+    exported = recorder.to_dict()["rows"][0]["actuator_evidence"]
+    assert exported["control"] == (1.0,) * 29
+    assert exported["actuator_force"] == (2.0,) * 29
+    assert exported["generalized_force"] == (3.0,) * 29
+    assert recorder.contract_hash != DenseTeamContactRecorder("red.finisher").contract_hash
+
+
+def test_actuator_subscription_cannot_change_or_be_missing():
+    recorder = DenseTeamContactRecorder("red.finisher", actuator_evidence=True)
+    slot = PhysicsEvidenceSlot(recorder)
+    slot.observe_physics(row())
+    assert slot.faulted
+    assert not recorder.observations()
+    recorder = DenseTeamContactRecorder("red.finisher", actuator_evidence=True)
+    slot = PhysicsEvidenceSlot(recorder)
+    recorder.needs_actuator_evidence = False
+    slot.observe_physics(row())
+    assert slot.faulted
+
+
+@pytest.mark.parametrize("bad", [(0.0,) * 28, (float("nan"),) * 29])
+def test_reject_invalid_actuator_evidence(bad):
+    with pytest.raises(ValueError, match="simulated actuator evidence"):
+        TeamActuatorEvidence(bad, (0.0,) * 29, (0.0,) * 29)
 
 
 @pytest.mark.parametrize(

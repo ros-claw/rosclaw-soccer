@@ -375,6 +375,29 @@ class TeamBallContact:
 
 
 @dataclass(frozen=True)
+class TeamActuatorEvidence:
+    """Simulation actuator values associated with the just-completed physics step.
+
+    ``control`` is the guarded input, ``actuator_force`` is MuJoCo's actuator
+    output and ``generalized_force`` is mapped to this player's joint DOFs.
+    These values are not hardware commands or evidence of real-world motion.
+    """
+
+    control: tuple[float, ...]
+    actuator_force: tuple[float, ...]
+    generalized_force: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        if any(
+            type(values) is not tuple
+            or len(values) != 29
+            or any(type(value) not in (int, float) or not math.isfinite(value) for value in values)
+            for values in (self.control, self.actuator_force, self.generalized_force)
+        ):
+            raise ValueError("finite 29-joint simulated actuator evidence required")
+
+
+@dataclass(frozen=True)
 class TeamMotorPhysicsObservation:
     """One measured physics step, with this player's feet as contact source.
 
@@ -392,6 +415,7 @@ class TeamMotorPhysicsObservation:
     observer_agent_id: str | None = None
     contacts_complete: bool = False
     ball_contacts: tuple[TeamBallContact, ...] = ()
+    actuator_evidence: TeamActuatorEvidence | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -412,6 +436,8 @@ class TeamMotorPhysicsObservation:
             )
             or min(self.time_sec, self.foot_normal_force_n, self.other_non_ground_normal_force_n)
             < 0
+            or self.actuator_evidence is not None
+            and not isinstance(self.actuator_evidence, TeamActuatorEvidence)
         ):
             raise ValueError("finite immutable physical motor evidence required")
         if (

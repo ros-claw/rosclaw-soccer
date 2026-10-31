@@ -16,13 +16,21 @@ class DenseTeamContactRecorder:
     Rows are immutable observations of the original world, not a reset state.
     """
 
-    def __init__(self, agent_id: str, *, maximum_substeps: int = 10000) -> None:
-        if type(agent_id) is not str or not agent_id or type(maximum_substeps) is not int:
+    def __init__(
+        self, agent_id: str, *, maximum_substeps: int = 10000, actuator_evidence: bool = False
+    ) -> None:
+        if (
+            type(agent_id) is not str
+            or not agent_id
+            or type(maximum_substeps) is not int
+            or type(actuator_evidence) is not bool
+        ):
             raise ValueError("explicit agent and integral bounded capacity required")
         if not 1 <= maximum_substeps <= 10000:
             raise ValueError("maximum 20 simulated seconds of evidence required")
         self.agent_id = agent_id
         self.maximum_substeps = maximum_substeps
+        self.needs_actuator_evidence = actuator_evidence
         self.contract_hash = hash_json(
             {
                 "schema": "soccer.dense_team_contact_recorder.v1",
@@ -31,6 +39,7 @@ class DenseTeamContactRecorder:
                 "step_sec": 0.002,
                 "sim_only": True,
                 "hardware_authorized": False,
+                **({"actuator_evidence": True} if actuator_evidence else {}),
             }
         )
         self._rows: list[TeamMotorPhysicsObservation] = []
@@ -44,6 +53,7 @@ class DenseTeamContactRecorder:
             or observation.observer_agent_id != self.agent_id
             or len(self._rows) >= self.maximum_substeps
             or abs(observation.time_sec - 0.002 * (len(self._rows) + 1)) > 1e-6
+            or (observation.actuator_evidence is not None) != self.needs_actuator_evidence
         ):
             raise ValueError("complete sequential same-agent SIM stream required")
         self._rows.append(observation)
@@ -74,12 +84,16 @@ class DenseTeamContactRecorder:
         return tuple(self._rows)
 
     def to_dict(self) -> dict[str, Any]:
+        rows = [asdict(row) for row in self._rows]
+        if not self.needs_actuator_evidence:
+            for row in rows:
+                del row["actuator_evidence"]
         return {
             "schema": "soccer.dense_team_contact_evidence.v1",
             "contract_hash": self.contract_hash,
             "agent_id": self.agent_id,
             "steps": len(self._rows),
-            "rows": [asdict(row) for row in self._rows],
+            "rows": rows,
             "sim_only": True,
             "hardware_authorized": False,
             "promotion_authorized": False,

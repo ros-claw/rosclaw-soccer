@@ -40,6 +40,10 @@ class PhysicsEvidenceSlot:
         if type(requested_velocity) is not bool:
             raise ValueError("explicit read-only contact velocity subscription required")
         self._needs_contact_velocity = requested_velocity
+        requested_actuator = getattr(consumer, "needs_actuator_evidence", False)
+        if type(requested_actuator) is not bool:
+            raise ValueError("explicit read-only actuator evidence subscription required")
+        self._needs_actuator_evidence = requested_actuator
         self.faulted = False
         self.fault_reason: str | None = None
         self._time: float | None = None
@@ -56,12 +60,18 @@ class PhysicsEvidenceSlot:
     def needs_contact_velocity(self) -> bool:
         return self._needs_contact_velocity
 
+    @property
+    def needs_actuator_evidence(self) -> bool:
+        return self._needs_actuator_evidence
+
     def _check_identity(self) -> None:
         if (
             self.consumer.agent_id != self.agent_id
             or self.consumer.contract_hash != self.contract_hash
             or getattr(self.consumer, "needs_contact_velocity", False)
             != self.needs_contact_velocity
+            or getattr(self.consumer, "needs_actuator_evidence", False)
+            != self.needs_actuator_evidence
         ):
             raise ValueError("physics evidence consumer changed its registration")
 
@@ -76,6 +86,7 @@ class PhysicsEvidenceSlot:
             if (
                 not observation.contacts_complete
                 or observation.observer_agent_id != self.agent_id
+                or (observation.actuator_evidence is not None) != self.needs_actuator_evidence
                 or self._time is None
                 and abs(observation.time_sec - 0.002) > 1e-6
                 or self._time is not None

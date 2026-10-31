@@ -108,6 +108,7 @@ from rosclaw_soccer.sim.contracts import (
 from rosclaw_soccer.sim.joint_braking import strengthen_outward_joint_braking
 from rosclaw_soccer.skills.team.foot_kinematics import measure_team_foot_kinematics
 from rosclaw_soccer.skills.team.motor_option import (
+    TeamActuatorEvidence,
     TeamBallContact,
     TeamMotorFoundation,
     TeamMotorObservation,
@@ -5469,6 +5470,22 @@ def _observe_team_motor_physics(
         observer = motors[agent]
         assert isinstance(observer, TeamMotorPhysicsObserver)
         try:
+            wants_actuator = getattr(observer, "needs_actuator_evidence", False)
+            if type(wants_actuator) is not bool:
+                raise ValueError("actuator evidence subscription must be boolean")
+            actuator_evidence = (
+                TeamActuatorEvidence(
+                    control=tuple(float(x) for x in data.ctrl[controller.actuators]),
+                    actuator_force=tuple(
+                        float(x) for x in data.actuator_force[controller.actuators]
+                    ),
+                    generalized_force=tuple(
+                        float(x) for x in data.qfrc_actuator[controller.joint_qvel]
+                    ),
+                )
+                if wants_actuator
+                else None
+            )
             observer.observe_physics(
                 TeamMotorPhysicsObservation(
                     time_sec=float(data.time),
@@ -5485,6 +5502,7 @@ def _observe_team_motor_physics(
                     observer_agent_id=agent,
                     contacts_complete=True,
                     ball_contacts=contacts,
+                    actuator_evidence=actuator_evidence,
                 )
             )
         except (ValueError, TypeError, FloatingPointError):
