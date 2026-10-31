@@ -19,6 +19,60 @@ class BallContactSummary:
     nonfoot_contact_microsteps: int
 
 
+@dataclass(frozen=True)
+class KickFootContactSummary:
+    """Observed foot identity only; this is not evidence of intentional kicking."""
+
+    first_designated_microstep: int | None
+    first_other_microstep: int | None
+    first_contact: str
+    designated_contact_microsteps: int
+    other_contact_microsteps: int
+
+
+def classify_kick_foot_contacts(
+    force_micro_n: NDArray[np.float64],
+    *,
+    designated_column: int,
+    threshold_n: float = 1.0,
+) -> KickFootContactSummary:
+    """Distinguish designated/other first-foot collisions in an observed window.
+
+    ``designated_column`` must explicitly identify one of the first two foot
+    columns; callers own anatomical channel mapping and phase/window choice.
+    Simultaneous collisions are a separate class, not designated-foot-first.
+    This function does not infer intention, policy causality or ball quality.
+    """
+    if type(designated_column) is not int or designated_column not in (0, 1):
+        raise ValueError("designated foot column must be 0 or 1")
+    # Reuse the existing validated contact contract, including all nonfoot
+    # columns; never silently accept a malformed trace or threshold.
+    classify_ball_body_contacts(force_micro_n, threshold_n=threshold_n)
+    force = np.asarray(force_micro_n)
+    flattened = force.reshape(-1, force.shape[2])
+    designated = np.flatnonzero(flattened[:, designated_column] > threshold_n)
+    other = np.flatnonzero(flattened[:, 1 - designated_column] > threshold_n)
+    first_designated = int(designated[0]) if designated.size else None
+    first_other = int(other[0]) if other.size else None
+    if first_designated is None and first_other is None:
+        first = "none"
+    elif first_designated is None:
+        first = "other"
+    elif first_other is None:
+        first = "designated"
+    elif first_designated == first_other:
+        first = "simultaneous"
+    else:
+        first = "designated" if first_designated < first_other else "other"
+    return KickFootContactSummary(
+        first_designated_microstep=first_designated,
+        first_other_microstep=first_other,
+        first_contact=first,
+        designated_contact_microsteps=int(designated.size),
+        other_contact_microsteps=int(other.size),
+    )
+
+
 def classify_ball_body_contacts(
     force_micro_n: NDArray[np.float64], *, threshold_n: float = 1.0
 ) -> BallContactSummary:
