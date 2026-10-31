@@ -51,6 +51,36 @@ def test_residual_target_authority_rejects_missing_policy_before_assets(capture:
         )
 
 
+@pytest.mark.parametrize("frame", [-1, 250, True])
+def test_team_motor_capture_rejects_invalid_checkpoint_before_assets(frame: object) -> None:
+    with pytest.raises(ValueError, match="physical checkpoint"):
+        simulate_independent_team_world(
+            asset_root=Path("must-not-load-assets"),
+            roster=None,  # type: ignore[arg-type]
+            cells=(),
+            players=(),
+            scenario=None,  # type: ignore[arg-type]
+            goal=None,  # type: ignore[arg-type]
+            config=IndependentTeamWorldConfig(simulation_duration_sec=5.0),
+            capture_initial_physics=True,
+            capture_team_motor_targets=True,
+            physics_checkpoint_frame=frame,  # type: ignore[arg-type]
+        )
+
+
+def test_team_motor_capture_requires_physical_checkpoint_before_assets() -> None:
+    with pytest.raises(ValueError, match="team motor capture"):
+        simulate_independent_team_world(
+            asset_root=Path("must-not-load-assets"),
+            roster=None,  # type: ignore[arg-type]
+            cells=(),
+            players=(),
+            scenario=None,  # type: ignore[arg-type]
+            goal=None,  # type: ignore[arg-type]
+            capture_team_motor_targets=True,
+        )
+
+
 def _hash(label: str) -> str:
     return str(hash_json({"fixture": label}))
 
@@ -267,3 +297,81 @@ def test_entry_support_capture_does_not_change_physical_trajectory() -> None:
     assert set(measurements[:, 11]) <= {0, 1, 2, 3}
     assert len(set(observed["initial_support_agent_ids"])) == 6
     assert len(observed["initial_support_columns"]) == 13
+
+
+@pytest.mark.integration
+def test_team_motor_capture_at_nondefault_checkpoint_preserves_physics() -> None:
+    value = os.environ.get("ROSCLAW_G1_ASSET_ROOT")
+    if value is None:
+        pytest.skip("ROSCLAW_G1_ASSET_ROOT is not configured")
+    root = Path(value)
+    traces = []
+    for capture in (False, True):
+        fixture = build_independent_three_vs_three_fixture(root)
+        _, trace = simulate_independent_team_world(
+            asset_root=root,
+            roster=fixture.roster,
+            cells=fixture.cells,
+            players=fixture.players,
+            scenario=IndependentTeamWorldScenario(
+                "s199.team-motor-arbitrary-checkpoint",
+                (2.0, 0.0, fixture.goal.ball_radius_m),
+                (0.2, 0.0, 0.0),
+                920602,
+            ),
+            goal=fixture.goal,
+            config=IndependentTeamWorldConfig(simulation_duration_sec=5.0),
+            capture_initial_physics=True,
+            physics_checkpoint_frame=30,
+            capture_team_motor_targets=capture,
+        )
+        traces.append(trace)
+    baseline, captured = traces
+    for key in baseline:
+        np.testing.assert_array_equal(baseline[key], captured[key])
+    assert captured["initial_control_frame"].tolist() == [30]
+    assert len(captured["time"]) == 250
+    for cell in fixture.cells:
+        prefix = cell.agent_id.replace(".", "_")
+        for suffix, count in (
+            ("_captured_pd_target", 250),
+            ("_captured_pd_kp", 250),
+            ("_captured_pd_kd", 250),
+            ("_captured_extra_torque_nm", 2500),
+            ("_captured_executed_torque_nm", 2500),
+        ):
+            values = captured[prefix + suffix]
+            assert values.shape == (count, 29)
+            assert np.isfinite(values).all()
+
+
+@pytest.mark.integration
+def test_team_motor_capture_does_not_fabricate_unreached_checkpoint() -> None:
+    value = os.environ.get("ROSCLAW_G1_ASSET_ROOT")
+    if value is None:
+        pytest.skip("ROSCLAW_G1_ASSET_ROOT is not configured")
+    root = Path(value)
+    fixture = build_independent_three_vs_three_fixture(root)
+    _, trace = simulate_independent_team_world(
+        asset_root=root,
+        roster=fixture.roster,
+        cells=fixture.cells,
+        players=fixture.players,
+        scenario=IndependentTeamWorldScenario(
+            "s199.team-motor-unreached-checkpoint",
+            (fixture.goal.plane_x_m - 0.01, 0.0, fixture.goal.ball_radius_m),
+            (1.0, 0.0, 0.0),
+            2506,
+        ),
+        goal=fixture.goal,
+        config=IndependentTeamWorldConfig(simulation_duration_sec=5.0, stop_on_ball_exit=True),
+        capture_initial_physics=True,
+        physics_checkpoint_frame=249,
+        capture_team_motor_targets=True,
+    )
+    assert len(trace["time"]) < 249
+    assert "initial_control_frame" not in trace
+    assert "initial_integration_state" not in trace
+    for cell in fixture.cells:
+        key = cell.agent_id.replace(".", "_") + "_captured_executed_torque_nm"
+        assert trace[key].shape == (10 * len(trace["time"]), 29)

@@ -1205,6 +1205,12 @@ def simulate_independent_team_world(
     or actuator handle; registration does not grant any additional motion.
     Their callbacks must handle pre-entry and post-exit observations. Failures
     latch in the existing motor fault ledger and disqualify the result.
+
+    Read-only team motor capture may accompany a physical checkpoint at any
+    valid control frame. If the episode ends earlier, no checkpoint is
+    fabricated: consumers must verify that ``initial_control_frame`` exists
+    and matches the requested frame. The checkpoint does not contain neural
+    policy, tactical, contact-handoff or goal-net controller memory.
     """
 
     active = config or IndependentTeamWorldConfig()
@@ -1260,13 +1266,9 @@ def simulate_independent_team_world(
     if (
         type(capture_team_motor_targets) is not bool
         or capture_team_motor_targets
-        and (
-            not capture_initial_physics
-            or physics_checkpoint_frame != 45
-            or research_coupled_teacher_agent_id is not None
-        )
+        and (not capture_initial_physics or research_coupled_teacher_agent_id is not None)
     ):
-        raise ValueError("read-only eight-G1 motor capture requires frame-45 physics")
+        raise ValueError("read-only team motor capture requires an unmixed physical checkpoint")
     if research_control_frame_limit is not None and (
         type(research_control_frame_limit) is not int
         or not 130
