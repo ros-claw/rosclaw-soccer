@@ -3141,7 +3141,7 @@ def simulate_independent_team_world(
             try:
                 if controller.last_world_command is None:
                     raise ValueError("shared navigation command is unavailable")
-                observation = TeamMotorObservation(
+                motor_observation = TeamMotorObservation(
                     agent_id=agent_id,
                     frame=frame,
                     time_sec=float(data.time),
@@ -3217,25 +3217,25 @@ def simulate_independent_team_world(
                     receiver = motors[agent_id]
                     assert type(receiver) is AdmittedRecurrentReceiver
                     handoff = event_handoffs[agent_id]
-                    wants = receiver.wants_motor(observation)
-                    decision = handoff.advance(
+                    wants = receiver.wants_motor(motor_observation)
+                    handoff_decision = handoff.advance(
                         frame=frame,
                         native_active=agent_id in option_controllers,
                         learned_claim=wants and not handoff.learned_owned,
                         learned_release=handoff.learned_owned and receiver.completed,
                         learned_fault=False,
                     )
-                    if decision.owner is MotorOwner.LEARNED:
-                        proposal = receiver.propose(observation)
+                    if handoff_decision.owner is MotorOwner.LEARNED:
+                        proposal = receiver.propose(motor_observation)
                         if proposal is None and not receiver.completed:
                             raise ValueError(
                                 "granted receiver returned no target before completion"
                             )
                     else:
-                        receiver.defer_motor(observation)
+                        receiver.defer_motor(motor_observation)
                         proposal = None
                 else:
-                    proposal = motors[agent_id].propose(observation)
+                    proposal = motors[agent_id].propose(motor_observation)
                 retirement_provider = motors[agent_id]
                 if active.retire_completed_motors and isinstance(
                     retirement_provider, TeamMotorRetirementProvider
@@ -3473,6 +3473,7 @@ def simulate_independent_team_world(
                 ),
             )
             if exploration_mask is not None:
+                assert active_exploration_mask is not None
                 trace.setdefault("residual_exploration_mask", []).append(
                     active_exploration_mask.copy()
                 )
