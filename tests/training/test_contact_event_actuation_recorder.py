@@ -73,3 +73,18 @@ def test_requires_actuator_velocity_and_exact_clock():
     missing = replace(contact.ball_contacts[0], counterpart_minus_ball_velocity_world_mps=None)
     with pytest.raises(ValueError, match="ordered"):
         recorder.observe_physics(replace(contact, ball_contacts=(missing,)))
+
+
+def test_unsafe_first_step_latched_even_outside_sparse_windows():
+    recorder = ContactEventActuationRecorder("red.finisher", context_steps=2, maximum_substeps=20)
+    for step in range(1, 11):
+        recorder.observe_physics(replace(observation(step), world_bodies_safe=step not in (4, 8)))
+    snapshot = recorder.to_dict()
+    assert snapshot["rows"] == []
+    assert snapshot["first_unsafe_substep"] == 4
+    assert snapshot["verified_horizon_steps"] is None
+    recorder.verified_observations(control_frame_count=1, terminal_time_sec=0.02)
+    assert recorder.to_dict()["verified_horizon_steps"] == 10
+    recorder.observe_physics(observation(11))
+    assert recorder.to_dict()["first_unsafe_substep"] == 4
+    assert recorder.to_dict()["verified_horizon_steps"] is None

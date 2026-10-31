@@ -34,7 +34,7 @@ class ContactEventActuationRecorder:
         self.maximum_substeps = maximum_substeps
         self.contract_hash = hash_json(
             {
-                "schema": "soccer.contact_event_actuation_recorder.v1",
+                "schema": "soccer.contact_event_actuation_recorder.v2",
                 "agent_id": agent_id,
                 "context_steps": context_steps,
                 "maximum_substeps": maximum_substeps,
@@ -52,6 +52,8 @@ class ContactEventActuationRecorder:
         self._step = 0
         self._through = 0
         self._events = 0
+        self._first_unsafe_substep: int | None = None
+        self._verified_horizon_steps: int | None = None
 
     def observe_physics(self, observation: TeamMotorPhysicsObservation) -> None:
         if not isinstance(observation, TeamMotorPhysicsObservation):
@@ -71,6 +73,9 @@ class ContactEventActuationRecorder:
         ):
             raise ValueError("complete ordered contact and actuator evidence required")
         self._step = step
+        self._verified_horizon_steps = None
+        if not observation.world_bodies_safe and self._first_unsafe_substep is None:
+            self._first_unsafe_substep = step
         self._history.append((step, observation))
         if observation.foot_normal_force_n > 1.0:
             self._events += 1
@@ -92,15 +97,18 @@ class ContactEventActuationRecorder:
             or self._step != control_frame_count * 10
         ):
             raise ValueError("complete authenticated SIM observer horizon required")
+        self._verified_horizon_steps = self._step
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema": "soccer.contact_event_actuation_evidence.v1",
+            "schema": "soccer.contact_event_actuation_evidence.v2",
             "contract_hash": self.contract_hash,
             "agent_id": self.agent_id,
             "observed_steps": self._step,
             "event_substeps": self._events,
             "context_steps": self.context_steps,
+            "first_unsafe_substep": self._first_unsafe_substep,
+            "verified_horizon_steps": self._verified_horizon_steps,
             "rows": [{"step": step, "observation": asdict(obs)} for step, obs in self._captured],
             "selection": "own_foot_force_gt_1n_with_bounded_context",
             "sim_only": True,
