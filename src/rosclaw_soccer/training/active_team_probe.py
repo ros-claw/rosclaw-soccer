@@ -65,7 +65,13 @@ def run_probe(
     receive_ankle_lateral_m: float | None = None,
     strict_receive_handoff: bool = False,
     contact_control_profile: ContactControlProfile | None = None,
+    capture_contact_normal_impulse: bool = False,
 ) -> dict[str, Any]:
+    if type(capture_contact_normal_impulse) is not bool or (
+        capture_contact_normal_impulse
+        and (not four_vs_four or near_ball_policy is None or duration > 20)
+    ):
+        raise ValueError("normal impulse capture requires a bounded 4v4 residual rollout")
     if contact_control_profile is not None and (
         not isinstance(contact_control_profile, ContactControlProfile) or not four_vs_four
     ):
@@ -149,6 +155,11 @@ def run_probe(
         )
         for p in (source_root / relative,)
     }
+    if capture_contact_normal_impulse:
+        normal_path = source_root / "training/contact_normal_impulse.py"
+        implementation[str(normal_path.relative_to(source_root))] = hash_bytes(
+            normal_path.read_bytes()
+        )
     fixture = (
         build_four_vs_four_fixture(
             asset_root, forward_receiver_lane=forward_receiver_lane, basic_ball_play=basic_ball_play
@@ -278,6 +289,7 @@ def run_probe(
             near_ball_policy=near_ball_policy,
             near_ball_seed=near_ball_seed,
             near_ball_explore=near_ball_explore,
+            capture_contact_normal_impulse=capture_contact_normal_impulse,
         )
         results.append(result.to_dict())
         trajectories.append(trajectory)

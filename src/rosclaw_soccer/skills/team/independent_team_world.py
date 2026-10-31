@@ -1170,6 +1170,7 @@ def simulate_independent_team_world(
     navigation_policies: Mapping[str, TeamNavigationPolicy] | None = None,
     persistent_physics_observer_ids: tuple[str, ...] = (),
     physics_evidence_consumers: Mapping[str, PhysicsEvidenceConsumer] | None = None,
+    capture_contact_normal_impulse: bool = False,
     receiving_foundation_handoff: ReceivingFoundationHandoff | None = None,
     receiving_oracle: ReceivingOracleSchedule | None = None,
     receiving_phase_reference: ReceivingPhaseReference | None = None,
@@ -1194,6 +1195,16 @@ def simulate_independent_team_world(
     """
 
     active = config or IndependentTeamWorldConfig()
+    if (
+        type(capture_contact_normal_impulse) is not bool
+        or capture_contact_normal_impulse
+        and (
+            near_ball_policy is None
+            or active.simulation_duration_sec > 20.0
+            or physics_evidence_consumers is not None
+        )
+    ):
+        raise ValueError("normal impulse capture requires a bounded unshared SIM residual rollout")
     if type(capture_team_native_states) is not bool:
         raise ValueError("explicit read-only team-state capture flag required")
     if type(capture_residual_target_authority) is not bool or (
@@ -1341,6 +1352,13 @@ def simulate_independent_team_world(
     ):
         raise ValueError("delayed SONIC requires an explicit unchanged-prefix fallback")
     oracle_cursor = None
+    normal_recorder = None
+    if capture_contact_normal_impulse:
+        from rosclaw_soccer.training.contact_normal_impulse import ContactNormalImpulseRecorder
+
+        normal_ids = tuple(sorted(roster_ids))
+        normal_recorder = ContactNormalImpulseRecorder(normal_ids[0], normal_ids)
+        physics_evidence_consumers = {normal_ids[0]: normal_recorder}
     if physics_evidence_consumers is not None and not isinstance(
         physics_evidence_consumers, Mapping
     ):
@@ -5059,6 +5077,20 @@ def simulate_independent_team_world(
             ):
                 break
 
+    if normal_recorder is not None:
+        if evidence_faults:
+            raise ValueError("normal impulse observation fault")
+        normal_frames = normal_recorder.verified_frames(control_frames=len(trace["time"]))
+        trace["contact_normal_impulse_ns"] = [
+            [values[1:] for values in frame.foot_normal_impulse_ns] for frame in normal_frames
+        ]
+        trace["contact_normal_substeps"] = [
+            [values[1] for values in frame.foot_contact_substeps] for frame in normal_frames
+        ]
+        trace["contact_normal_ambiguous"] = [
+            [agent in frame.ambiguous_agents for agent in normal_ids] for frame in normal_frames
+        ]
+        trace["contact_normal_world_safe"] = [frame.world_bodies_safe for frame in normal_frames]
     trajectory = {name: np.asarray(values) for name, values in trace.items()}
     qualities = tuple(
         AgentWorldQuality(
