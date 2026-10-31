@@ -160,6 +160,7 @@ from rosclaw_soccer.training.receiving_phase_feedback import (
 )
 from rosclaw_soccer.training.receiving_scene import ReceivingPeerState, ReceivingSceneContext
 from rosclaw_soccer.training.rolling_strike_entry import inspect_rolling_strike_entry
+from rosclaw_soccer.training.sim_contact_impulse_probe import SimContactImpulseProbe
 from rosclaw_soccer.world.field import (
     G1CompliantGoalNetState,
     G1TrainingGoalSpec,
@@ -1207,6 +1208,7 @@ def simulate_independent_team_world(
     capture_pass_control_entry: bool = False,
     research_control_frame_limit: int | None = None,
     contact_teacher_suppression: ContactTeacherSuppression | None = None,
+    research_contact_impulse_probe: SimContactImpulseProbe | None = None,
 ) -> tuple[IndependentTeamWorldResult, dict[str, NDArray[Any]]]:
     """Run all agent cells and all neural locomotion bodies in one clock.
 
@@ -1455,6 +1457,16 @@ def simulate_independent_team_world(
             raise ValueError(
                 "teacher ablation requires configured teacher, frozen policy and roster"
             )
+    if research_contact_impulse_probe is not None:
+        if not isinstance(research_contact_impulse_probe, SimContactImpulseProbe):
+            raise ValueError("typed SIM-only impulse probe required")
+        research_contact_impulse_probe.__post_init__()
+        if (
+            research_contact_impulse_probe.agent_id not in roster_ids
+            or research_contact_impulse_probe.frame
+            >= round(active.simulation_duration_sec / _CONTROL_DT)
+        ):
+            raise ValueError("impulse probe must bind an existing player and frame")
     if receiving_foundation_handoff is not None:
         if (
             not isinstance(receiving_foundation_handoff, ReceivingFoundationHandoff)
@@ -3868,6 +3880,8 @@ def simulate_independent_team_world(
             trace["pass_entry_ball_velocity_xy_mps"].append(
                 data.qvel[ball_qvel : ball_qvel + 2].copy()
             )
+        frame_probe_applied = False
+        frame_probe_actual_delta = 0.0
         for substep in range(_SUBSTEPS):
             frame_teacher_last_substep_valid = False
             frame_teacher_baseline = np.zeros(29, dtype=np.float64)
@@ -4534,6 +4548,43 @@ def simulate_independent_team_world(
                         margin_rad=active.joint_guard_margin_rad,
                     )
                 torque = np.clip(projected_torque, -guarded_limits, guarded_limits)
+                if (
+                    research_contact_impulse_probe is not None
+                    and controller.cell.agent_id == research_contact_impulse_probe.agent_id
+                    and frame == research_contact_impulse_probe.frame
+                    and substep == 0
+                ):
+                    probe_index = G1_DDS_JOINT_NAMES.index(research_contact_impulse_probe.joint)
+                    candidate_torque = torque.copy()
+                    candidate_torque[probe_index] += research_contact_impulse_probe.delta_nm
+                    checked_torque = _project_joint_safe_torque(
+                        joint_position=q,
+                        joint_velocity=dq,
+                        commanded_torque=candidate_torque,
+                        joint_ranges=np.asarray(model.jnt_range[controller.joint_ids]),
+                        limited=model.jnt_limited[controller.joint_ids].astype(bool),
+                        margin_rad=active.joint_guard_margin_rad,
+                    )
+                    # Refuse rather than clipping or silently changing the
+                    # intended intervention at a joint boundary.
+                    actuator_ranges = model.actuator_ctrlrange[controller.actuators]
+                    limited_actuators = model.actuator_ctrllimited[controller.actuators].astype(
+                        bool
+                    )
+                    actuator_safe = ~limited_actuators | (
+                        (candidate_torque >= actuator_ranges[:, 0])
+                        & (candidate_torque <= actuator_ranges[:, 1])
+                    )
+                    if (
+                        np.array_equal(candidate_torque, checked_torque)
+                        and np.all(np.abs(candidate_torque) <= guarded_limits)
+                        and np.all(actuator_safe)
+                    ):
+                        frame_probe_actual_delta = float(
+                            candidate_torque[probe_index] - torque[probe_index]
+                        )
+                        torque = candidate_torque
+                        frame_probe_applied = True
                 if capture_team_motor_targets:
                     assert recorded_pd_torque is not None
                     key = _agent_key(controller.cell.agent_id)
@@ -4964,6 +5015,11 @@ def simulate_independent_team_world(
                 )
             )
         trace["ball_pose"].append(data.qpos[ball_qpos : ball_qpos + 7].copy())
+        if research_contact_impulse_probe is not None:
+            trace.setdefault("research_contact_impulse_applied", []).append(frame_probe_applied)
+            trace.setdefault("research_contact_impulse_actual_delta_nm", []).append(
+                frame_probe_actual_delta
+            )
         if research_contact_distance_threshold_m is not None:
             trace.setdefault("receiving_impedance_active_substeps", []).append(
                 frame_research_stiffness_substeps
