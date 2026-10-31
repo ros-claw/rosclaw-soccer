@@ -755,6 +755,41 @@ def _bilateral_jobs(
     return jobs
 
 
+def _coverage_extra_jobs(
+    assets: Path,
+    output: Path,
+    generation: int,
+    iteration: int,
+    duration: float,
+    offsets: tuple[float, ...],
+    round_index: int,
+    prospective: bool,
+    clearance: bool,
+    strict: bool,
+) -> list[tuple[str, str, str, float, bool, int, float, bool, bool, bool]]:
+    """Fresh bilateral rollouts from the exact same frozen parent generation."""
+    if not offsets or type(round_index) is not int or not 0 <= round_index < 8:
+        raise ValueError("bounded explicit extra coverage round required")
+    return [
+        (
+            str(assets),
+            str(
+                output
+                / f"train-{iteration:03d}-coverage-{round_index:02d}-{'blue' if blue else 'red'}"
+            ),
+            str(output / f"generation-{generation:03d}.npz"),
+            duration,
+            blue,
+            35000 + iteration * 16 + round_index * 2 + int(blue),
+            offsets[(iteration * 8 + round_index) % len(offsets)],
+            prospective,
+            clearance,
+            strict,
+        )
+        for blue in (False, True)
+    ]
+
+
 def train(
     *,
     assets: Path,
@@ -775,6 +810,8 @@ def train(
     contact_control_profile: ContactControlProfile | None = None,
     optimizer_epochs: int = 4,
     trainable_agent_ids: tuple[str, ...] | None = None,
+    minimum_actor_samples: int = 0,
+    maximum_coverage_pairs: int = 0,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
@@ -802,6 +839,19 @@ def train(
         or reward_shaping == "in_play_motor_task_v1"
         or (reward_shaping == "directed_pass_credit_v1" and not strict_receive_handoff)
         or (strict_receive_handoff and not (prospective_curriculum and all_role_clearance))
+        or type(minimum_actor_samples) is not int
+        or type(maximum_coverage_pairs) is not int
+        or not 0 <= maximum_coverage_pairs <= 8
+        or (
+            (minimum_actor_samples, maximum_coverage_pairs) != (0, 0)
+            and (
+                not 32 <= minimum_actor_samples <= 4096
+                or maximum_coverage_pairs == 0
+                or role_curriculum
+                or trainable_agent_ids is None
+                or not strict_receive_handoff
+            )
+        )
         or (role_curriculum and not (prospective_curriculum and all_role_clearance))
         or (
             contact_control_profile is not None
@@ -882,6 +932,16 @@ def train(
         },
         "note": "Residual PPO, frozen locomotion; not an end-to-end torque policy.",
     }
+    if minimum_actor_samples:
+        from rosclaw_soccer.training import role_sample_coverage as coverage_module
+
+        manifest["adaptive_coverage"] = {
+            "minimum_actor_samples": minimum_actor_samples,
+            "maximum_coverage_pairs": maximum_coverage_pairs,
+            "coverage_source_hash": hash_bytes(Path(coverage_module.__file__).read_bytes()),
+            "semantics": "on-policy physical/exploration/learning mask counts; not task success",
+            "iterations": [],
+        }
     _persist_training_manifest(output, manifest)
     for iteration in range(iterations):
         traces, proofs = [], []
@@ -934,6 +994,62 @@ def train(
             with np.load(destination / "primary.npz", allow_pickle=False) as archive:
                 traces.append({k: archive[k] for k in archive.files})
             proofs.append(report["report_hash"])
+        if minimum_actor_samples:
+            from rosclaw_soccer.training.role_sample_coverage import role_sample_coverage
+
+            if trainable_agent_ids is None:
+                raise ValueError("explicit training roles required for coverage")
+            for trace in traces:
+                _validate_on_policy(policy, trace)
+            counts = role_sample_coverage(traces, agent_ids=ids, required=trainable_agent_ids)
+            coverage = {"initial_counts": counts, "extra_rounds": [], "complete": False}
+            manifest["adaptive_coverage"]["iterations"].append(coverage)
+            _persist_training_manifest(output, manifest)
+            for extra in range(maximum_coverage_pairs):
+                if all(count >= minimum_actor_samples for count in counts.values()):
+                    break
+                extra_jobs = _coverage_extra_jobs(
+                    assets,
+                    output,
+                    policy.generation,
+                    iteration,
+                    duration,
+                    offsets,
+                    extra,
+                    prospective_curriculum,
+                    all_role_clearance,
+                    strict_receive_handoff,
+                )
+                if workers == 1:
+                    more = [_collect(job) for job in extra_jobs]
+                else:
+                    with ProcessPoolExecutor(
+                        max_workers=min(workers, 2), mp_context=multiprocessing.get_context("spawn")
+                    ) as pool:
+                        more = list(pool.map(_collect, extra_jobs))
+                extra_hashes = []
+                for source in more:
+                    report = validate_probe(Path(source))
+                    if not report["exact_replay"]:
+                        raise ValueError("nonreproducible coverage rollout rejected")
+                    with np.load(
+                        Path(source).parent / "primary.npz", allow_pickle=False
+                    ) as archive:
+                        trace = {k: archive[k] for k in archive.files}
+                    _validate_on_policy(policy, trace)
+                    traces.append(trace)
+                    proofs.append(report["report_hash"])
+                    extra_hashes.append(report["report_hash"])
+                counts = role_sample_coverage(traces, agent_ids=ids, required=trainable_agent_ids)
+                coverage["extra_rounds"].append(
+                    {"round": extra, "counts": counts, "reports": extra_hashes}
+                )
+                _persist_training_manifest(output, manifest)
+            coverage["complete"] = all(count >= minimum_actor_samples for count in counts.values())
+            coverage["final_counts"] = counts
+            _persist_training_manifest(output, manifest)
+            if not coverage["complete"]:
+                raise ValueError("actor coverage exhausted: no update for this generation")
         policy, rows = update_private_actors(
             policy,
             traces,
@@ -1047,6 +1163,8 @@ def main() -> None:
     parser.add_argument("--strike-residual", action="store_true")
     parser.add_argument("--strike-stance-lateral", type=float)
     parser.add_argument("--optimizer-epochs", type=int, default=4)
+    parser.add_argument("--minimum-actor-samples", type=int, default=0)
+    parser.add_argument("--maximum-coverage-pairs", type=int, default=0)
     parser.add_argument(
         "--trainable-agent",
         action="append",
@@ -1085,6 +1203,8 @@ def main() -> None:
         if args.contact_control_profile
         else None,
         optimizer_epochs=args.optimizer_epochs,
+        minimum_actor_samples=args.minimum_actor_samples,
+        maximum_coverage_pairs=args.maximum_coverage_pairs,
         trainable_agent_ids=None
         if args.trainable_agent is None
         else tuple(sorted(args.trainable_agent)),
