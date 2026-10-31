@@ -66,6 +66,40 @@ def _verify_contact_profile(report: dict[str, Any], profile: ContactControlProfi
         raise ValueError("physical rollout differs from committed contact control profile")
 
 
+def _training_context_hash(
+    manifest: dict[str, Any],
+    parent: NearBallResidualPolicy,
+    dataset_hash: str,
+    trainable: tuple[str, ...] | None,
+) -> str:
+    """Reconstruct the versioned context without erasing historical contracts."""
+    shaping = manifest.get("reward_shaping", "legacy")
+    payload: dict[str, Any] = {
+        "body": parent.body_hash,
+        "parent": parent.policy_hash,
+        "roster": parent.agent_ids,
+        "dataset": dataset_hash,
+    }
+    if "physical_reward_contract" in manifest:
+        contract = manifest["physical_reward_contract"]
+        if contract != "rosclaw_soccer.physical_reward.force_gate.v2":
+            raise ValueError("unknown physical reward contract")
+        payload["physical_reward_contract"] = contract
+    if trainable is not None:
+        payload["trainable_agent_ids"] = trainable
+    if shaping != "legacy":
+        payload.update(reward_shaping=shaping, gamma=manifest["credit"]["gamma"])
+    if shaping == "team_capture_in_play_impact_v1":
+        from rosclaw_soccer.training import nonfoot_impact_reward
+
+        expected = manifest.get("nonfoot_impact_reward_source_hash")
+        actual = str(hash_bytes(Path(nonfoot_impact_reward.__file__).read_bytes()))
+        if expected != actual or actual != "sha256:" + nonfoot_impact_reward.LOADED_SOURCE_SHA256:
+            raise ValueError("impact reward implementation is missing, stale or unbound")
+        payload["nonfoot_impact_reward_source_hash"] = expected
+    return str(hash_json(payload))
+
+
 def audit(root: Path) -> dict[str, Any]:
     manifest = json.loads((root / "training.json").read_text())
     commitment = manifest.pop("manifest_hash")
@@ -74,6 +108,8 @@ def audit(root: Path) -> dict[str, Any]:
     initial_generation = manifest.get("initial_generation", 0)
     batch_rounds = manifest.get("role_batch_rounds", 1)
     reward_shaping = manifest.get("reward_shaping", "legacy")
+    if "receiving_learning_scope" in manifest:
+        raise ValueError("receiving-scoped dataset reconstruction requires a dedicated audit")
     optimizer_epochs = manifest.get("optimizer_epochs", 4)
     if type(optimizer_epochs) is not int or not 1 <= optimizer_epochs <= 16:
         raise ValueError("invalid bounded optimizer epochs")
@@ -161,22 +197,7 @@ def audit(root: Path) -> dict[str, Any]:
             rollout_digests.append(report["trajectory_digests"][0])
             verified += 1
         dataset_hash = str(hash_json({"rollouts": rollout_digests}))
-        context_hash = str(
-            hash_json(
-                {
-                    "body": parent.body_hash,
-                    "parent": parent.policy_hash,
-                    "roster": parent.agent_ids,
-                    "dataset": dataset_hash,
-                    **({"trainable_agent_ids": trainable} if trainable is not None else {}),
-                    **(
-                        {"reward_shaping": reward_shaping, "gamma": manifest["credit"]["gamma"]}
-                        if reward_shaping != "legacy"
-                        else {}
-                    ),
-                }
-            )
-        )
+        context_hash = _training_context_hash(manifest, parent, dataset_hash, trainable)
         progressive = {k: v.copy() for k, v in parent.weights.items()}
         requires_core = any("core_plasticity" in row for row in iteration["players"])
         for i, row in enumerate(iteration["players"]):
