@@ -55,6 +55,36 @@ def test_new_objective_drives_a_real_on_policy_update():
     assert not any(row["updated"] for row in rows[1:])
 
 
+def test_impact_source_hash_is_bound_to_optimizer_lease(monkeypatch):
+    pytest.importorskip("torch")
+    from rosclaw_soccer.training import near_ball_residual_ppo as trainer
+
+    ids, trace = fixture()
+    parent = NearBallResidualPolicy.initialize(ids, "sha256:" + "a" * 64)
+    hashes = []
+    weights = []
+    for value in ("a", "b"):
+        monkeypatch.setattr(
+            trainer, "_impact_reward_source_hash", lambda value=value: "sha256:" + value * 64
+        )
+        child, rows = trainer.update_private_actors(
+            parent, [trace], reward_shaping="team_capture_in_play_impact_v1"
+        )
+        hashes.append(rows[0]["core_plasticity"]["lease"]["scenario_contract_hash"])
+        weights.append(child.weights)
+    assert hashes[0] != hashes[1]
+    for key in weights[0]:
+        np.testing.assert_array_equal(weights[0][key], weights[1][key])
+
+
+def test_stale_loaded_impact_source_fails_closed(monkeypatch):
+    from rosclaw_soccer.training import near_ball_residual_ppo, nonfoot_impact_reward
+
+    monkeypatch.setattr(nonfoot_impact_reward, "LOADED_SOURCE_SHA256", "0" * 64)
+    with pytest.raises(ValueError, match="differs from disk"):
+        near_ball_residual_ppo._impact_reward_source_hash()
+
+
 def test_goalkeeper_and_unlisted_tasks_are_not_additionally_penalized():
     ids, trace = fixture()
     keeper_ids = tuple(a.replace("blue.3", "blue.goalkeeper") for a in ids)

@@ -1,11 +1,15 @@
 """Bounded 50 Hz nonfoot impact training credit, never a safety certificate."""
 
+import hashlib
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
 from rosclaw_soccer.growth.role_self_model import TacticalIntent
+
+LOADED_SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
 def nonfoot_impact_adjustment(

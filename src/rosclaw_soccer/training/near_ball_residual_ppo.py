@@ -57,6 +57,16 @@ from rosclaw_soccer.training.role_behavior_anchor import RoleBehaviorAnchor
 PHYSICAL_REWARD_CONTRACT = "rosclaw_soccer.physical_reward.force_gate.v2"
 
 
+def _impact_reward_source_hash() -> str:
+    """Bind the opt-in impact reward implementation, not only its mode name."""
+    from rosclaw_soccer.training import nonfoot_impact_reward
+
+    digest = str(hash_bytes(Path(nonfoot_impact_reward.__file__).read_bytes()))
+    if digest != "sha256:" + nonfoot_impact_reward.LOADED_SOURCE_SHA256:
+        raise ValueError("loaded nonfoot impact reward source differs from disk")
+    return digest
+
+
 def _persist_training_manifest(output: Path, manifest: Mapping[str, Any]) -> None:
     """Publish a complete progress snapshot without truncating the previous one."""
     payload = json.dumps(manifest, indent=2, allow_nan=False) + "\n"
@@ -541,6 +551,11 @@ def update_private_actors(
                     if reward_shaping != "legacy"
                     else {}
                 ),
+                **(
+                    {"nonfoot_impact_reward_source_hash": _impact_reward_source_hash()}
+                    if reward_shaping == "team_capture_in_play_impact_v1"
+                    else {}
+                ),
             }
         )
     )
@@ -974,6 +989,8 @@ def train(
         },
         "note": "Residual PPO, frozen locomotion; not an end-to-end torque policy.",
     }
+    if reward_shaping == "team_capture_in_play_impact_v1":
+        manifest["nonfoot_impact_reward_source_hash"] = _impact_reward_source_hash()
     if minimum_actor_samples:
         from rosclaw_soccer.training import role_sample_coverage as coverage_module
 
@@ -1124,6 +1141,11 @@ def train(
             _persist_training_manifest(output, manifest)
             if not coverage["complete"]:
                 raise ValueError("actor coverage exhausted: no update for this generation")
+        if (
+            reward_shaping == "team_capture_in_play_impact_v1"
+            and _impact_reward_source_hash() != manifest["nonfoot_impact_reward_source_hash"]
+        ):
+            raise ValueError("nonfoot impact reward source changed during collection")
         policy, rows = update_private_actors(
             policy,
             traces,
@@ -1133,6 +1155,11 @@ def train(
             reward_shaping=reward_shaping,
             trainable_agent_ids=trainable_agent_ids,
         )
+        if (
+            reward_shaping == "team_capture_in_play_impact_v1"
+            and _impact_reward_source_hash() != manifest["nonfoot_impact_reward_source_hash"]
+        ):
+            raise ValueError("nonfoot impact reward source changed during update")
         policy.save(output / f"generation-{policy.generation:03d}.npz")
         manifest["iterations"].append(
             {
@@ -1215,6 +1242,11 @@ def train(
                     }
                 )
                 _persist_training_manifest(output, manifest)
+    if (
+        reward_shaping == "team_capture_in_play_impact_v1"
+        and _impact_reward_source_hash() != manifest["nonfoot_impact_reward_source_hash"]
+    ):
+        raise ValueError("nonfoot impact reward source changed during evaluation")
     manifest["manifest_hash"] = hash_json(manifest)
     _persist_training_manifest(output, manifest)
     return manifest

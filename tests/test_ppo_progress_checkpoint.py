@@ -90,3 +90,48 @@ def test_evaluation_failure_keeps_last_validated_case(monkeypatch, tmp_path):
     assert len(saved["iterations"]) == 1
     assert len(saved["evaluation"]) == 1
     assert "manifest_hash" not in saved  # A partial checkpoint is not a final result.
+
+
+def test_impact_source_drift_stops_before_optimizer_and_preserves_manifest(monkeypatch, tmp_path):
+    ids = tuple(f"agent.{i}" for i in range(8))
+    cells = tuple(
+        SimpleNamespace(
+            agent_id=agent, growth_scope=SimpleNamespace(body_hash="sha256:" + "a" * 64)
+        )
+        for agent in ids
+    )
+    monkeypatch.setattr(
+        module, "build_four_vs_four_fixture", lambda _assets: SimpleNamespace(cells=cells)
+    )
+    hashes = iter(("sha256:" + "a" * 64, "sha256:" + "b" * 64))
+    monkeypatch.setattr(module, "_impact_reward_source_hash", lambda: next(hashes))
+
+    def collect(job):
+        destination = module.Path(job[1])
+        destination.mkdir()
+        np.savez(destination / "primary.npz", sample=np.zeros(1))
+        return str(destination / "probe.json")
+
+    monkeypatch.setattr(module, "_collect", collect)
+    monkeypatch.setattr(
+        module,
+        "validate_probe",
+        lambda _path: {"exact_replay": True, "report_hash": "sha256:" + "b" * 64},
+    )
+
+    def reject_update(*_args, **_kwargs):
+        pytest.fail("optimizer must not run after source drift")
+
+    monkeypatch.setattr(module, "update_private_actors", reject_update)
+    output = tmp_path / "run"
+    with pytest.raises(ValueError, match="source changed during collection"):
+        module.train(
+            assets=tmp_path,
+            output=output,
+            iterations=1,
+            duration=5.0,
+            reward_shaping="team_capture_in_play_impact_v1",
+        )
+    saved = json.loads((output / "training.json").read_text())
+    assert saved["nonfoot_impact_reward_source_hash"] == "sha256:" + "a" * 64
+    assert not saved["iterations"] and "manifest_hash" not in saved
