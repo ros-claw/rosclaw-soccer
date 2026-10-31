@@ -67,6 +67,16 @@ def _impact_reward_source_hash() -> str:
     return digest
 
 
+def _pass_impulse_source_hash() -> str:
+    """Fail closed if the sampled pass reward changed after import."""
+    from rosclaw_soccer.training import pass_impulse_reward
+
+    digest = str(hash_bytes(Path(pass_impulse_reward.__file__).read_bytes()))
+    if digest != "sha256:" + pass_impulse_reward.LOADED_SOURCE_SHA256:
+        raise ValueError("loaded pass impulse source differs from disk")
+    return digest
+
+
 def _persist_training_manifest(output: Path, manifest: Mapping[str, Any]) -> None:
     """Publish a complete progress snapshot without truncating the previous one."""
     payload = json.dumps(manifest, indent=2, allow_nan=False) + "\n"
@@ -98,6 +108,20 @@ def physical_rewards(
     on this player's measured foot-contact frames. Dense contact is capped by
     the control period, so resting on the ball cannot earn an event bonus.
     """
+    if reward_shaping == "team_capture_in_play_pass_impulse_v1":
+        # Both comparison branches have identical terminal potential, safety,
+        # and physical handoff terms. Their difference replaces ONLY the
+        # existing PASS directed-velocity credit with sampled velocity-change
+        # credit. It does not assert that a pass was completed.
+        combined = physical_rewards(
+            trace, ids, reward_shaping="team_capture_in_play_impact_v1", gamma=gamma
+        )
+        impulse = physical_rewards(
+            trace, ids, reward_shaping="pass_impulse_alignment_v1", gamma=gamma
+        )
+        control = physical_rewards(trace, ids, reward_shaping="contact_safety_v1", gamma=gamma)
+        combined_result: np.ndarray[Any, Any] = combined + (impulse - control)
+        return combined_result
     if reward_shaping == "team_capture_in_play_impact_v1":
         from rosclaw_soccer.training.nonfoot_impact_reward import nonfoot_impact_adjustment
 
@@ -553,7 +577,13 @@ def update_private_actors(
                 ),
                 **(
                     {"nonfoot_impact_reward_source_hash": _impact_reward_source_hash()}
-                    if reward_shaping == "team_capture_in_play_impact_v1"
+                    if reward_shaping
+                    in {"team_capture_in_play_impact_v1", "team_capture_in_play_pass_impulse_v1"}
+                    else {}
+                ),
+                **(
+                    {"pass_impulse_reward_source_hash": _pass_impulse_source_hash()}
+                    if reward_shaping == "team_capture_in_play_pass_impulse_v1"
                     else {}
                 ),
             }
@@ -989,8 +1019,10 @@ def train(
         },
         "note": "Residual PPO, frozen locomotion; not an end-to-end torque policy.",
     }
-    if reward_shaping == "team_capture_in_play_impact_v1":
+    if reward_shaping in {"team_capture_in_play_impact_v1", "team_capture_in_play_pass_impulse_v1"}:
         manifest["nonfoot_impact_reward_source_hash"] = _impact_reward_source_hash()
+    if reward_shaping == "team_capture_in_play_pass_impulse_v1":
+        manifest["pass_impulse_reward_source_hash"] = _pass_impulse_source_hash()
     if minimum_actor_samples:
         from rosclaw_soccer.training import role_sample_coverage as coverage_module
 
@@ -1142,10 +1174,16 @@ def train(
             if not coverage["complete"]:
                 raise ValueError("actor coverage exhausted: no update for this generation")
         if (
-            reward_shaping == "team_capture_in_play_impact_v1"
+            reward_shaping
+            in {"team_capture_in_play_impact_v1", "team_capture_in_play_pass_impulse_v1"}
             and _impact_reward_source_hash() != manifest["nonfoot_impact_reward_source_hash"]
         ):
             raise ValueError("nonfoot impact reward source changed during collection")
+        if (
+            reward_shaping == "team_capture_in_play_pass_impulse_v1"
+            and _pass_impulse_source_hash() != manifest["pass_impulse_reward_source_hash"]
+        ):
+            raise ValueError("pass impulse source changed during collection")
         policy, rows = update_private_actors(
             policy,
             traces,
@@ -1156,10 +1194,16 @@ def train(
             trainable_agent_ids=trainable_agent_ids,
         )
         if (
-            reward_shaping == "team_capture_in_play_impact_v1"
+            reward_shaping
+            in {"team_capture_in_play_impact_v1", "team_capture_in_play_pass_impulse_v1"}
             and _impact_reward_source_hash() != manifest["nonfoot_impact_reward_source_hash"]
         ):
             raise ValueError("nonfoot impact reward source changed during update")
+        if (
+            reward_shaping == "team_capture_in_play_pass_impulse_v1"
+            and _pass_impulse_source_hash() != manifest["pass_impulse_reward_source_hash"]
+        ):
+            raise ValueError("pass impulse source changed during update")
         policy.save(output / f"generation-{policy.generation:03d}.npz")
         manifest["iterations"].append(
             {
@@ -1243,10 +1287,15 @@ def train(
                 )
                 _persist_training_manifest(output, manifest)
     if (
-        reward_shaping == "team_capture_in_play_impact_v1"
+        reward_shaping in {"team_capture_in_play_impact_v1", "team_capture_in_play_pass_impulse_v1"}
         and _impact_reward_source_hash() != manifest["nonfoot_impact_reward_source_hash"]
     ):
         raise ValueError("nonfoot impact reward source changed during evaluation")
+    if (
+        reward_shaping == "team_capture_in_play_pass_impulse_v1"
+        and _pass_impulse_source_hash() != manifest["pass_impulse_reward_source_hash"]
+    ):
+        raise ValueError("pass impulse source changed during evaluation")
     manifest["manifest_hash"] = hash_json(manifest)
     _persist_training_manifest(output, manifest)
     return manifest

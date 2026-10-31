@@ -4,7 +4,7 @@ import pytest
 from test_s215_near_ball_residual import policy
 
 from rosclaw_soccer.sim.contracts import hash_bytes, hash_json
-from rosclaw_soccer.training import nonfoot_impact_reward
+from rosclaw_soccer.training import nonfoot_impact_reward, pass_impulse_reward
 from rosclaw_soccer.training.near_ball_learning_audit import _training_context_hash
 
 
@@ -54,3 +54,22 @@ def test_current_impact_context_binds_exact_reward_source():
 def test_unknown_physical_reward_contract_is_not_accepted():
     with pytest.raises(ValueError, match="unknown physical reward"):
         _training_context_hash({"physical_reward_contract": "unrecognized"}, policy(), "x", None)
+
+
+def test_combined_context_requires_both_current_sources():
+    parent = policy()
+    impact = str(hash_bytes(Path(nonfoot_impact_reward.__file__).read_bytes()))
+    impulse = str(hash_bytes(Path(pass_impulse_reward.__file__).read_bytes()))
+    manifest = {
+        "reward_shaping": "team_capture_in_play_pass_impulse_v1",
+        "nonfoot_impact_reward_source_hash": impact,
+        "pass_impulse_reward_source_hash": impulse,
+        "credit": {"gamma": 0.997},
+    }
+    context = _training_context_hash(manifest, parent, "sha256:" + "b" * 64, None)
+    assert context.startswith("sha256:")
+    for key in ("nonfoot_impact_reward_source_hash", "pass_impulse_reward_source_hash"):
+        modified = dict(manifest)
+        modified[key] = "sha256:" + "0" * 64
+        with pytest.raises(ValueError, match="unbound"):
+            _training_context_hash(modified, parent, "sha256:" + "b" * 64, None)
