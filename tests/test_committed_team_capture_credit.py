@@ -184,3 +184,28 @@ def test_control_score_must_describe_the_receiver_touch(monkeypatch):
     )
     with pytest.raises(ValueError, match="not bound"):
         module.committed_team_capture_credit(sample(), IDS)
+
+
+def test_unmocked_physical_scoring_contract_on_synthetic_trace(monkeypatch):
+    # Exercise the real sampled boundary and receiving checks, not real physics.
+    monkeypatch.undo()
+    trace = sample()
+    n = len(trace["time"])
+    trace["pitch_boundary_geometry"] = np.tile([-6.0, 6.0, 3.0, 0.11, 2.6, 2.0], (n, 1))
+    trace["ball_pose"][:, 2] = 0.11
+    trace["ball_pose"][:, 3] = 1.0
+    trace["ball_pose"][20:, 0] = 1.0
+    trace["ball_velocity"] = np.zeros((n, 6))
+    trace["ball_nonfoot_contact_agent_code"] = np.zeros(n, dtype=int)
+    trace["robot_robot_contact_count"] = np.zeros(n, dtype=int)
+    for agent in IDS:
+        prefix = agent.replace(".", "_")
+        pelvis = np.zeros((n, 7))
+        pelvis[:, 2], pelvis[:, 3] = 0.75, 1.0
+        trace[prefix + "_pelvis_pose"] = pelvis
+        trace[prefix + "_joint_safety_margin_rad"] = np.ones((n, 29))
+        trace[prefix + "_left_foot_position"] = trace["ball_pose"][:, :3].copy()
+        trace[prefix + "_right_foot_position"] = trace["ball_pose"][:, :3].copy()
+    credit, events = module.committed_team_capture_credit(trace, IDS)
+    assert events[0]["outcome"] == "CONTROLLED_SAMPLED"
+    assert events[0]["credit_frame"] == 118 and credit.sum() == pytest.approx(0.2)
