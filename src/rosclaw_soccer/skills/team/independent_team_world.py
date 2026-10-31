@@ -3882,6 +3882,7 @@ def simulate_independent_team_world(
             )
         frame_probe_applied = False
         frame_probe_actual_delta = 0.0
+        frame_probe_applied_substeps = 0
         for substep in range(_SUBSTEPS):
             frame_teacher_last_substep_valid = False
             frame_teacher_baseline = np.zeros(29, dtype=np.float64)
@@ -4552,7 +4553,7 @@ def simulate_independent_team_world(
                     research_contact_impulse_probe is not None
                     and controller.cell.agent_id == research_contact_impulse_probe.agent_id
                     and frame == research_contact_impulse_probe.frame
-                    and substep == 0
+                    and substep < research_contact_impulse_probe.duration_substeps
                 ):
                     probe_index = G1_DDS_JOINT_NAMES.index(research_contact_impulse_probe.joint)
                     candidate_torque = torque.copy()
@@ -4585,6 +4586,7 @@ def simulate_independent_team_world(
                         )
                         torque = candidate_torque
                         frame_probe_applied = True
+                        frame_probe_applied_substeps += 1
                 if capture_team_motor_targets:
                     assert recorded_pd_torque is not None
                     key = _agent_key(controller.cell.agent_id)
@@ -5019,6 +5021,9 @@ def simulate_independent_team_world(
             trace.setdefault("research_contact_impulse_applied", []).append(frame_probe_applied)
             trace.setdefault("research_contact_impulse_actual_delta_nm", []).append(
                 frame_probe_actual_delta
+            )
+            trace.setdefault("research_contact_impulse_applied_substeps", []).append(
+                frame_probe_applied_substeps
             )
         if research_contact_distance_threshold_m is not None:
             trace.setdefault("receiving_impedance_active_substeps", []).append(

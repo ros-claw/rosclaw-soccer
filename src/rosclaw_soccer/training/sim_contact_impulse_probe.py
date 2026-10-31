@@ -1,4 +1,4 @@
-"""Bounded one-substep torque intervention for simulation research only."""
+"""Bounded subframe torque intervention for simulation research only."""
 
 import re
 from dataclasses import dataclass
@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class SimContactImpulseProbe:
-    """Immutable predeclared action; it is not a learned runtime policy."""
+    """Immutable predeclared action (at most 20ms), not a learned policy."""
 
     agent_id: str
     frame: int
@@ -14,6 +14,7 @@ class SimContactImpulseProbe:
     delta_nm: float
     activation_ceiling: str = "SIM_ONLY"
     hardware_authorized: bool = False
+    duration_substeps: int = 1
 
     def __post_init__(self) -> None:
         if (
@@ -32,5 +33,7 @@ class SimContactImpulseProbe:
             or self.delta_nm not in (-5.0, 5.0)
             or self.activation_ceiling != "SIM_ONLY"
             or self.hardware_authorized is not False
+            or type(self.duration_substeps) is not int
+            or self.duration_substeps not in (1, 5, 10)
         ):
             raise ValueError("invalid bounded SIM-only contact impulse probe")
