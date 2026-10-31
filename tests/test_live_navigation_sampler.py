@@ -35,7 +35,7 @@ def observation(committed):
     )
 
 
-def sampler(tmp_path, seed=1):
+def sampler(tmp_path, seed=1, gate="committed_receiver"):
     torch.manual_seed(3)
     model = build_local_navigation_actor_critic()
     path = tmp_path / "actor.npz"
@@ -49,6 +49,7 @@ def sampler(tmp_path, seed=1):
         foundation_hash=HASH,
         foundation_config_hash=HASH,
         seed=seed,
+        gate=gate,
     )
 
 
@@ -97,3 +98,25 @@ def test_frozen_candidate_uses_mean_and_distinct_contract(tmp_path):
     assert model.propose(observation(False)) is None
     assert model.propose(observation(True)).velocity_delta == (0.0, 0.0, 0.0)
     assert not model.samples
+
+
+@pytest.mark.parametrize("intent", ["receive", "intercept", "press"])
+def test_explicit_ball_intent_gate_only_changes_uncommitted_target(tmp_path, intent):
+    default = sampler(tmp_path)
+    expanded = sampler(tmp_path, gate="ball_intent")
+    state = replace(observation(False), intent=intent)
+    assert default.propose(state) is None
+    assert expanded.propose(state) is not None
+    assert expanded.contract_hash != default.contract_hash
+
+
+@pytest.mark.parametrize("intent", ["shoot", "recover", "hold"])
+def test_intent_gate_does_not_override_other_tasks(tmp_path, intent):
+    expanded = sampler(tmp_path, gate="ball_intent")
+    assert expanded.propose(replace(observation(False), intent=intent)) is None
+    assert not expanded.samples
+
+
+def test_unknown_gate_is_rejected(tmp_path):
+    with pytest.raises(ValueError):
+        sampler(tmp_path, gate="everything")

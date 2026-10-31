@@ -19,7 +19,7 @@ from rosclaw_soccer.training.local_navigation import (
 
 
 class LiveNavigationSampler:
-    """Sample a frozen 39/3 actor only when this player is a committed receiver.
+    """Sample a frozen 39/3 actor under an explicit player-intent gate.
 
     The world still projects proposals through clearance and arbitration. The
     sampler records what was proposed, not whether it affected the trajectory.
@@ -37,6 +37,7 @@ class LiveNavigationSampler:
         foundation_hash: str,
         foundation_config_hash: str,
         seed: int,
+        gate: str = "committed_receiver",
     ) -> None:
         import torch
 
@@ -49,6 +50,8 @@ class LiveNavigationSampler:
             )
             or type(seed) is not int
             or not 0 <= seed < 2**32
+            or type(gate) is not str
+            or gate not in ("committed_receiver", "ball_intent")
         ):
             raise ValueError("explicit player, model identities and unsigned seed required")
         actor = build_local_navigation_actor_critic()
@@ -67,6 +70,7 @@ class LiveNavigationSampler:
         self.agent_id = agent_id
         self.foundation_hash = foundation_hash
         self.foundation_config_hash = foundation_config_hash
+        self.gate = gate
         self.contract_hash = str(
             hash_json(
                 {
@@ -76,7 +80,7 @@ class LiveNavigationSampler:
                     "foundation_hash": foundation_hash,
                     "foundation_config_hash": foundation_config_hash,
                     "seed": seed,
-                    "gate": "committed_receiver",
+                    "gate": gate,
                     "observation": "soccer.local_navigation_world_heading_39.v1",
                     "raw_action": "gaussian_3_logstd_-2.5_-0.3",
                     "activation_ceiling": self.activation_ceiling,
@@ -94,7 +98,7 @@ class LiveNavigationSampler:
             or observation.agent_id != self.agent_id
         ):
             raise ValueError("same-player navigation observation required")
-        if not observation.committed_receiver:
+        if not self._eligible(observation):
             return None
         features = local_navigation_features(observation)
         with torch.no_grad():
@@ -119,6 +123,14 @@ class LiveNavigationSampler:
         )
         return NavigationDelta(observation.agent_id, observation.frame, observation.time_sec, delta)
 
+    def _eligible(self, observation: NavigationObservation) -> bool:
+        """Opt-in intent exploration never upgrades permission or success."""
+        return bool(
+            observation.committed_receiver
+            or self.gate == "ball_intent"
+            and observation.intent in {"receive", "intercept", "press"}
+        )
+
 
 class DeterministicNavigationCandidate(LiveNavigationSampler):
     """Frozen mean-action research candidate, not a promoted player skill."""
@@ -131,6 +143,7 @@ class DeterministicNavigationCandidate(LiveNavigationSampler):
         actor_hash: str,
         foundation_hash: str,
         foundation_config_hash: str,
+        gate: str = "committed_receiver",
     ) -> None:
         super().__init__(
             weights,
@@ -139,6 +152,7 @@ class DeterministicNavigationCandidate(LiveNavigationSampler):
             foundation_hash=foundation_hash,
             foundation_config_hash=foundation_config_hash,
             seed=0,
+            gate=gate,
         )
         self.contract_hash = str(
             hash_json(
@@ -148,7 +162,7 @@ class DeterministicNavigationCandidate(LiveNavigationSampler):
                     "actor_hash": actor_hash,
                     "foundation_hash": foundation_hash,
                     "foundation_config_hash": foundation_config_hash,
-                    "gate": "committed_receiver",
+                    "gate": gate,
                     "observation": "soccer.local_navigation_world_heading_39.v1",
                     "action": "bounded_gaussian_mean",
                     "activation_ceiling": self.activation_ceiling,
@@ -165,7 +179,7 @@ class DeterministicNavigationCandidate(LiveNavigationSampler):
             or observation.agent_id != self.agent_id
         ):
             raise ValueError("same-player navigation observation required")
-        if not observation.committed_receiver:
+        if not self._eligible(observation):
             return None
         features = local_navigation_features(observation)
         with torch.no_grad():
