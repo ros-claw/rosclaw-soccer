@@ -116,6 +116,7 @@ from rosclaw_soccer.skills.team.motor_option import (
     TeamMotorPhysicsObserver,
     TeamMotorReadinessProvider,
     TeamMotorTarget,
+    TeamPassCommitment,
     TeamReceiveCommitment,
     motor_ball_action_ready,
     motor_blocks_residual,
@@ -297,6 +298,7 @@ class IndependentTeamWorldConfig:
     receive_prediction_agent_ids: tuple[str, ...] | None = None
     retire_completed_motors: bool = False
     motor_receive_commitment_context: bool = False
+    motor_pass_commitment_context: bool = False
     cyclic_receive_motors: bool = False
     outward_waist_braking_damping: float | None = None
     outward_ankle_pitch_braking_damping: float | None = None
@@ -403,6 +405,10 @@ class IndependentTeamWorldConfig:
             raise ValueError("cyclic receivers require explicit retirement and commitment context")
         if type(self.motor_receive_commitment_context) is not bool:
             raise ValueError("receive commitment context requires explicit boolean opt-in")
+        if type(self.motor_pass_commitment_context) is not bool or (
+            self.motor_pass_commitment_context and not self.strict_receive_handoff
+        ):
+            raise ValueError("pass commitment context requires explicit strict handoff opt-in")
         if type(self.retire_completed_motors) is not bool or (
             self.retire_completed_motors and not self.disjoint_motor_backends
         ):
@@ -661,6 +667,8 @@ class IndependentTeamWorldConfig:
             value.pop("cyclic_receive_motors")
         if not self.motor_receive_commitment_context:
             value.pop("motor_receive_commitment_context")
+        if not self.motor_pass_commitment_context:
+            value.pop("motor_pass_commitment_context")
         if not self.retire_completed_motors:
             value.pop("retire_completed_motors")
         if self.motor_clearance_prediction_sec == 0.0:
@@ -3185,6 +3193,20 @@ def simulate_independent_team_world(
                     committed_receiver=receive_lease_agent_id == agent_id,
                     receive_commitment=(
                         receive_commitment if receive_lease_agent_id == agent_id else None
+                    ),
+                    pass_commitment=(
+                        TeamPassCommitment(
+                            receive_handoff.source,
+                            receive_handoff.receiver,
+                            receive_handoff.created_sec,
+                            receive_handoff.launch_target_xy,
+                        )
+                        if active.motor_pass_commitment_context
+                        and receive_handoff is not None
+                        and receive_handoff.source == agent_id
+                        and receive_handoff.launch_target_xy is not None
+                        and not receive_handoff.expired(float(data.time))
+                        else None
                     ),
                     navigation_envelope=experimental_navigation.get(agent_id),
                     foundation=TeamMotorFoundation(

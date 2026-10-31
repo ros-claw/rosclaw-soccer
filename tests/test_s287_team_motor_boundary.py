@@ -13,6 +13,7 @@ from rosclaw_soccer.skills.team.motor_option import (
     TeamMotorObservation,
     TeamMotorPhysicsObservation,
     TeamMotorTarget,
+    TeamPassCommitment,
     motor_blocks_residual,
 )
 
@@ -21,6 +22,36 @@ def observation():
     return TeamMotorObservation(
         "red.finisher", 0, 0.0, "shoot", True, (0.0,) * 43, (0.0,) * 41, (7.5, 0.0, 0.0)
     )
+
+
+def test_source_pass_context_is_immutable_scoped_and_not_authority():
+    commitment = TeamPassCommitment("red.finisher", "red.defender", 0.0, (1.0, 2.0))
+    obs = replace(observation(), pass_commitment=commitment)
+    assert obs.pass_commitment == commitment
+    with pytest.raises(ValueError, match="another player"):
+        replace(obs, agent_id="blue.finisher")
+    with pytest.raises(ValueError, match="future time"):
+        replace(obs, pass_commitment=replace(commitment, created_time_sec=1.0))
+    with pytest.raises(ValueError):
+        replace(commitment, receiver_agent_id="blue.defender")
+    with pytest.raises(ValueError):
+        replace(commitment, target_xy_m=(float("nan"), 0.0))
+    with pytest.raises(ValueError):
+        replace(commitment, target_xy_m=[1.0, 2.0])
+    assert not motor_blocks_residual(
+        registered=False, proposed=False, faulted=False, allow_idle_fallback=True
+    )
+
+
+def test_source_pass_context_requires_explicit_strict_handoff_and_changes_config_hash():
+    default = IndependentTeamWorldConfig()
+    with pytest.raises(ValueError, match="strict handoff"):
+        replace(default, motor_pass_commitment_context=True)
+    with pytest.raises(ValueError, match="strict handoff"):
+        replace(default, motor_pass_commitment_context=1)
+    strict = replace(default, strict_receive_handoff=True)
+    enabled = replace(strict, motor_pass_commitment_context=True)
+    assert enabled.config_hash != strict.config_hash
 
 
 @pytest.mark.parametrize("allow", [False, True])

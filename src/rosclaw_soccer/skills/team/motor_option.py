@@ -62,6 +62,36 @@ class TeamReceiveCommitment:
 
 
 @dataclass(frozen=True)
+class TeamPassCommitment:
+    """Source-side pass snapshot, not proof of contact or authority to move."""
+
+    source_agent_id: str
+    receiver_agent_id: str
+    created_time_sec: float
+    target_xy_m: tuple[float, float]
+
+    def __post_init__(self) -> None:
+        if (
+            any(
+                type(v) is not str or re.fullmatch(r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*", v) is None
+                for v in (self.source_agent_id, self.receiver_agent_id)
+            )
+            or self.source_agent_id == self.receiver_agent_id
+            or self.source_agent_id.split(".")[0] != self.receiver_agent_id.split(".")[0]
+            or type(self.created_time_sec) not in (float, int)
+            or not math.isfinite(self.created_time_sec)
+            or self.created_time_sec < 0
+            or type(self.target_xy_m) is not tuple
+            or len(self.target_xy_m) != 2
+            or any(
+                type(v) not in (float, int) or not math.isfinite(v) or abs(v) > 1000
+                for v in self.target_xy_m
+            )
+        ):
+            raise ValueError("finite immutable same-team pass commitment required")
+
+
+@dataclass(frozen=True)
 class TeamMotorObservation:
     agent_id: str
     frame: int
@@ -80,6 +110,8 @@ class TeamMotorObservation:
     receive_commitment: TeamReceiveCommitment | None = None
     navigation_envelope: SimulationNavigationEnvelope | None = None
     foot_kinematics: TeamFootKinematics | None = None
+    # Snapshot taken before proposal; the world may later revoke the commitment.
+    pass_commitment: TeamPassCommitment | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -133,6 +165,16 @@ class TeamMotorObservation:
             or self.foot_kinematics.frame != self.frame
         ):
             raise ValueError("foot kinematics belongs to another player or frame")
+        if self.pass_commitment is not None:
+            commitment = self.pass_commitment
+            if not isinstance(commitment, TeamPassCommitment):
+                raise ValueError("typed source pass commitment required")
+            commitment.__post_init__()
+            if (
+                commitment.source_agent_id != self.agent_id
+                or commitment.created_time_sec > self.time_sec
+            ):
+                raise ValueError("source pass commitment belongs to another player or future time")
         if self.receive_commitment is not None:
             commitment = self.receive_commitment
             if not isinstance(commitment, TeamReceiveCommitment):
