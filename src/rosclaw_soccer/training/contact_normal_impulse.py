@@ -23,7 +23,7 @@ class ContactImpulseFrame:
     # World-frame force on the ball, integrated over 10 observed 2 ms steps.
     foot_normal_impulse_ns: tuple[tuple[str, float, float, float], ...]
     foot_contact_substeps: tuple[tuple[str, int], ...]
-    # True when any non-foot/another agent shares a foot-contact substep.
+    # True when any non-foot/another agent contacts the ball in this frame.
     ambiguous_agents: tuple[str, ...]
     world_bodies_safe: bool
 
@@ -47,7 +47,7 @@ class ContactNormalImpulseRecorder:
         self.maximum_frames = maximum_frames
         self.contract_hash = hash_json(
             {
-                "schema": "soccer.contact-normal-impulse.v1",
+                "schema": "soccer.contact-normal-impulse.v2",
                 "agent": agent_id,
                 "roster": roster,
                 "maximum_frames": maximum_frames,
@@ -60,7 +60,7 @@ class ContactNormalImpulseRecorder:
         self._rows: list[ContactImpulseFrame] = []
         self._impulses = {a: [0.0, 0.0, 0.0] for a in roster}
         self._contacts = {a: 0 for a in roster}
-        self._ambiguous: set[str] = set()
+        self._counterparts: set[tuple[str | None, bool]] = set()
         self._safe = True
 
     def observe_physics(self, observation: TeamMotorPhysicsObservation) -> None:
@@ -82,8 +82,7 @@ class ContactNormalImpulseRecorder:
         for owner in owners:
             assert owner is not None
             self._contacts[owner] += 1
-            if any(not (c.is_foot and c.agent_id == owner) for c in contacts):
-                self._ambiguous.add(owner)
+        self._counterparts.update((c.agent_id, c.is_foot) for c in contacts)
         for contact in contacts:
             if not contact.is_foot:
                 continue
@@ -108,13 +107,18 @@ class ContactNormalImpulseRecorder:
                     observation.time_sec,
                     vectors,
                     tuple((a, self._contacts[a]) for a in self.roster),
-                    tuple(sorted(self._ambiguous)),
+                    tuple(
+                        agent
+                        for agent in self.roster
+                        if self._contacts[agent] > 0
+                        and any(owner != agent or not foot for owner, foot in self._counterparts)
+                    ),
                     self._safe,
                 )
             )
             self._impulses = {a: [0.0, 0.0, 0.0] for a in self.roster}
             self._contacts = {a: 0 for a in self.roster}
-            self._ambiguous.clear()
+            self._counterparts.clear()
             self._safe = True
 
     def verified_frames(self, *, control_frames: int) -> tuple[ContactImpulseFrame, ...]:

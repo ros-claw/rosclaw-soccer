@@ -56,6 +56,29 @@ def test_other_foot_or_body_marks_ambiguous():
     assert rec.verified_frames(control_frames=1)[0].ambiguous_agents == IDS
 
 
+@pytest.mark.parametrize("other", [contact(IDS[1], "right_foot", 3), contact(IDS[0], "body", 3)])
+def test_other_contact_at_a_different_substep_censors_the_whole_frame(other):
+    rec = ContactNormalImpulseRecorder(IDS[0], IDS)
+    for step in range(1, 11):
+        contacts = (contact(),) if step == 1 else ((other,) if step == 8 else ())
+        rec.observe_physics(observation(step, contacts))
+    frame = rec.verified_frames(control_frames=1)[0]
+    assert IDS[0] in frame.ambiguous_agents
+    assert frame.foot_normal_impulse_ns[0][1] == pytest.approx(0.02)
+
+
+def test_other_contact_in_next_frame_does_not_contaminate_preceding_frame():
+    rec = ContactNormalImpulseRecorder(IDS[0], IDS)
+    for step in range(1, 21):
+        contacts = (
+            (contact(),) if step == 10 else ((contact(IDS[0], "body", 3),) if step == 11 else ())
+        )
+        rec.observe_physics(observation(step, contacts))
+    first, second = rec.verified_frames(control_frames=2)
+    assert first.ambiguous_agents == ()
+    assert second.ambiguous_agents == ()
+
+
 def test_missing_normals_and_invalid_stream_fail_closed():
     rec = ContactNormalImpulseRecorder(IDS[0], IDS)
     with pytest.raises(ValueError, match="normal required"):
