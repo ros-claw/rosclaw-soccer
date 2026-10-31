@@ -160,7 +160,10 @@ from rosclaw_soccer.training.receiving_phase_feedback import (
 )
 from rosclaw_soccer.training.receiving_scene import ReceivingPeerState, ReceivingSceneContext
 from rosclaw_soccer.training.rolling_strike_entry import inspect_rolling_strike_entry
-from rosclaw_soccer.training.sim_contact_impulse_probe import SimContactImpulseProbe
+from rosclaw_soccer.training.sim_contact_impulse_probe import (
+    SimContactImpulseProbe,
+    guard_refusal_masks,
+)
 from rosclaw_soccer.world.field import (
     G1CompliantGoalNetState,
     G1TrainingGoalSpec,
@@ -3883,6 +3886,9 @@ def simulate_independent_team_world(
         frame_probe_applied = False
         frame_probe_actual_delta = 0.0
         frame_probe_applied_substeps = 0
+        frame_probe_projector_refused_mask = 0
+        frame_probe_torque_refused_mask = 0
+        frame_probe_actuator_refused_mask = 0
         for substep in range(_SUBSTEPS):
             frame_teacher_last_substep_valid = False
             frame_teacher_baseline = np.zeros(29, dtype=np.float64)
@@ -4576,11 +4582,19 @@ def simulate_independent_team_world(
                         (candidate_torque >= actuator_ranges[:, 0])
                         & (candidate_torque <= actuator_ranges[:, 1])
                     )
-                    if (
-                        np.array_equal(candidate_torque, checked_torque)
-                        and np.all(np.abs(candidate_torque) <= guarded_limits)
-                        and np.all(actuator_safe)
-                    ):
+                    projector_ok = bool(np.array_equal(candidate_torque, checked_torque))
+                    torque_ok = bool(np.all(np.abs(candidate_torque) <= guarded_limits))
+                    actuator_ok = bool(np.all(actuator_safe))
+                    projector_mask, torque_mask, actuator_mask = guard_refusal_masks(
+                        substep,
+                        projector_ok=projector_ok,
+                        torque_ok=torque_ok,
+                        actuator_ok=actuator_ok,
+                    )
+                    frame_probe_projector_refused_mask |= projector_mask
+                    frame_probe_torque_refused_mask |= torque_mask
+                    frame_probe_actuator_refused_mask |= actuator_mask
+                    if projector_ok and torque_ok and actuator_ok:
                         frame_probe_actual_delta = float(
                             candidate_torque[probe_index] - torque[probe_index]
                         )
@@ -5024,6 +5038,16 @@ def simulate_independent_team_world(
             )
             trace.setdefault("research_contact_impulse_applied_substeps", []).append(
                 frame_probe_applied_substeps
+            )
+            # Masks may overlap: a single candidate can violate multiple guards.
+            trace.setdefault("research_contact_impulse_projector_refused_mask", []).append(
+                frame_probe_projector_refused_mask
+            )
+            trace.setdefault("research_contact_impulse_torque_refused_mask", []).append(
+                frame_probe_torque_refused_mask
+            )
+            trace.setdefault("research_contact_impulse_actuator_refused_mask", []).append(
+                frame_probe_actuator_refused_mask
             )
         if research_contact_distance_threshold_m is not None:
             trace.setdefault("receiving_impedance_active_substeps", []).append(

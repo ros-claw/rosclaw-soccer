@@ -4,6 +4,22 @@ import re
 from dataclasses import dataclass
 
 
+def guard_refusal_masks(
+    substep: int, *, projector_ok: bool, torque_ok: bool, actuator_ok: bool
+) -> tuple[int, int, int]:
+    """Encode independent guard failures at one bounded simulation substep.
+
+    More than one mask may contain the same bit.  Callers combine successive
+    observations with bitwise OR; zero means that guard accepted the probe.
+    """
+    if type(substep) is not int or not 0 <= substep < 10:
+        raise ValueError("invalid contact probe substep")
+    if any(type(value) is not bool for value in (projector_ok, torque_ok, actuator_ok)):
+        raise ValueError("guard decisions must be booleans")
+    bit = 1 << substep
+    return (0 if projector_ok else bit, 0 if torque_ok else bit, 0 if actuator_ok else bit)
+
+
 @dataclass(frozen=True)
 class SimContactImpulseProbe:
     """Immutable predeclared action (at most 20ms), not a learned policy."""

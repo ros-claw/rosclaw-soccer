@@ -1,6 +1,31 @@
 import pytest
 
-from rosclaw_soccer.training.sim_contact_impulse_probe import SimContactImpulseProbe
+from rosclaw_soccer.training.sim_contact_impulse_probe import (
+    SimContactImpulseProbe,
+    guard_refusal_masks,
+)
+
+
+@pytest.mark.parametrize("step", range(10))
+@pytest.mark.parametrize("projector_ok", [False, True])
+@pytest.mark.parametrize("torque_ok", [False, True])
+@pytest.mark.parametrize("actuator_ok", [False, True])
+def test_refusal_masks_encode_each_guard_independently(step, projector_ok, torque_ok, actuator_ok):
+    mask = 1 << step
+    assert guard_refusal_masks(
+        step, projector_ok=projector_ok, torque_ok=torque_ok, actuator_ok=actuator_ok
+    ) == tuple(0 if ok else mask for ok in (projector_ok, torque_ok, actuator_ok))
+
+
+@pytest.mark.parametrize("step", [-1, 10, 1.0, True])
+def test_refusal_masks_reject_out_of_range_or_invalid_step(step):
+    with pytest.raises(ValueError):
+        guard_refusal_masks(step, projector_ok=True, torque_ok=True, actuator_ok=True)
+
+
+def test_refusal_masks_reject_non_boolean_guard_results():
+    with pytest.raises(ValueError):
+        guard_refusal_masks(0, projector_ok=1, torque_ok=True, actuator_ok=True)
 
 
 def test_bounded_probe_is_immutable_and_sim_only():
