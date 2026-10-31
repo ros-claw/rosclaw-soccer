@@ -88,6 +88,34 @@ def physical_rewards(
     on this player's measured foot-contact frames. Dense contact is capped by
     the control period, so resting on the ball cannot earn an event bonus.
     """
+    if reward_shaping == "team_capture_dissipation_in_play_v1":
+        from rosclaw_soccer.training.in_play_rewards import in_play_rewards
+        from rosclaw_soccer.world.match_boundary import ball_exit_reason
+
+        # Reward the complete existing receiving objective before the match
+        # objective. Reject post-boundary samples: zeroing later rewards alone
+        # would still let GAE and capture windows use post-terminal values.
+        base = physical_rewards(
+            trace, ids, reward_shaping="team_capture_dissipation_v1", gamma=gamma
+        )
+        result = in_play_rewards(base, trace, ids)
+        left, right, _half_width, radius, width, height = np.asarray(
+            trace["pitch_boundary_geometry"]
+        )[0]
+        for point in np.asarray(trace["ball_pose"])[:-1, :3]:
+            if (
+                ball_exit_reason(
+                    tuple(float(v) for v in point),
+                    left_x=left,
+                    right_x=right,
+                    radius=radius,
+                    goal_width=width,
+                    goal_height=height,
+                )
+                is not None
+            ):
+                raise ValueError("in-play PPO rollout must terminate at the first boundary")
+        return result
     require_returned_live_segment(trace)
     obs = np.asarray(trace["residual_observations"], dtype=float)
     if reward_shaping not in REWARD_SHAPING_MODES:
