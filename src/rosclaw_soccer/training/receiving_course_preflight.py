@@ -37,6 +37,10 @@ from rosclaw_soccer.training.native_team_courses import (
     preflight_native_team_courses,
 )
 from rosclaw_soccer.training.role_receiving_courses import ReceivingCourse, receiving_ball_launch
+from rosclaw_soccer.training.stadium_team_courses import (
+    StadiumTeamBallCourse,
+    preflight_stadium_team_courses,
+)
 
 
 @dataclass(frozen=True)
@@ -57,7 +61,8 @@ def preflight_receiving_courses(
     | tuple[MotionPortfolioHoldoutCourse, ...]
     | tuple[CategoricalMotionHoldoutCourse, ...]
     | tuple[NativePassCourse, ...]
-    | tuple[NativeTeamBallCourse, ...],
+    | tuple[NativeTeamBallCourse, ...]
+    | tuple[StadiumTeamBallCourse, ...],
     # Native8-body courses retain their separate launch and evidence domain.
     # NativePassCourse is a separate actual physical pass domain, not an old launcher.
     # Separately named near holdout never coerces the original RSI/legacy domains.
@@ -77,6 +82,8 @@ def preflight_receiving_courses(
         return preflight_airborne_receiving_courses(courses)  # type: ignore[arg-type]
     if all(type(course) is NativeTeamBallCourse for course in courses):
         return preflight_native_team_courses(courses)  # type: ignore[arg-type]
+    if all(type(course) is StadiumTeamBallCourse for course in courses):
+        return preflight_stadium_team_courses(courses)  # type: ignore[arg-type]
     if all(type(course) is NativePassCourse for course in courses):
         return preflight_native_pass_courses(courses)  # type: ignore[arg-type]
     if all(type(course) is CategoricalMotionHoldoutCourse for course in courses):
