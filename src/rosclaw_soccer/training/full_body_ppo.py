@@ -27,6 +27,7 @@ class FullBodyPPOUpdateConfig:
     learning_observation_index: int | None = None
     critic_all_active: bool = False
     episode_balanced_actor: bool = False
+    actor_balance_grouped: bool = False
     group_relative_actor: bool = False
     binary_terminal_outcome: bool = False
     stateless_rowwise_forward: bool = False
@@ -36,6 +37,8 @@ class FullBodyPPOUpdateConfig:
             type(self.critic_all_active) is not bool
             or type(self.stateless_rowwise_forward) is not bool
             or type(self.episode_balanced_actor) is not bool
+            or type(self.actor_balance_grouped) is not bool
+            or (self.actor_balance_grouped and not self.episode_balanced_actor)
             or type(self.group_relative_actor) is not bool
             or type(self.binary_terminal_outcome) is not bool
             or (self.group_relative_actor and not self.episode_balanced_actor)
@@ -129,6 +132,10 @@ def update_full_body_ppo(
     completed epoch; only actor likelihood loss uses the learning window.
     Optional episode balancing gives each world with selected actor samples
     equal total policy-loss weight, instead of favouring longer action windows.
+    With actor_balance_grouped, caller-supplied actor_group IDs identify the
+    original physical episodes: disjoint contiguous segments of one episode
+    share one total actor weight. GAE remains split at each segment boundary.
+    Group provenance and overlap checking remain the caller's responsibility.
     It changes neither GAE, advantage normalization, critic weights nor sample
     selection. Divergence checks retain both time-step and balanced views.
     A separate group-relative option replaces only the actor advantage with
@@ -146,15 +153,27 @@ def update_full_body_ppo(
     required = {"obs", "raw", "logp", "value", "reward", "alive", "next_alive"}
     if active.group_relative_actor:
         required.add("episode_group")
+    if active.actor_balance_grouped:
+        required.add("actor_group")
     if set(rollout) != required:
         raise ValueError("complete on-policy rollout fields required")
     data = dict(rollout)
     group_ids = data.pop("episode_group", None)
+    actor_group = data.pop("actor_group", None)
     if any(not isinstance(value, torch.Tensor) for value in data.values()):
         raise ValueError("complete detached rollout tensors required")
     if data["reward"].ndim != 2:
         raise ValueError("episodic time/world reward axes required")
     horizon, worlds = data["reward"].shape
+    if active.actor_balance_grouped and (
+        not isinstance(actor_group, torch.Tensor)
+        or actor_group.shape != (worlds,)
+        or actor_group.dtype != torch.int64
+        or actor_group.device != data["obs"].device
+        or actor_group.requires_grad
+        or bool((actor_group < 0).any())
+    ):
+        raise ValueError("nonnegative int64 actor group per contiguous world required")
     if not 1 <= horizon <= 4096 or not 1 <= worlds <= 4096 or horizon * worlds > 65536:
         raise ValueError("bounded rollout dimensions required")
     for name, value in data.items():
@@ -264,7 +283,16 @@ def update_full_body_ppo(
     if active.episode_balanced_actor:
         counts = keep.reshape(horizon, worlds).sum(0)
         represented = (counts > 0).sum()
-        per_world = len(obs) / (represented * counts.clamp_min(1))
+        if active.actor_balance_grouped:
+            _, inverse = torch.unique(actor_group, sorted=True, return_inverse=True)
+            group_counts = torch.zeros(
+                int(inverse.max()) + 1, device=counts.device, dtype=counts.dtype
+            )
+            group_counts.scatter_add_(0, inverse, counts)
+            represented_groups = (group_counts > 0).sum()
+            per_world = len(obs) / (represented_groups * group_counts[inverse].clamp_min(1))
+        else:
+            per_world = len(obs) / (represented * counts.clamp_min(1))
         actor_weights = per_world.expand(horizon, worlds).reshape(-1)[keep]
     steps, kl, completed = 0, 0.0, 0
     for epoch in range(active.epochs):
@@ -367,6 +395,8 @@ def update_full_body_ppo(
         result.update(
             group_relative_actor=True, actor_task_groups=int(torch.unique(group_ids).numel())
         )
+    if active.actor_balance_grouped:
+        result.update(actor_balance_grouped=True, actor_represented_groups=int(represented_groups))
     if active.binary_terminal_outcome:
         result.update(binary_terminal_outcome=True)
     if active.stateless_rowwise_forward:

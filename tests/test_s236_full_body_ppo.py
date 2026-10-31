@@ -244,6 +244,110 @@ def test_unequal_episode_windows_balance_weights_and_replay(all_critic):
     assert all(torch.equal(v, preserved[k]) for k, v in data.items())
 
 
+def test_grouped_balance_treats_split_segments_as_one_episode():
+    torch, actor, optimizer, data = window_case()
+    data["obs"][3, 0, 132] = 0
+    with torch.no_grad():
+        mean, value = actor(data["obs"].reshape(-1, 133))
+        normal = torch.distributions.Normal(mean, actor.logstd.clamp(-2.5, -0.3).exp())
+        data["value"] = value.reshape(4, 2)
+        data["logp"] = normal.log_prob(data["raw"].reshape(-1, 29)).sum(1).reshape(4, 2)
+    data["actor_group"] = torch.tensor([7, 7], dtype=torch.int64)
+    result = update_full_body_ppo(
+        actor,
+        optimizer,
+        data,
+        FullBodyPPOUpdateConfig(
+            epochs=1,
+            minibatch_size=2,
+            learning_observation_index=132,
+            episode_balanced_actor=True,
+            actor_balance_grouped=True,
+        ),
+    )
+    assert result["actor_represented_worlds"] == 2
+    assert result["actor_represented_groups"] == 1
+    assert result["actor_weight_min"] == result["actor_weight_max"] == 1
+
+
+def test_grouped_balance_equalizes_different_size_episodes():
+    torch, actor, optimizer, data = window_case()
+    for key, value in data.items():
+        data[key] = torch.cat((value, value[:, 1:2]), dim=1)
+    data["obs"][3, 0, 132] = 0
+    with torch.no_grad():
+        mean, value = actor(data["obs"].reshape(-1, 133))
+        normal = torch.distributions.Normal(mean, actor.logstd.clamp(-2.5, -0.3).exp())
+        data["value"] = value.reshape(4, 3)
+        data["logp"] = normal.log_prob(data["raw"].reshape(-1, 29)).sum(1).reshape(4, 3)
+    data["actor_group"] = torch.tensor([7, 7, 8], dtype=torch.int64)
+    result = update_full_body_ppo(
+        actor,
+        optimizer,
+        data,
+        FullBodyPPOUpdateConfig(
+            epochs=1,
+            minibatch_size=4,
+            learning_observation_index=132,
+            episode_balanced_actor=True,
+            actor_balance_grouped=True,
+        ),
+    )
+    assert result["actor_represented_worlds"] == 3
+    assert result["actor_represented_groups"] == 2
+    assert result["actor_weight_min"] == pytest.approx(5 / 6)
+    assert result["actor_weight_max"] == pytest.approx(5 / 4)
+
+
+def test_unique_group_ids_preserve_existing_episode_balanced_update():
+    torch, actor, optimizer, data = window_case()
+    replay = copy.deepcopy(actor)
+    grouped = copy.deepcopy(data)
+    grouped["actor_group"] = torch.tensor([2, 8], dtype=torch.int64)
+    rng = torch.get_rng_state()
+    options = dict(
+        epochs=2, minibatch_size=2, learning_observation_index=132, episode_balanced_actor=True
+    )
+    old = update_full_body_ppo(actor, optimizer, data, FullBodyPPOUpdateConfig(**options))
+    torch.set_rng_state(rng)
+    new = update_full_body_ppo(
+        replay,
+        torch.optim.Adam(replay.parameters(), lr=1e-4),
+        grouped,
+        FullBodyPPOUpdateConfig(**options, actor_balance_grouped=True),
+    )
+    assert {k: new[k] for k in old} == old
+    assert new["actor_represented_groups"] == 2
+    assert all(
+        torch.equal(value, replay.state_dict()[key]) for key, value in actor.state_dict().items()
+    )
+
+
+@pytest.mark.parametrize("fault", ["missing", "float", "negative", "shape"])
+def test_grouped_balance_rejects_invalid_original_episode_ids(fault):
+    torch, actor, optimizer, data = window_case()
+    if fault != "missing":
+        data["actor_group"] = {
+            "float": torch.tensor([0.0, 1.0]),
+            "negative": torch.tensor([0, -1]),
+            "shape": torch.tensor([0]),
+        }[fault]
+    with pytest.raises(ValueError):
+        update_full_body_ppo(
+            actor,
+            optimizer,
+            data,
+            FullBodyPPOUpdateConfig(
+                epochs=1, episode_balanced_actor=True, actor_balance_grouped=True
+            ),
+        )
+
+
+def test_grouped_balance_requires_explicit_episode_balancing():
+    with pytest.raises(ValueError):
+        FullBodyPPOUpdateConfig(actor_balance_grouped=True)
+
+
 @pytest.mark.parametrize("all_critic", [False, True])
 def test_group_outcome_update_replays_exactly_and_preserves_inputs(all_critic):
     torch, actor, optimizer, data = window_case()
