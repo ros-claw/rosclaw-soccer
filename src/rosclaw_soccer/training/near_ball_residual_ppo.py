@@ -17,6 +17,7 @@ import tempfile
 from collections.abc import Mapping
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,7 @@ from rosclaw_soccer.training.near_ball_curriculum import (
     examination_courses,
     training_batch,
 )
+from rosclaw_soccer.training.near_ball_learning_audit import _verify_contact_profile
 from rosclaw_soccer.training.near_ball_plasticity import (
     begin_update,
     finish_update,
@@ -687,7 +689,11 @@ def _validate_on_policy(policy: NearBallResidualPolicy, trace: dict[str, Any]) -
         raise ValueError("rollout was not sampled from this frozen parent policy")
 
 
-def _collect(job: tuple[str, str, str, float, bool, int, float, bool, bool, bool]) -> str:
+def _collect(
+    job: tuple[str, str, str, float, bool, int, float, bool, bool, bool],
+    *,
+    contact_control_profile: ContactControlProfile | None = None,
+) -> str:
     (
         assets,
         destination,
@@ -716,6 +722,7 @@ def _collect(job: tuple[str, str, str, float, bool, int, float, bool, bool, bool
         contact_policy=OwnedBallContactPolicy() if prospective else None,
         all_role_clearance=clearance,
         strict_receive_handoff=strict,
+        contact_control_profile=contact_control_profile,
     )
     return str(Path(destination) / "probe.json")
 
@@ -855,10 +862,7 @@ def train(
         or (role_curriculum and not (prospective_curriculum and all_role_clearance))
         or (
             contact_control_profile is not None
-            and (
-                not isinstance(contact_control_profile, ContactControlProfile)
-                or not role_curriculum
-            )
+            and not isinstance(contact_control_profile, ContactControlProfile)
         )
     ):
         raise ValueError("bounded online training budget required")
@@ -943,6 +947,11 @@ def train(
             "iterations": [],
         }
     _persist_training_manifest(output, manifest)
+    bilateral_collect = (
+        _collect
+        if contact_control_profile is None
+        else partial(_collect, contact_control_profile=contact_control_profile)
+    )
     for iteration in range(iterations):
         traces, proofs = [], []
         jobs = _bilateral_jobs(
@@ -980,15 +989,16 @@ def train(
                 ) as pool:
                     collected = list(pool.map(collect_role_course, role_jobs))
         elif workers == 1:
-            collected = [_collect(job) for job in jobs]
+            collected = [bilateral_collect(job) for job in jobs]
         else:
             with ProcessPoolExecutor(
                 max_workers=workers, mp_context=multiprocessing.get_context("spawn")
             ) as pool:
-                collected = list(pool.map(_collect, jobs))
+                collected = list(pool.map(bilateral_collect, jobs))
         for source in collected:
             destination = Path(source).parent
             report = validate_probe(Path(source))
+            _verify_contact_profile(report, contact_control_profile)
             if not report["exact_replay"]:
                 raise ValueError("nonreproducible rollout rejected")
             with np.load(destination / "primary.npz", allow_pickle=False) as archive:
@@ -1002,7 +1012,11 @@ def train(
             for trace in traces:
                 _validate_on_policy(policy, trace)
             counts = role_sample_coverage(traces, agent_ids=ids, required=trainable_agent_ids)
-            coverage = {"initial_counts": counts, "extra_rounds": [], "complete": False}
+            coverage: dict[str, Any] = {
+                "initial_counts": counts,
+                "extra_rounds": [],
+                "complete": False,
+            }
             manifest["adaptive_coverage"]["iterations"].append(coverage)
             _persist_training_manifest(output, manifest)
             for extra in range(maximum_coverage_pairs):
@@ -1021,15 +1035,16 @@ def train(
                     strict_receive_handoff,
                 )
                 if workers == 1:
-                    more = [_collect(job) for job in extra_jobs]
+                    more = [bilateral_collect(job) for job in extra_jobs]
                 else:
                     with ProcessPoolExecutor(
                         max_workers=min(workers, 2), mp_context=multiprocessing.get_context("spawn")
                     ) as pool:
-                        more = list(pool.map(_collect, extra_jobs))
+                        more = list(pool.map(bilateral_collect, extra_jobs))
                 extra_hashes = []
                 for source in more:
                     report = validate_probe(Path(source))
+                    _verify_contact_profile(report, contact_control_profile)
                     if not report["exact_replay"]:
                         raise ValueError("nonreproducible coverage rollout rejected")
                     with np.load(
@@ -1095,6 +1110,7 @@ def train(
                     sources = list(pool.map(collect_role_course, exam_jobs))
             for job, source in zip(exam_jobs, sources, strict=True):
                 report = validate_probe(Path(source))
+                _verify_contact_profile(report, contact_control_profile)
                 manifest["evaluation"].append(
                     {
                         "label": label,
@@ -1124,8 +1140,10 @@ def train(
                     contact_policy=OwnedBallContactPolicy() if prospective_curriculum else None,
                     all_role_clearance=all_role_clearance,
                     strict_receive_handoff=strict_receive_handoff,
+                    contact_control_profile=contact_control_profile,
                 )
-                validate_probe(destination / "probe.json")
+                checked = validate_probe(destination / "probe.json")
+                _verify_contact_profile(checked, contact_control_profile)
                 manifest["evaluation"].append(
                     {
                         "label": label,
