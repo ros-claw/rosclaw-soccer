@@ -115,19 +115,58 @@ class AdmittedRecurrentReceiver:
             not self.faulted and (self.start_frame is None or self.completed),
         )
 
+    def wants_motor(self, observation: TeamMotorObservation) -> bool:
+        """Inspect a current claim without advancing the frozen actor or clock.
+
+        The world must still arbitrate exclusive ownership before calling
+        ``propose``. A stale or foreign observation cannot request a lease.
+        """
+        self._validate_next(observation)
+        return bool(
+            self.admission_enabled
+            and not self.completed
+            and (
+                self.start_frame is not None
+                or incoming_receive_admissible(
+                    observation, minimum_speed_mps=self.minimum_speed_mps
+                )
+            )
+        )
+
+    def defer_motor(self, observation: TeamMotorObservation) -> None:
+        """Record an idle frame without starting/advancing a blocked actor.
+
+        A running receiver cannot be deferred; it must hold its lease until
+        normal completion. A caller error permanently latches this instance.
+        """
+        try:
+            self._validate_next(observation)
+            if self.start_frame is not None and not self.completed:
+                raise ValueError("active receiver cannot be deferred")
+            self._last_frame = observation.frame
+            self._last_time = observation.time_sec
+        except (ValueError, TypeError, FloatingPointError):
+            self.faulted = True
+            raise
+
+    def _validate_next(self, observation: TeamMotorObservation) -> None:
+        if self.faulted:
+            raise ValueError("receiver admission remains faulted")
+        if (
+            not isinstance(observation, TeamMotorObservation)
+            or observation.agent_id != self.agent_id
+            or self._last_frame is not None
+            and observation.frame != self._last_frame + 1
+        ):
+            raise ValueError("consecutive same-player admission observations required")
+        self.receiver._validate(observation)
+
     def propose(self, observation: TeamMotorObservation) -> TeamMotorTarget | None:
         if self.faulted:
             raise ValueError("receiver admission remains faulted")
         try:
-            if (
-                observation.agent_id != self.agent_id
-                or self._last_frame is not None
-                and observation.frame != self._last_frame + 1
-            ):
-                raise ValueError("consecutive same-player admission observations required")
-            # Validate the immutable foundation even while idle; no stale model
-            # identity silently accepted until a ball happens to arrive.
-            self.receiver._validate(observation)
+            # Validate even while idle; no stale model identity is accepted.
+            self._validate_next(observation)
             self._last_frame = observation.frame
             self._last_time = observation.time_sec
             if self.completed:

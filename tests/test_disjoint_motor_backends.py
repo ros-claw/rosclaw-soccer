@@ -39,3 +39,24 @@ def test_boolean_optin_and_disabled_hash_compatibility():
         base.config_hash
         == "sha256:fd442bce83f737c64e2ee59ecc09dc204376100f9476a21361b41b538d8c41d1"
     )
+
+
+def test_event_receiver_mode_is_explicit_and_rejects_ambiguous_ownership():
+    base = IndependentTeamWorldConfig()
+    with pytest.raises(ValueError, match="event receiver handoff"):
+        replace(base, event_receiver_handoff=1)
+    with pytest.raises(ValueError, match="event receiver handoff"):
+        replace(base, event_receiver_handoff=True, disjoint_motor_backends=True)
+    assert replace(base, event_receiver_handoff=True).config_hash != base.config_hash
+    with pytest.raises(ValueError, match="one unmixed admitted receiver"):
+        simulate_independent_team_world(
+            asset_root=Path("must-not-be-opened"),
+            roster=SimpleNamespace(agents=[SimpleNamespace(agent_id="red.a")]),
+            cells=(),
+            players=(),
+            scenario=None,
+            goal=None,
+            config=replace(base, event_receiver_handoff=True),
+            option_bridge_config=G1RollingOptionBridgeConfig(),
+            motor_options={"red.a": SimpleNamespace(contract_hash="sha256:" + "a" * 64)},
+        )

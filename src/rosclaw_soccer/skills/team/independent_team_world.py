@@ -290,6 +290,7 @@ class IndependentTeamWorldConfig:
     prospective_strike_approach: bool = False
     teammate_approach_clearance_m: float = 0.0
     disjoint_motor_backends: bool = False
+    event_receiver_handoff: bool = False
     motor_clearance_prediction_sec: float = 0.0
     precontact_pass_standoff_m: float | None = None
     receive_prediction_agent_ids: tuple[str, ...] | None = None
@@ -414,6 +415,11 @@ class IndependentTeamWorldConfig:
             raise ValueError("motor clearance preview requires bounded explicit all-role opt-in")
         if type(self.disjoint_motor_backends) is not bool:
             raise ValueError("disjoint motor backends require explicit opt-in")
+        if type(self.event_receiver_handoff) is not bool or (
+            self.event_receiver_handoff
+            and (self.disjoint_motor_backends or self.retire_completed_motors)
+        ):
+            raise ValueError("event receiver handoff requires its exclusive lifecycle")
         if type(self.prospective_strike_approach) is not bool or (
             type(self.teammate_approach_clearance_m) not in (float, int)
             or not math.isfinite(self.teammate_approach_clearance_m)
@@ -656,6 +662,8 @@ class IndependentTeamWorldConfig:
             value.pop("motor_clearance_prediction_sec")
         if not self.disjoint_motor_backends:
             value.pop("disjoint_motor_backends")
+        if not self.event_receiver_handoff:
+            value.pop("event_receiver_handoff")
         if self.keeper_reach is None:
             value.pop("keeper_reach")  # Preserve historical disabled configuration identities.
         if self.owned_contact_roles is None:
@@ -1341,6 +1349,17 @@ def simulate_independent_team_world(
             )
         _returned_live_policy(near_ball_policy, near_ball_returned_policy, False)
     motors = dict(motor_options or {})
+    from rosclaw_soccer.providers.g1.admitted_receiver import AdmittedRecurrentReceiver
+    from rosclaw_soccer.skills.team.motor_handoff import ExclusiveMotorHandoff, MotorOwner
+
+    if active.event_receiver_handoff and (
+        len(motors) != 1
+        or option_bridge_config is None
+        or any(type(motor) is not AdmittedRecurrentReceiver for motor in motors.values())
+        or active.motor_idle_residual_fallback
+        or active.cyclic_receive_motors
+    ):
+        raise ValueError("event handoff requires one unmixed admitted receiver and native option")
     from rosclaw_soccer.providers.g1.receiving_sonic import (
         ReceivingSonicBallFollowOption,
         ReceivingSonicOption,
@@ -1492,7 +1511,11 @@ def simulate_independent_team_world(
         or any(not _HASH.fullmatch(motor.contract_hash) for motor in motors.values())
         or motors
         and option_bridge_config is not None
-        and not (active.disjoint_motor_backends and option_bridge_config.per_player_options_enabled)
+        and not (
+            active.event_receiver_handoff
+            or active.disjoint_motor_backends
+            and option_bridge_config.per_player_options_enabled
+        )
         or active.disjoint_motor_backends
         and (not motors or option_bridge_config is None)
         or active.motor_idle_residual_fallback
@@ -1573,6 +1596,11 @@ def simulate_independent_team_world(
     ):
         raise ValueError("experimental navigation must bind its private motor, not an old learner")
     motor_faults: set[str] = set()
+    event_handoffs = (
+        {agent_id: ExclusiveMotorHandoff() for agent_id in motors}
+        if active.event_receiver_handoff
+        else {}
+    )
     motor_retirements: dict[str, int] = {}
     motor_rearm_generations: dict[str, int] = {}
     readiness_enabled = any(isinstance(m, TeamMotorReadinessProvider) for m in motors.values())
@@ -2694,6 +2722,10 @@ def simulate_independent_team_world(
                     lease_owner.option_active
                     or strike_lease_agent_id in motors
                     and strike_lease_agent_id not in motor_retirements
+                    and (
+                        not active.event_receiver_handoff
+                        or event_handoffs[strike_lease_agent_id].learned_owned
+                    )
                 ),
                 phase_active=lease_owner.strike_phase.active,
             ):
@@ -2735,6 +2767,14 @@ def simulate_independent_team_world(
                 if c.cell.agent_id not in motors or c.cell.agent_id in motor_retirements
             )
             if active.disjoint_motor_backends
+            else tuple(
+                c
+                for c in controllers
+                if c.cell.agent_id not in event_handoffs
+                or not event_handoffs[c.cell.agent_id].learned_owned
+                and c.cell.agent_id not in motor_faults
+            )
+            if active.event_receiver_handoff
             else controllers,
             current_possession_agent_id=current_possession_agent_id,
             last_ball_contact_agent_id=last_ball_contact_agent_id,
@@ -2911,6 +2951,10 @@ def simulate_independent_team_world(
                     controller.cell.agent_id in motors
                     and controller.cell.agent_id not in motor_faults
                     and controller.cell.agent_id not in motor_retirements
+                    and (
+                        not active.event_receiver_handoff
+                        or event_handoffs[controller.cell.agent_id].learned_owned
+                    )
                 ),
                 pending_receive_target_m=(
                     receive_lease_target_m
@@ -3089,80 +3133,101 @@ def simulate_independent_team_world(
             try:
                 if controller.last_world_command is None:
                     raise ValueError("shared navigation command is unavailable")
-                proposal = motors[agent_id].propose(
-                    TeamMotorObservation(
+                observation = TeamMotorObservation(
+                    agent_id=agent_id,
+                    frame=frame,
+                    time_sec=float(data.time),
+                    intent=intent if intent in {"shoot", "pass", "carry"} else "other",
+                    prospective_owner=agent_id
+                    in {current_possession_agent_id, assigned_ball_chaser_agent_id},
+                    qpos=tuple(float(x) for x in q),
+                    qvel=tuple(float(x) for x in v),
+                    target_position_m=(
+                        controller.decision.target_position_m[0],
+                        controller.decision.target_position_m[1],
+                        controller.decision.target_position_m[2],
+                    ),
+                    navigation_command=(
+                        float(controller.last_world_command[0]),
+                        float(controller.last_world_command[1]),
+                        float(controller.last_world_command[2]),
+                    ),
+                    # Preparation starts at the accepted pass handshake,
+                    # not only after the source has physically launched it.
+                    committed_receiver=receive_lease_agent_id == agent_id,
+                    receive_commitment=(
+                        receive_commitment if receive_lease_agent_id == agent_id else None
+                    ),
+                    navigation_envelope=experimental_navigation.get(agent_id),
+                    foundation=TeamMotorFoundation(
                         agent_id=agent_id,
                         frame=frame,
-                        time_sec=float(data.time),
-                        intent=intent if intent in {"shoot", "pass", "carry"} else "other",
-                        prospective_owner=agent_id
-                        in {current_possession_agent_id, assigned_ball_chaser_agent_id},
-                        qpos=tuple(float(x) for x in q),
-                        qvel=tuple(float(x) for x in v),
-                        target_position_m=(
-                            controller.decision.target_position_m[0],
-                            controller.decision.target_position_m[1],
-                            controller.decision.target_position_m[2],
+                        target=TeamMotorTarget(
+                            tuple(float(x) for x in controller.output.actions),
+                            tuple(float(x) for x in controller.output.kps),
+                            tuple(float(x) for x in controller.output.kds),
                         ),
-                        navigation_command=(
-                            float(controller.last_world_command[0]),
-                            float(controller.last_world_command[1]),
-                            float(controller.last_world_command[2]),
+                        default_angles=tuple(
+                            float(x) for x in controller.policy.default_angles_reorder
                         ),
-                        # Preparation starts at the accepted pass handshake,
-                        # not only after the source has physically launched it.
-                        committed_receiver=receive_lease_agent_id == agent_id,
-                        receive_commitment=(
-                            receive_commitment if receive_lease_agent_id == agent_id else None
-                        ),
-                        navigation_envelope=experimental_navigation.get(agent_id),
-                        foundation=TeamMotorFoundation(
+                        policy_hash=foundation_hashes[Path(controller.policy.policy_path)],
+                        configuration_hash=foundation_hashes[
+                            Path(controller.policy.policy_path).parent.parent
+                            / "config/LocoMode.yaml"
+                        ],
+                    ),
+                    foot_kinematics=(
+                        measure_team_foot_kinematics(
+                            model=model,
+                            data=data,
                             agent_id=agent_id,
                             frame=frame,
-                            target=TeamMotorTarget(
-                                tuple(float(x) for x in controller.output.actions),
-                                tuple(float(x) for x in controller.output.kps),
-                                tuple(float(x) for x in controller.output.kds),
+                            ankle_body_ids=(
+                                controller.left_ankle_body,
+                                controller.right_ankle_body,
                             ),
-                            default_angles=tuple(
-                                float(x) for x in controller.policy.default_angles_reorder
+                            leg_dof_ids=(
+                                tuple(int(value) for value in controller.joint_qvel[:6]),
+                                tuple(int(value) for value in controller.joint_qvel[6:12]),
                             ),
-                            policy_hash=foundation_hashes[Path(controller.policy.policy_path)],
-                            configuration_hash=foundation_hashes[
-                                Path(controller.policy.policy_path).parent.parent
-                                / "config/LocoMode.yaml"
-                            ],
-                        ),
-                        foot_kinematics=(
-                            measure_team_foot_kinematics(
-                                model=model,
-                                data=data,
-                                agent_id=agent_id,
-                                frame=frame,
-                                ankle_body_ids=(
-                                    controller.left_ankle_body,
-                                    controller.right_ankle_body,
+                            leg_joint_ranges=(
+                                tuple(
+                                    tuple(float(value) for value in pair)
+                                    for pair in model.jnt_range[controller.joint_ids[:6]]
                                 ),
-                                leg_dof_ids=(
-                                    tuple(int(value) for value in controller.joint_qvel[:6]),
-                                    tuple(int(value) for value in controller.joint_qvel[6:12]),
+                                tuple(
+                                    tuple(float(value) for value in pair)
+                                    for pair in model.jnt_range[controller.joint_ids[6:12]]
                                 ),
-                                leg_joint_ranges=(
-                                    tuple(
-                                        tuple(float(value) for value in pair)
-                                        for pair in model.jnt_range[controller.joint_ids[:6]]
-                                    ),
-                                    tuple(
-                                        tuple(float(value) for value in pair)
-                                        for pair in model.jnt_range[controller.joint_ids[6:12]]
-                                    ),
-                                ),
-                            )
-                            if getattr(motors[agent_id], "needs_foot_kinematics", False) is True
-                            else None
-                        ),
-                    )
+                            ),
+                        )
+                        if getattr(motors[agent_id], "needs_foot_kinematics", False) is True
+                        else None
+                    ),
                 )
+                if active.event_receiver_handoff:
+                    receiver = motors[agent_id]
+                    assert type(receiver) is AdmittedRecurrentReceiver
+                    handoff = event_handoffs[agent_id]
+                    wants = receiver.wants_motor(observation)
+                    decision = handoff.advance(
+                        frame=frame,
+                        native_active=agent_id in option_controllers,
+                        learned_claim=wants and not handoff.learned_owned,
+                        learned_release=handoff.learned_owned and receiver.completed,
+                        learned_fault=False,
+                    )
+                    if decision.owner is MotorOwner.LEARNED:
+                        proposal = receiver.propose(observation)
+                        if proposal is None and not receiver.completed:
+                            raise ValueError(
+                                "granted receiver returned no target before completion"
+                            )
+                    else:
+                        receiver.defer_motor(observation)
+                        proposal = None
+                else:
+                    proposal = motors[agent_id].propose(observation)
                 retirement_provider = motors[agent_id]
                 if active.retire_completed_motors and isinstance(
                     retirement_provider, TeamMotorRetirementProvider
@@ -3190,6 +3255,8 @@ def simulate_independent_team_world(
                 # The frozen locomotion controller remains the fallback. This
                 # motor is latched off for the match; no silent candidate retry.
                 motor_faults.add(agent_id)
+                if active.event_receiver_handoff:
+                    event_handoffs[agent_id].latch_fault()
         if preparation_enabled:
             preparation_receipt: dict[str, object] | None = None
             for agent_id, motor in motors.items():
@@ -3312,7 +3379,9 @@ def simulate_independent_team_world(
                 registered=True,
                 proposed=agent_id in motor_targets,
                 faulted=agent_id in motor_faults,
-                allow_idle_fallback=active.motor_idle_residual_fallback,
+                allow_idle_fallback=(
+                    active.motor_idle_residual_fallback or active.event_receiver_handoff
+                ),
             )
         }
         if near_ball_policy is not None:

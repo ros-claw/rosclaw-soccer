@@ -63,6 +63,32 @@ def test_foreign_or_skipped_observation_latches_and_blocks_commitment(tmp_path):
         m.propose(incoming(416))
 
 
+def test_deferred_claim_preserves_actor_and_next_frame_admission(tmp_path):
+    m = AdmittedRecurrentReceiver(motor(tmp_path))
+    for frame in range(415, 418):
+        obs = incoming(frame)
+        assert m.wants_motor(obs)
+        assert m.wants_motor(obs)  # Claim inspection is idempotent.
+        m.defer_motor(obs)
+        assert m.start_frame is None and m.receiver.last_observation is None
+    assert m.wants_motor(incoming(418))
+    assert m.propose(incoming(418)) is not None
+    assert m.start_frame == 418
+    with pytest.raises(ValueError, match="cannot be deferred"):
+        m.defer_motor(incoming(419))
+    assert m.faulted
+
+
+def test_deferred_foreign_or_skipped_frame_fails_closed(tmp_path):
+    m = AdmittedRecurrentReceiver(motor(tmp_path))
+    m.defer_motor(incoming(415))
+    with pytest.raises(ValueError, match="consecutive"):
+        m.defer_motor(incoming(417))
+    assert m.faulted
+    with pytest.raises(ValueError, match="faulted"):
+        m.wants_motor(incoming(416))
+
+
 def test_slow_incoming_protocol_is_explicit_and_does_not_invent_commitment(tmp_path):
     o = incoming()
     v = list(o.qvel)
